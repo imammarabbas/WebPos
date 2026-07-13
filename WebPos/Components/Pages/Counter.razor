@@ -1,0 +1,496 @@
+﻿@page "/counter"
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using WebPos.Core.Abstractions
+@using WebPos.Core.Data
+@using WebPos.Core.Models
+@inject WebPosDbContext Context
+@inject ISalesService SalesService
+
+<PageTitle>POS Counter</PageTitle>
+
+<div class="counter-page">
+    <h1>POS Counter</h1>
+
+    @if (!string.IsNullOrEmpty(_successMessage))
+    {
+        <div class="alert alert-success alert-dismissible fade show" role="alert">
+            @_successMessage
+            <button type="button" class="btn-close" @onclick="() => _successMessage = null"></button>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(_errorMessage))
+    {
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            @_errorMessage
+            <button type="button" class="btn-close" @onclick="() => _errorMessage = null"></button>
+        </div>
+    }
+
+    @if (_isLoading)
+    {
+        <p>Loading counter...</p>
+    }
+    else
+    {
+        <div class="counter-layout">
+            <section class="counter-panel basket-panel">
+                <h2>Sale Basket</h2>
+
+                <div class="add-item-row">
+                    <div class="flex-grow-1">
+                        <label class="form-label">Add from inventory</label>
+                        <select class="form-select" @bind="_selectedBatchId">
+                            <option value="">-- Select batch --</option>
+                            @foreach (var batch in _availableBatches)
+                            {
+                                <option value="@batch.Id">
+                                    @batch.Product.Name (@batch.BatchNumber) — Stock: @batch.CurrentQty — Rs @FormatPkr(batch.RetailPricePaisa)
+                                </option>
+                            }
+                        </select>
+                    </div>
+                    <button class="btn btn-outline-primary" @onclick="AddSelectedBatchToCart" disabled="@(string.IsNullOrEmpty(_selectedBatchId))">
+                        Add Item
+                    </button>
+                </div>
+
+                @if (_cart.Count == 0)
+                {
+                    <div class="empty-cart">No items in basket. Select a batch above to begin.</div>
+                }
+                else
+                {
+                    <table class="table table-sm basket-table">
+                        <thead>
+                            <tr>
+                                <th>Product</th>
+                                <th>Batch</th>
+                                <th>Qty</th>
+                                <th>Unit Price (Paisa)</th>
+                                <th>Line Total</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var line in _cart)
+                            {
+                                <tr>
+                                    <td>@line.ProductName</td>
+                                    <td>@line.BatchNumber</td>
+                                    <td>
+                                        <input type="number"
+                                               class="form-control form-control-sm"
+                                               min="0.001"
+                                               max="@line.MaxQuantity"
+                                               step="0.001"
+                                               @bind="line.Quantity"
+                                               @bind:event="oninput" />
+                                    </td>
+                                    <td>
+                                        <input type="number"
+                                               class="form-control form-control-sm"
+                                               min="1"
+                                               step="1"
+                                               @bind="line.UnitPricePaisa"
+                                               @bind:event="oninput" />
+                                    </td>
+                                    <td>@FormatPkr(line.LineTotalPaisa)</td>
+                                    <td>
+                                        <button class="btn btn-sm btn-outline-danger" @onclick="() => RemoveLine(line)">Remove</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+
+                <div class="totals-bar">
+                    <span>Grand Total</span>
+                    <span class="grand-total">@FormatPkr(GrandTotalPaisa) <small class="text-muted">(@GrandTotalPaisa paisa)</small></span>
+                </div>
+            </section>
+
+            <section class="counter-panel settlement-panel">
+                <h2>Settlement</h2>
+
+                <div class="settlement-field">
+                    <label for="customerSelect">Customer</label>
+                    <select id="customerSelect" class="form-select" @bind="_selectedPartyIdString">
+                        <option value="">Walk-in / None</option>
+                        @foreach (var customer in _customers)
+                        {
+                            <option value="@customer.Id">@customer.Name (@customer.PhoneNumber)</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="settlement-field">
+                    <label for="paymentMethod">Payment Method</label>
+                    <select id="paymentMethod" class="form-select" @bind="_paymentMethod">
+                        <option value="CASH">CASH</option>
+                        <option value="CREDIT">CREDIT</option>
+                        <option value="EASYPAISA">EASYPAISA</option>
+                        <option value="JAZZCASH">JAZZCASH</option>
+                        <option value="BANK_TRANSFER">BANK_TRANSFER</option>
+                    </select>
+                </div>
+
+                <div class="settlement-field">
+                    <label>Invoice Number</label>
+                    <div class="invoice-display">@_invoiceNo</div>
+                </div>
+
+                <div class="settlement-field">
+                    <strong>Amount Due:</strong> @FormatPkr(GrandTotalPaisa)
+                </div>
+
+                <button class="btn btn-success checkout-btn"
+                        @onclick="CheckoutAsync"
+                        disabled="@(_isCheckingOut || _cart.Count == 0)">
+                    @if (_isCheckingOut)
+                    {
+                        <span>Processing...</span>
+                    }
+                    else
+                    {
+                        <span>Complete Checkout</span>
+                    }
+                </button>
+
+                @if (_activeShift is not null && _activeCashier is not null)
+                {
+                    <div class="shift-info">
+                        Shift: @_activeShift.Status
+                        | Cashier: @_activeCashier.Username
+                        @if (_activeTerminal is not null)
+                        {
+                            <span>| Terminal: @_activeTerminal.TerminalName</span>
+                        }
+                    </div>
+                }
+            </section>
+        </div>
+    }
+</div>
+
+@code {
+    private const string DefaultRoleName = "Cashier";
+    private const string DefaultCashierUsername = "default_cashier";
+    private const string DefaultTerminalName = "Default Dev Terminal";
+    private const string DefaultTerminalMac = "00:00:00:00:00:01";
+
+    private sealed class CartLine
+    {
+        public Guid ProductId { get; set; }
+        public Guid BatchId { get; set; }
+        public string ProductName { get; set; } = string.Empty;
+        public string BatchNumber { get; set; } = string.Empty;
+        public decimal MaxQuantity { get; set; }
+        public decimal Quantity { get; set; }
+        public long UnitPricePaisa { get; set; }
+        public long LineTotalPaisa => (long)Math.Round(Quantity * UnitPricePaisa, MidpointRounding.AwayFromZero);
+    }
+
+    private readonly List<CartLine> _cart = [];
+    private List<Party> _customers = [];
+    private List<ProductBatch> _availableBatches = [];
+
+    private CashierShift? _activeShift;
+    private User? _activeCashier;
+    private Terminal? _activeTerminal;
+
+    private string _selectedBatchId = string.Empty;
+    private string _selectedPartyIdString = string.Empty;
+    private string _paymentMethod = "CASH";
+    private string _invoiceNo = string.Empty;
+
+    private string? _successMessage;
+    private string? _errorMessage;
+    private bool _isLoading = true;
+    private bool _isCheckingOut;
+
+    private long GrandTotalPaisa => _cart.Sum(l => l.LineTotalPaisa);
+
+    private Guid? SelectedPartyId =>
+        Guid.TryParse(_selectedPartyIdString, out Guid partyId) ? partyId : null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            await LoadInventoryAndCustomersAsync();
+            await EnsureOperationalContextAsync();
+            GenerateInvoiceNo();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to initialize counter: {ex.Message}";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task LoadInventoryAndCustomersAsync()
+    {
+        _customers = await Context.Parties
+            .AsNoTracking()
+            .Where(p => p.PartyType.ToUpper() == "CUSTOMER")
+            .OrderBy(p => p.Name)
+            .ToListAsync();
+
+        _availableBatches = await Context.ProductBatches
+            .AsNoTracking()
+            .Include(b => b.Product)
+            .Where(b => b.CurrentQty > 0)
+            .OrderBy(b => b.Product.Name)
+            .ThenBy(b => b.BatchNumber)
+            .ToListAsync();
+    }
+
+    private async Task EnsureOperationalContextAsync()
+    {
+        CashierShift? openShift = await Context.CashierShifts
+            .Where(s => s.Status == "OPEN" && s.ClosedAt == null)
+            .OrderByDescending(s => s.OpenedAt)
+            .FirstOrDefaultAsync();
+
+        if (openShift is not null)
+        {
+            _activeShift = openShift;
+            _activeCashier = await Context.Users.FindAsync(openShift.CashierId);
+            _activeTerminal = await Context.Terminals.FindAsync(openShift.TerminalId);
+            return;
+        }
+
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+
+        Role? cashierRole = await Context.Roles
+            .FirstOrDefaultAsync(r => r.RoleName == DefaultRoleName);
+
+        if (cashierRole is null)
+        {
+            cashierRole = new Role
+            {
+                Id = Guid.NewGuid(),
+                RoleName = DefaultRoleName,
+                CreatedAt = now
+            };
+            Context.Roles.Add(cashierRole);
+        }
+
+        User? cashier = await Context.Users
+            .FirstOrDefaultAsync(u => u.Username == DefaultCashierUsername);
+
+        if (cashier is null)
+        {
+            cashier = new User
+            {
+                Id = Guid.NewGuid(),
+                Username = DefaultCashierUsername,
+                PasswordHash = "DEV_PLACEHOLDER_HASH",
+                RoleId = cashierRole.Id,
+                IsActive = true,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            Context.Users.Add(cashier);
+        }
+
+        Terminal? terminal = await Context.Terminals
+            .FirstOrDefaultAsync(t => t.TerminalName == DefaultTerminalName);
+
+        if (terminal is null)
+        {
+            terminal = new Terminal
+            {
+                Id = Guid.NewGuid(),
+                TerminalName = DefaultTerminalName,
+                MacAddress = DefaultTerminalMac,
+                IsActive = true,
+                LastSyncTime = now
+            };
+            Context.Terminals.Add(terminal);
+        }
+
+        openShift = new CashierShift
+        {
+            Id = Guid.NewGuid(),
+            TerminalId = terminal.Id,
+            CashierId = cashier.Id,
+            OpenedAt = now,
+            ClosedAt = null,
+            OpeningCashPaisa = 0,
+            ExpectedCashPaisa = 0,
+            ActualBlindCashPaisa = null,
+            DiscrepancyPaisa = 0,
+            Status = "OPEN"
+        };
+        Context.CashierShifts.Add(openShift);
+
+        await Context.SaveChangesAsync();
+
+        _activeShift = openShift;
+        _activeCashier = cashier;
+        _activeTerminal = terminal;
+    }
+
+    private void GenerateInvoiceNo()
+    {
+        _invoiceNo = $"INV-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Random.Shared.Next(1000, 9999)}";
+    }
+
+    private void AddSelectedBatchToCart()
+    {
+        _errorMessage = null;
+
+        if (!Guid.TryParse(_selectedBatchId, out Guid batchId))
+        {
+            return;
+        }
+
+        ProductBatch? batch = _availableBatches.FirstOrDefault(b => b.Id == batchId);
+        if (batch is null)
+        {
+            _errorMessage = "Selected batch is no longer available.";
+            return;
+        }
+
+        CartLine? existing = _cart.FirstOrDefault(l => l.BatchId == batchId);
+        if (existing is not null)
+        {
+            if (existing.Quantity + 1 > batch.CurrentQty)
+            {
+                _errorMessage = $"Cannot add more than available stock ({batch.CurrentQty}).";
+                return;
+            }
+
+            existing.Quantity += 1;
+            existing.MaxQuantity = batch.CurrentQty;
+            return;
+        }
+
+        _cart.Add(new CartLine
+        {
+            ProductId = batch.ProductId,
+            BatchId = batch.Id,
+            ProductName = batch.Product.Name,
+            BatchNumber = batch.BatchNumber,
+            MaxQuantity = batch.CurrentQty,
+            Quantity = 1,
+            UnitPricePaisa = batch.RetailPricePaisa
+        });
+
+        _selectedBatchId = string.Empty;
+    }
+
+    private void RemoveLine(CartLine line)
+    {
+        _cart.Remove(line);
+    }
+
+    private async Task CheckoutAsync()
+    {
+        _errorMessage = null;
+        _successMessage = null;
+        _isCheckingOut = true;
+
+        try
+        {
+            if (_cart.Count == 0)
+            {
+                _errorMessage = "Basket is empty. Add at least one item before checkout.";
+                return;
+            }
+
+            if (_activeShift is null || _activeCashier is null)
+            {
+                _errorMessage = "No active cashier shift is available.";
+                return;
+            }
+
+            if (_paymentMethod == "CREDIT")
+            {
+                if (SelectedPartyId is null)
+                {
+                    _errorMessage = "CREDIT sales require a valid customer to be selected.";
+                    return;
+                }
+
+                Party? creditCustomer = _customers.FirstOrDefault(c => c.Id == SelectedPartyId.Value);
+                if (creditCustomer is null || !string.Equals(creditCustomer.PartyType, "CUSTOMER", StringComparison.OrdinalIgnoreCase))
+                {
+                    _errorMessage = "CREDIT sales require a valid customer party profile.";
+                    return;
+                }
+            }
+
+            foreach (CartLine line in _cart)
+            {
+                if (line.Quantity <= 0)
+                {
+                    _errorMessage = $"Quantity must be greater than zero for {line.ProductName}.";
+                    return;
+                }
+
+                if (line.UnitPricePaisa <= 0)
+                {
+                    _errorMessage = $"Unit price must be greater than zero for {line.ProductName}.";
+                    return;
+                }
+            }
+
+            long totalPaisa = GrandTotalPaisa;
+            if (totalPaisa <= 0)
+            {
+                _errorMessage = "Total bill amount must be greater than zero.";
+                return;
+            }
+
+            string invoiceNo = _invoiceNo;
+
+            CompleteSaleRequest saleRequest = new()
+            {
+                InvoiceNo = invoiceNo,
+                ShiftId = _activeShift.Id,
+                TerminalId = _activeTerminal?.Id,
+                CashierId = _activeCashier.Id,
+                CustomerId = SelectedPartyId,
+                PaymentMethod = _paymentMethod,
+                DiscountAmountPaisa = 0,
+                DiscountReason = null,
+                Lines = _cart.Select(line => new SaleLineRequest
+                {
+                    ProductId = line.ProductId,
+                    BatchId = line.BatchId,
+                    BatchNumber = line.BatchNumber,
+                    ProductName = line.ProductName,
+                    Quantity = line.Quantity,
+                    UnitPricePaisa = line.UnitPricePaisa,
+                    DiscountAppliedPaisa = 0
+                }).ToList()
+            };
+
+            CompleteSaleResult result = await SalesService.CompleteSaleAsync(saleRequest);
+
+            _cart.Clear();
+            GenerateInvoiceNo();
+            await LoadInventoryAndCustomersAsync();
+
+            _successMessage = $"Sale {result.InvoiceNo} completed successfully — {FormatPkr(result.TotalAmountPaisa)} ({result.TotalAmountPaisa} paisa).";
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Checkout failed: {ex.Message}";
+        }
+        finally
+        {
+            _isCheckingOut = false;
+        }
+    }
+
+    private static string FormatPkr(long paisa) => $"Rs {(paisa / 100m):N2}";
+}

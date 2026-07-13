@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="WebPos.IntegrationTests/WebPos.IntegrationTests.csproj" />
+  <Project Path="WebPos/WebPos.csproj" />
+</Solution>

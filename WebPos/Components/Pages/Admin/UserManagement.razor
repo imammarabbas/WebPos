@@ -1,0 +1,263 @@
+@page "/admin/users"
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using WebPos.Core.Data
+@using WebPos.Core.Models
+@using WebPos.Core.Security
+@inject WebPosDbContext Context
+@inject NavigationManager NavigationManager
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>User Management</PageTitle>
+
+<div class="container-fluid py-3">
+    <h1 class="h3 mb-4">User Management</h1>
+
+    <div class="row g-4">
+        <div class="col-lg-5">
+            <div class="card shadow-sm h-100">
+                <div class="card-header">
+                    <h2 class="h5 mb-0">Register New User</h2>
+                </div>
+                <div class="card-body">
+                    @if (!string.IsNullOrEmpty(_errorMessage))
+                    {
+                        <div class="alert alert-danger" role="alert">
+                            @_errorMessage
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrEmpty(_successMessage))
+                    {
+                        <div class="alert alert-success" role="alert">
+                            @_successMessage
+                        </div>
+                    }
+
+                    <EditForm Model="_form" OnValidSubmit="CreateUserAsync">
+                        <div class="mb-3">
+                            <label class="form-label" for="new-username">Username</label>
+                            <InputText id="new-username"
+                                       class="form-control"
+                                       @bind-Value="_form.Username"
+                                       autocomplete="off"
+                                       disabled="@_isSubmitting" />
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label" for="new-password">Password</label>
+                            <InputText id="new-password"
+                                       type="password"
+                                       class="form-control"
+                                       @bind-Value="_form.Password"
+                                       autocomplete="new-password"
+                                       disabled="@_isSubmitting" />
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label" for="new-role">Role</label>
+                            <InputSelect id="new-role"
+                                         class="form-select"
+                                         @bind-Value="_form.RoleId"
+                                         disabled="@_isSubmitting">
+                                <option value="@Guid.Empty">Select a role...</option>
+                                @foreach (Role role in _roles)
+                                {
+                                    <option value="@role.Id">@role.RoleName</option>
+                                }
+                            </InputSelect>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary" disabled="@_isSubmitting">
+                            @if (_isSubmitting)
+                            {
+                                <span>Creating...</span>
+                            }
+                            else
+                            {
+                                <span>Create User</span>
+                            }
+                        </button>
+                    </EditForm>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-7">
+            <div class="card shadow-sm h-100">
+                <div class="card-header">
+                    <h2 class="h5 mb-0">Existing System Users</h2>
+                </div>
+                <div class="card-body p-0">
+                    @if (_users.Count == 0)
+                    {
+                        <p class="text-muted p-3 mb-0">No users found.</p>
+                    }
+                    else
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th scope="col">Username</th>
+                                        <th scope="col">Role Name</th>
+                                        <th scope="col">Active Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (UserListItem user in _users)
+                                    {
+                                        <tr>
+                                            <td>@user.Username</td>
+                                            <td>@user.RoleName</td>
+                                            <td>
+                                                @if (user.IsActive)
+                                                {
+                                                    <span class="badge text-bg-success">Active</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="badge text-bg-secondary">Inactive</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private readonly RegisterUserForm _form = new();
+    private List<Role> _roles = [];
+    private List<UserListItem> _users = [];
+    private string? _errorMessage;
+    private string? _successMessage;
+    private bool _isSubmitting;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadRolesAsync();
+        await LoadUsersAsync();
+    }
+
+    private async Task LoadRolesAsync()
+    {
+        _roles = await Context.Roles
+            .AsNoTracking()
+            .OrderBy(r => r.RoleName)
+            .ToListAsync();
+    }
+
+    private async Task LoadUsersAsync()
+    {
+        _users = await Context.Users
+            .AsNoTracking()
+            .Include(u => u.Role)
+            .OrderBy(u => u.Username)
+            .Select(u => new UserListItem
+            {
+                Username = u.Username,
+                RoleName = u.Role.RoleName,
+                IsActive = u.IsActive
+            })
+            .ToListAsync();
+    }
+
+    private async Task CreateUserAsync()
+    {
+        _errorMessage = null;
+        _successMessage = null;
+        _isSubmitting = true;
+
+        try
+        {
+            string username = _form.Username.Trim();
+
+            if (string.IsNullOrWhiteSpace(username))
+            {
+                _errorMessage = "Username is required.";
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_form.Password))
+            {
+                _errorMessage = "Password is required.";
+                return;
+            }
+
+            if (_form.RoleId == Guid.Empty)
+            {
+                _errorMessage = "Please select a role.";
+                return;
+            }
+
+            bool usernameExists = await Context.Users
+                .AnyAsync(u => u.Username == username);
+
+            if (usernameExists)
+            {
+                _errorMessage = $"Username '{username}' is already taken.";
+                return;
+            }
+
+            bool roleExists = await Context.Roles
+                .AsNoTracking()
+                .AnyAsync(r => r.Id == _form.RoleId);
+
+            if (!roleExists)
+            {
+                _errorMessage = "Selected role is no longer available. Please refresh and try again.";
+                return;
+            }
+
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+
+            Context.Users.Add(new User
+            {
+                Id = Guid.NewGuid(),
+                Username = username,
+                PasswordHash = CryptoHelper.HashPassword(_form.Password),
+                RoleId = _form.RoleId,
+                IsActive = true,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+
+            await Context.SaveChangesAsync();
+
+            _form.Username = string.Empty;
+            _form.Password = string.Empty;
+            _form.RoleId = Guid.Empty;
+            _successMessage = $"User '{username}' was created successfully.";
+
+            await LoadUsersAsync();
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private sealed class RegisterUserForm
+    {
+        public string Username { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
+        public Guid RoleId { get; set; }
+    }
+
+    private sealed class UserListItem
+    {
+        public string Username { get; set; } = string.Empty;
+        public string RoleName { get; set; } = string.Empty;
+        public bool IsActive { get; set; }
+    }
+}
