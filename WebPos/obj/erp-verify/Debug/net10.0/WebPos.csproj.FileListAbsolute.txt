@@ -1,9 +1,0 @@
-c:\Users\User\source\repos\WebPos\WebPos\obj\erp-verify\Debug\net10.0\EmbeddedAttribute.cs
-c:\Users\User\source\repos\WebPos\WebPos\obj\erp-verify\Debug\net10.0\ValidatableTypeAttribute.cs
-c:\Users\User\source\repos\WebPos\WebPos\obj\erp-verify\Debug\net10.0\WebPos.csproj.AssemblyReference.cache
-c:\Users\User\source\repos\WebPos\WebPos\obj\erp-verify\Debug\net10.0\rpswa.dswa.cache.json
-c:\Users\User\source\repos\WebPos\WebPos\obj\erp-verify\Debug\net10.0\WebPos.GeneratedMSBuildEditorConfig.editorconfig
-c:\Users\User\source\repos\WebPos\WebPos\obj\erp-verify\Debug\net10.0\WebPos.AssemblyInfoInputs.cache
-c:\Users\User\source\repos\WebPos\WebPos\obj\erp-verify\Debug\net10.0\WebPos.AssemblyInfo.cs
-c:\Users\User\source\repos\WebPos\WebPos\obj\erp-verify\Debug\net10.0\WebPos.csproj.CoreCompileInputs.cache
-c:\Users\User\source\repos\WebPos\WebPos\obj\erp-verify\Debug\net10.0\WebPos.MvcApplicationPartsAssemblyInfo.cache
