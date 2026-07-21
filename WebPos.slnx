@@ -1,4 +1,8 @@
 <Solution>
+  <Project Path="WebPos.Client.Sdk.Tests/WebPos.Client.Sdk.Tests.csproj" />
+  <Project Path="WebPos.Client.Sdk/WebPos.Client.Sdk.csproj" />
   <Project Path="WebPos.IntegrationTests/WebPos.IntegrationTests.csproj" />
+  <Project Path="WebPos.TenantVerification/WebPos.TenantVerification.csproj" />
+  <Project Path="WebPos.WindowsTerminal/WebPos.WindowsTerminal.csproj" />
   <Project Path="WebPos/WebPos.csproj" />
 </Solution>

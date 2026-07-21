@@ -1,6 +1,8 @@
+using WebPos.Core.Entities;
+
 namespace WebPos.Core.Models;
 
-public class ProductionYieldItem
+public class ProductionYieldItem : BaseEntity
 {
     public Guid Id { get; set; }
 

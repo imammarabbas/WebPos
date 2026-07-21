@@ -1,6 +1,8 @@
+using WebPos.Core.Entities;
+
 namespace WebPos.Core.Models;
 
-public class PartyLedger
+public class PartyLedger : BaseEntity
 {
     public Guid Id { get; set; }
 

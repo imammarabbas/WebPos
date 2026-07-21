@@ -1,6 +1,8 @@
+using WebPos.Core.Entities;
+
 namespace WebPos.Core.Models;
 
-public class Terminal
+public class Terminal : BaseEntity
 {
     public Guid Id { get; set; }
 

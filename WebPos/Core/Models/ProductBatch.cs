@@ -1,6 +1,8 @@
+using WebPos.Core.Entities;
+
 namespace WebPos.Core.Models;
 
-public class ProductBatch
+public class ProductBatch : BaseEntity
 {
     public Guid Id { get; set; }
 
@@ -8,9 +10,21 @@ public class ProductBatch
 
     public string BatchNumber { get; set; } = string.Empty;
 
-    public DateOnly ExpiryDate { get; set; }
+    public DateOnly? ExpiryDate { get; set; }
 
+    /// <summary>
+    /// Unit purchase/cost price in paisa. Captured at receive for stock valuation.
+    /// </summary>
     public long CostPricePaisa { get; set; }
+
+    /// <summary>
+    /// Alias for <see cref="CostPricePaisa"/> (purchase price used for StockValuation).
+    /// </summary>
+    public long PurchasePricePaisa
+    {
+        get => CostPricePaisa;
+        set => CostPricePaisa = value;
+    }
 
     public long RetailPricePaisa { get; set; }
 

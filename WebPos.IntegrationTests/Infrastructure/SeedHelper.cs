@@ -1,4 +1,6 @@
+using Microsoft.EntityFrameworkCore;
 using WebPos.Core.Data;
+using WebPos.Core.Entities;
 using WebPos.Core.Models;
 
 namespace WebPos.IntegrationTests.Infrastructure;
@@ -17,6 +19,7 @@ public static class SeedHelper
     {
         ArgumentNullException.ThrowIfNull(context);
 
+        Guid tenantId = TenantDefaults.MasterTenantId;
         DateTimeOffset now = DateTimeOffset.UtcNow;
         Guid roleId = Guid.NewGuid();
         Guid cashierId = Guid.NewGuid();
@@ -28,16 +31,37 @@ public static class SeedHelper
         string batchNumber = $"BATCH-{batchId:N}"[..20];
         string productName = "Integration Test Product";
 
-        context.Roles.Add(new Role
+        if (!await context.Tenants.AnyAsync(t => t.Id == tenantId, cancellationToken))
         {
-            Id = roleId,
-            RoleName = $"CASHIER-{roleId:N}"[..40],
-            CreatedAt = now
-        });
+            context.Tenants.Add(new Tenant
+            {
+                Id = tenantId,
+                Name = "Master Tenant",
+                Slug = "master",
+                IsActive = true,
+                CreatedAt = now
+            });
+        }
+
+        Role? existingRole = await context.Roles.FirstOrDefaultAsync(
+            role => role.RoleName == "Cashier" && role.TenantId == tenantId,
+            cancellationToken);
+        roleId = existingRole?.Id ?? roleId;
+        if (existingRole is null)
+        {
+            context.Roles.Add(new Role
+            {
+                Id = roleId,
+                TenantId = tenantId,
+                RoleName = "Cashier",
+                CreatedAt = now
+            });
+        }
 
         context.Users.Add(new User
         {
             Id = cashierId,
+            TenantId = tenantId,
             Username = $"CASHIER-{cashierId:N}"[..40],
             PasswordHash = "test-hash",
             RoleId = roleId,
@@ -49,6 +73,7 @@ public static class SeedHelper
         context.Terminals.Add(new Terminal
         {
             Id = terminalId,
+            TenantId = tenantId,
             TerminalName = $"TERMINAL-{terminalId:N}"[..40],
             MacAddress = $"MAC-{terminalId:N}"[..20],
             IsActive = true,
@@ -58,6 +83,7 @@ public static class SeedHelper
         context.CashierShifts.Add(new CashierShift
         {
             Id = shiftId,
+            TenantId = tenantId,
             TerminalId = terminalId,
             CashierId = cashierId,
             OpenedAt = now,
@@ -70,6 +96,7 @@ public static class SeedHelper
         context.Parties.Add(new Party
         {
             Id = supplierId,
+            TenantId = tenantId,
             PartyType = "SUPPLIER",
             Name = $"SUPPLIER-{supplierId:N}"[..40],
             PhoneNumber = $"03{supplierId:N}"[..11],
@@ -83,6 +110,7 @@ public static class SeedHelper
         context.Products.Add(new Product
         {
             Id = productId,
+            TenantId = tenantId,
             Name = productName,
             Sku = $"SKU-{productId:N}"[..20],
             Barcode = $"BC-{productId:N}"[..20],
@@ -97,6 +125,7 @@ public static class SeedHelper
         context.ProductBatches.Add(new ProductBatch
         {
             Id = batchId,
+            TenantId = tenantId,
             ProductId = productId,
             BatchNumber = batchNumber,
             ExpiryDate = DateOnly.FromDateTime(now.UtcDateTime.AddYears(1)),
@@ -112,6 +141,7 @@ public static class SeedHelper
         await context.SaveChangesAsync(cancellationToken);
 
         return new SaleSeedData(
+            TenantId: tenantId,
             CashierId: cashierId,
             TerminalId: terminalId,
             ShiftId: shiftId,
@@ -126,6 +156,7 @@ public static class SeedHelper
 }
 
 public sealed record SaleSeedData(
+    Guid TenantId,
     Guid CashierId,
     Guid TerminalId,
     Guid ShiftId,

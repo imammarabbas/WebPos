@@ -10,12 +10,12 @@ public sealed class SalesReturnService : ISalesReturnService
 {
     private readonly WebPosDbContext _context;
     private readonly ITransactionService _transactionService;
-    private readonly PartyLedgerService _partyLedgerService;
+    private readonly IPartyLedgerService _partyLedgerService;
 
     public SalesReturnService(
         WebPosDbContext context,
         ITransactionService transactionService,
-        PartyLedgerService partyLedgerService)
+        IPartyLedgerService partyLedgerService)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _transactionService = transactionService ?? throw new ArgumentNullException(nameof(transactionService));

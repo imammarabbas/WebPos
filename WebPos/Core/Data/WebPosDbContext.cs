@@ -1,15 +1,26 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using WebPos.Core.Entities;
+using WebPos.Core.Interfaces;
 using WebPos.Core.Models;
 
 namespace WebPos.Core.Data;
 
 public class WebPosDbContext : DbContext
 {
-    public WebPosDbContext(DbContextOptions<WebPosDbContext> options)
+    private static readonly HashSet<Type> GlobalEntityTypes = [typeof(Tenant)];
+
+    private readonly ITenantService _tenantService;
+
+    public WebPosDbContext(
+        DbContextOptions<WebPosDbContext> options,
+        ITenantService? tenantService = null)
         : base(options)
     {
+        _tenantService = tenantService ?? DesignTimeTenantService.Instance;
     }
+
+    public DbSet<Tenant> Tenants => Set<Tenant>();
 
     public DbSet<Role> Roles => Set<Role>();
 
@@ -59,8 +70,49 @@ public class WebPosDbContext : DbContext
 
     public DbSet<DamagedStockLog> DamagedStockLogs => Set<DamagedStockLog>();
 
+    public override Task<int> SaveChangesAsync(
+        CancellationToken cancellationToken = default) =>
+        SaveChangesAsync(acceptAllChangesOnSuccess: true, cancellationToken);
+
+    public override async Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken = default)
+    {
+        StampAddedEntitiesWithTenant();
+        return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private void StampAddedEntitiesWithTenant()
+    {
+        foreach (var entry in ChangeTracker.Entries<BaseEntity>()
+                     .Where(entry => entry.State == EntityState.Added))
+        {
+            if (entry.Entity.TenantId != Guid.Empty)
+            {
+                if (_tenantService.IsResolved
+                    && entry.Entity.TenantId != _tenantService.TenantId)
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot add '{entry.Metadata.DisplayName()}' for a different tenant.");
+                }
+
+                // Explicit IDs are retained for trusted import/system workflows.
+                continue;
+            }
+
+            if (!_tenantService.IsResolved || _tenantService.TenantId == Guid.Empty)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot add tenant-scoped entity '{entry.Metadata.DisplayName()}' without a resolved TenantId.");
+            }
+
+            entry.Entity.TenantId = _tenantService.TenantId;
+        }
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        ConfigureTenant(modelBuilder.Entity<Tenant>());
         ConfigureRole(modelBuilder.Entity<Role>());
         ConfigureUser(modelBuilder.Entity<User>());
         ConfigureTerminal(modelBuilder.Entity<Terminal>());
@@ -85,6 +137,111 @@ public class WebPosDbContext : DbContext
         ConfigurePurchaseReturn(modelBuilder.Entity<PurchaseReturn>());
         ConfigurePurchaseReturnItem(modelBuilder.Entity<PurchaseReturnItem>());
         ConfigureDamagedStockLog(modelBuilder.Entity<DamagedStockLog>());
+
+        ApplyTenantFilter<Role>(modelBuilder);
+        ApplyTenantFilter<User>(modelBuilder);
+        ApplyTenantFilter<Terminal>(modelBuilder);
+        ApplyTenantFilter<CashierShift>(modelBuilder);
+        ApplyTenantFilter<ShiftExpense>(modelBuilder);
+        ApplyTenantFilter<Party>(modelBuilder);
+        ApplyTenantFilter<PartyLedger>(modelBuilder);
+        ApplyTenantFilter<GeneralLedgerEntry>(modelBuilder);
+        ApplyTenantFilter<Category>(modelBuilder);
+        ApplyTenantFilter<Product>(modelBuilder);
+        ApplyTenantFilter<PurchaseOrder>(modelBuilder);
+        ApplyTenantFilter<ProductBatch>(modelBuilder);
+        ApplyTenantFilter<PurchaseItem>(modelBuilder);
+        ApplyTenantFilter<DailyMilkCollection>(modelBuilder);
+        ApplyTenantFilter<ProductionLog>(modelBuilder);
+        ApplyTenantFilter<ProductionConsumptionItem>(modelBuilder);
+        ApplyTenantFilter<ProductionYieldItem>(modelBuilder);
+        ApplyTenantFilter<SalesInvoice>(modelBuilder);
+        ApplyTenantFilter<SalesItem>(modelBuilder);
+        ApplyTenantFilter<SalesReturn>(modelBuilder);
+        ApplyTenantFilter<SalesReturnItem>(modelBuilder);
+        ApplyTenantFilter<PurchaseReturn>(modelBuilder);
+        ApplyTenantFilter<PurchaseReturnItem>(modelBuilder);
+        ApplyTenantFilter<DamagedStockLog>(modelBuilder);
+        ValidateTenantModel(modelBuilder);
+    }
+
+    private void ApplyTenantFilter<TEntity>(ModelBuilder modelBuilder)
+        where TEntity : BaseEntity
+    {
+        modelBuilder.Entity<TEntity>()
+            .Property(entity => entity.TenantId)
+            .HasColumnName("tenant_id")
+            .IsRequired();
+
+        modelBuilder.Entity<TEntity>()
+            .HasIndex(entity => entity.TenantId);
+
+        modelBuilder.Entity<TEntity>()
+            .HasOne<Tenant>()
+            .WithMany()
+            .HasForeignKey(entity => entity.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<TEntity>()
+            .HasQueryFilter(entity =>
+                _tenantService.IsResolved
+                && entity.TenantId == _tenantService.TenantId);
+    }
+
+    private static void ValidateTenantModel(ModelBuilder modelBuilder)
+    {
+        foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+        {
+            if (GlobalEntityTypes.Contains(entityType.ClrType))
+            {
+                continue;
+            }
+
+            if (!typeof(BaseEntity).IsAssignableFrom(entityType.ClrType))
+            {
+                throw new InvalidOperationException(
+                    $"Entity '{entityType.DisplayName()}' must inherit from BaseEntity or be explicitly classified as global.");
+            }
+
+            var tenantProperty = entityType.FindProperty(nameof(BaseEntity.TenantId));
+            if (tenantProperty is null
+                || tenantProperty.ClrType != typeof(Guid)
+                || tenantProperty.IsNullable)
+            {
+                throw new InvalidOperationException(
+                    $"Tenant-scoped entity '{entityType.DisplayName()}' must define a required Guid TenantId.");
+            }
+
+            if (!entityType.GetDeclaredQueryFilters().Any())
+            {
+                throw new InvalidOperationException(
+                    $"Tenant-scoped entity '{entityType.DisplayName()}' is missing its global tenant query filter.");
+            }
+        }
+    }
+
+    private static void ConfigureTenant(EntityTypeBuilder<Tenant> entity)
+    {
+        entity.ToTable("tenants");
+
+        entity.HasKey(e => e.Id);
+
+        entity.Property(e => e.Id).HasColumnName("id");
+        entity.Property(e => e.Name).HasColumnName("name").HasMaxLength(100).IsRequired();
+        entity.Property(e => e.Slug).HasColumnName("slug").HasMaxLength(100).IsRequired();
+        entity.Property(e => e.IsActive).HasColumnName("is_active").IsRequired();
+        entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
+
+        entity.HasIndex(e => e.Slug).IsUnique();
+    }
+
+    private sealed class DesignTimeTenantService : ITenantService
+    {
+        public static DesignTimeTenantService Instance { get; } = new();
+
+        public Guid TenantId => Guid.Empty;
+
+        public bool IsResolved => true;
     }
 
     private static void ConfigureRole(EntityTypeBuilder<Role> entity)
@@ -109,12 +266,16 @@ public class WebPosDbContext : DbContext
         entity.Property(e => e.Id).HasColumnName("id");
         entity.Property(e => e.Username).HasColumnName("username").HasMaxLength(50).IsRequired();
         entity.Property(e => e.PasswordHash).HasColumnName("password_hash").HasMaxLength(255).IsRequired();
+        entity.Property(e => e.PinHash).HasColumnName("pin_hash").HasMaxLength(64).IsRequired();
         entity.Property(e => e.RoleId).HasColumnName("role_id").IsRequired();
         entity.Property(e => e.IsActive).HasColumnName("is_active").IsRequired();
         entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
         entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
 
         entity.HasIndex(e => e.Username).IsUnique();
+        entity.HasIndex(e => e.PinHash)
+            .IsUnique()
+            .HasFilter("\"pin_hash\" <> ''");
 
         entity.HasOne(e => e.Role)
             .WithMany(r => r.Users)
@@ -154,6 +315,15 @@ public class WebPosDbContext : DbContext
         MapPaisa(entity.Property(e => e.ActualBlindCashPaisa)).HasColumnName("actual_blind_cash_paisa");
         MapPaisa(entity.Property(e => e.DiscrepancyPaisa)).HasColumnName("discrepancy_paisa");
         entity.Property(e => e.Status).HasColumnName("status").HasMaxLength(20).IsRequired();
+
+        entity.HasIndex(e => e.TerminalId)
+            .IsUnique()
+            .HasFilter("\"status\" = 'OPEN'")
+            .HasDatabaseName("UX_cashier_shifts_open_terminal");
+        entity.HasIndex(e => e.CashierId)
+            .IsUnique()
+            .HasFilter("\"status\" = 'OPEN'")
+            .HasDatabaseName("UX_cashier_shifts_open_cashier");
 
         entity.HasOne<Terminal>()
             .WithMany()
@@ -235,10 +405,20 @@ public class WebPosDbContext : DbContext
         entity.Property(e => e.Address).HasColumnName("address");
         MapPaisa(entity.Property(e => e.CreditLimitPaisa)).HasColumnName("credit_limit_paisa").IsRequired();
         MapPaisa(entity.Property(e => e.CurrentBalancePaisa)).HasColumnName("current_balance_paisa").IsRequired();
+        entity.Property(e => e.IsDeleted).HasColumnName("is_deleted").IsRequired().HasDefaultValue(false);
         entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
         entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
 
-        entity.HasIndex(e => e.PhoneNumber).IsUnique();
+        entity.HasIndex(e => new { e.TenantId, e.UpdatedAt })
+            .HasDatabaseName("IX_parties_tenant_updated_at");
+
+        entity.HasIndex(e => new { e.TenantId, e.PhoneNumber })
+            .IsUnique()
+            .HasDatabaseName("UX_parties_tenant_phone");
+
+        entity.HasIndex(e => new { e.TenantId, e.PartyType, e.Name })
+            .IsUnique()
+            .HasDatabaseName("UX_parties_tenant_type_name");
     }
 
     private static void ConfigurePartyLedger(EntityTypeBuilder<PartyLedger> entity)
@@ -309,8 +489,12 @@ public class WebPosDbContext : DbContext
         entity.Property(e => e.BaseUnit).HasColumnName("base_unit").HasMaxLength(20).IsRequired();
         entity.Property(e => e.ConversionMultiplier).HasColumnName("conversion_multiplier").IsRequired();
         entity.Property(e => e.ShowOnWebshop).HasColumnName("show_on_webshop").IsRequired();
+        entity.Property(e => e.IsDeleted).HasColumnName("is_deleted").IsRequired().HasDefaultValue(false);
         entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
         entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
+
+        entity.HasIndex(e => new { e.TenantId, e.UpdatedAt })
+            .HasDatabaseName("IX_products_tenant_updated_at");
 
         entity.HasIndex(e => e.Sku).IsUnique();
         entity.HasIndex(e => e.Barcode).IsUnique();
@@ -335,6 +519,7 @@ public class WebPosDbContext : DbContext
         MapPaisa(entity.Property(e => e.DiscountPaisa)).HasColumnName("discount_paisa").IsRequired();
         MapPaisa(entity.Property(e => e.NetPayablePaisa)).HasColumnName("net_payable_paisa").IsRequired();
         entity.Property(e => e.PaymentStatus).HasColumnName("payment_status").HasMaxLength(20).IsRequired();
+        entity.Property(e => e.IsReceived).HasColumnName("is_received").IsRequired();
         entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
 
         entity.HasOne(e => e.Supplier)
@@ -357,8 +542,9 @@ public class WebPosDbContext : DbContext
         entity.Property(e => e.Id).HasColumnName("id");
         entity.Property(e => e.ProductId).HasColumnName("product_id").IsRequired();
         entity.Property(e => e.BatchNumber).HasColumnName("batch_number").HasMaxLength(100).IsRequired();
-        entity.Property(e => e.ExpiryDate).HasColumnName("expiry_date").IsRequired();
+        entity.Property(e => e.ExpiryDate).HasColumnName("expiry_date");
         MapPaisa(entity.Property(e => e.CostPricePaisa)).HasColumnName("cost_price_paisa").IsRequired();
+        entity.Ignore(e => e.PurchasePricePaisa);
         MapPaisa(entity.Property(e => e.RetailPricePaisa)).HasColumnName("retail_price_paisa").IsRequired();
         MapNumeric(entity.Property(e => e.InitialQty)).HasColumnName("initial_qty").IsRequired();
         MapNumeric(entity.Property(e => e.CurrentQty)).HasColumnName("current_qty").IsRequired();
@@ -396,6 +582,9 @@ public class WebPosDbContext : DbContext
         MapNumeric(entity.Property(e => e.BonusQuantity)).HasColumnName("bonus_quantity").IsRequired();
         MapPaisa(entity.Property(e => e.CostPricePerUnitPaisa)).HasColumnName("cost_price_per_unit_paisa").IsRequired();
         MapPaisa(entity.Property(e => e.RetailPricePerUnitPaisa)).HasColumnName("retail_price_per_unit_paisa").IsRequired();
+        entity.Property(e => e.BatchNumber).HasColumnName("batch_number").HasMaxLength(100).IsRequired();
+        entity.Property(e => e.ExpiryDate).HasColumnName("expiry_date");
+        entity.Property(e => e.RackLocation).HasColumnName("rack_location").HasMaxLength(50);
         entity.Property(e => e.BatchId).HasColumnName("batch_id");
 
         entity.HasOne(e => e.PurchaseOrder)
@@ -424,6 +613,8 @@ public class WebPosDbContext : DbContext
         entity.Property(e => e.SupplierId).HasColumnName("supplier_id").IsRequired();
         entity.Property(e => e.MilkType).HasColumnName("milk_type").HasMaxLength(20).IsRequired();
         MapNumeric(entity.Property(e => e.LitersReceived)).HasColumnName("liters_received").IsRequired();
+        MapNumeric(entity.Property(e => e.FatPercent)).HasColumnName("fat_percent");
+        MapNumeric(entity.Property(e => e.SnfPercent)).HasColumnName("snf_percent");
         MapPaisa(entity.Property(e => e.RatePerLiterPaisa)).HasColumnName("rate_per_liter_paisa").IsRequired();
         MapPaisa(entity.Property(e => e.TotalCreditPaisa)).HasColumnName("total_credit_paisa").IsRequired();
         entity.Property(e => e.CollectionTime).HasColumnName("collection_time").IsRequired();
@@ -734,5 +925,8 @@ public class WebPosDbContext : DbContext
         property.HasColumnType("bigint");
 
     private static PropertyBuilder<decimal> MapNumeric(PropertyBuilder<decimal> property) =>
+        property.HasColumnType("numeric(12,3)");
+
+    private static PropertyBuilder<decimal?> MapNumeric(PropertyBuilder<decimal?> property) =>
         property.HasColumnType("numeric(12,3)");
 }

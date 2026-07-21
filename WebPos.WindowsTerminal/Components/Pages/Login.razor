@@ -1,0 +1,103 @@
+@page "/"
+@page "/login"
+@using Common.Models
+@inject LoginService LoginService
+@inject NavigationManager Navigation
+
+<PageTitle>Cashier Login</PageTitle>
+
+<div class="terminal-shell">
+    <section class="login-card">
+        <header>
+            <span class="brand">WebPos</span>
+            <h1>Cashier Login</h1>
+        </header>
+
+        @if (!string.IsNullOrWhiteSpace(_errorMessage))
+        {
+            <div class="alert-red" role="alert">@_errorMessage</div>
+        }
+
+        <form @onsubmit="LoginAsync" @onsubmit:preventDefault>
+            <label for="pin">Enter PIN</label>
+            <input id="pin"
+                   class="pin-display"
+                   type="password"
+                   inputmode="numeric"
+                   pattern="[0-9]*"
+                   maxlength="12"
+                   autocomplete="off"
+                   autofocus
+                   @bind="_pin"
+                   @bind:event="oninput"
+                   disabled="@_isBusy" />
+
+            <div class="keypad" aria-label="Numeric keypad">
+                @foreach (string digit in Digits)
+                {
+                    <button type="button" @onclick="() => AppendDigit(digit)" disabled="@_isBusy">
+                        @digit
+                    </button>
+                }
+                <button type="button" class="secondary" @onclick="Clear" disabled="@_isBusy">Clear</button>
+                <button type="button" @onclick="AppendZero" disabled="@_isBusy">0</button>
+                <button type="button" class="secondary" @onclick="Backspace" disabled="@_isBusy">⌫</button>
+            </div>
+
+            <button class="login-button" type="submit" disabled="@(_isBusy || _pin.Length < 4)">
+                @(_isBusy ? "Signing in…" : "Login")
+            </button>
+        </form>
+    </section>
+</div>
+
+@code {
+    private static readonly string[] Digits = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
+
+    private string _pin = string.Empty;
+    private string? _errorMessage;
+    private bool _isBusy;
+
+    private void AppendDigit(string digit)
+    {
+        if (_pin.Length < 12)
+        {
+            _pin += digit;
+        }
+    }
+
+    private void Clear() => _pin = string.Empty;
+
+    private void AppendZero() => AppendDigit("0");
+
+    private void Backspace()
+    {
+        if (_pin.Length > 0)
+        {
+            _pin = _pin[..^1];
+        }
+    }
+
+    private async Task LoginAsync()
+    {
+        _errorMessage = null;
+        _isBusy = true;
+        try
+        {
+            Result<CashierDto> result = await LoginService.LoginAsync(_pin);
+            _pin = string.Empty;
+
+            if (!result.Success)
+            {
+                _errorMessage = result.ErrorMessage;
+                return;
+            }
+
+            Navigation.NavigateTo("/start-shift");
+        }
+        finally
+        {
+            _isBusy = false;
+        }
+    }
+}

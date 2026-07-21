@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sa}
+      POSTGRES_DB: WebPos
+    ports:
+      - "5432:5432"
+    volumes:
+      - webpos_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__DefaultConnection: "Server=postgres;Port=5432;Database=WebPos;User Id=postgres;Password=${POSTGRES_PASSWORD:-sa};"
+      Security__PinHashKey: ${SECURITY_PIN_HASH_KEY}
+      Security__Jwt__Key: ${SECURITY_JWT_KEY}
+      Security__Enrollment__PrivateKeyPem: ${SECURITY_ENROLLMENT_PRIVATE_KEY_PEM}
+      Security__Enrollment__PublicKeyPem: ${SECURITY_ENROLLMENT_PUBLIC_KEY_PEM}
+      Pilot__TerminalId: ${PILOT_TERMINAL_ID:-00000000-0000-0000-0000-000000000010}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  webpos_pgdata:

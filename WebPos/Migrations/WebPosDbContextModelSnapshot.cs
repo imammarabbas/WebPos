@@ -63,15 +63,27 @@ namespace WebPos.Migrations
                         .HasColumnType("character varying(20)")
                         .HasColumnName("status");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.Property<Guid>("TerminalId")
                         .HasColumnType("uuid")
                         .HasColumnName("terminal_id");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("CashierId");
+                    b.HasIndex("CashierId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_cashier_shifts_open_cashier")
+                        .HasFilter("\"status\" = 'OPEN'");
 
-                    b.HasIndex("TerminalId");
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TerminalId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_cashier_shifts_open_terminal")
+                        .HasFilter("\"status\" = 'OPEN'");
 
                     b.ToTable("cashier_shifts", (string)null);
                 });
@@ -105,9 +117,15 @@ namespace WebPos.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("target_margin_percentage");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ParentCategoryId");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("categories", (string)null);
                 });
@@ -123,6 +141,10 @@ namespace WebPos.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("collection_time");
 
+                    b.Property<decimal?>("FatPercent")
+                        .HasColumnType("numeric(12,3)")
+                        .HasColumnName("fat_percent");
+
                     b.Property<decimal>("LitersReceived")
                         .HasColumnType("numeric(12,3)")
                         .HasColumnName("liters_received");
@@ -137,9 +159,17 @@ namespace WebPos.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("rate_per_liter_paisa");
 
+                    b.Property<decimal?>("SnfPercent")
+                        .HasColumnType("numeric(12,3)")
+                        .HasColumnName("snf_percent");
+
                     b.Property<Guid>("SupplierId")
                         .HasColumnType("uuid")
                         .HasColumnName("supplier_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
 
                     b.Property<long>("TotalCreditPaisa")
                         .HasColumnType("bigint")
@@ -148,6 +178,8 @@ namespace WebPos.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("SupplierId");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("daily_milk_collections", (string)null);
                 });
@@ -185,6 +217,10 @@ namespace WebPos.Migrations
                         .HasColumnType("character varying(50)")
                         .HasColumnName("reason_code");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.Property<long>("WriteOffLossPaisa")
                         .HasColumnType("bigint")
                         .HasColumnName("write_off_loss_paisa");
@@ -196,6 +232,8 @@ namespace WebPos.Migrations
                     b.HasIndex("LoggedBy");
 
                     b.HasIndex("ProductId");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("damaged_stock_logs", (string)null);
                 });
@@ -245,6 +283,10 @@ namespace WebPos.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("shift_id");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.Property<Guid>("TransactionGroupId")
                         .HasColumnType("uuid")
                         .HasColumnName("transaction_group_id");
@@ -262,6 +304,8 @@ namespace WebPos.Migrations
                     b.HasIndex("CreatedAt");
 
                     b.HasIndex("ReferenceNo");
+
+                    b.HasIndex("TenantId");
 
                     b.HasIndex("TransactionGroupId");
 
@@ -292,6 +336,12 @@ namespace WebPos.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("current_balance_paisa");
 
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_deleted");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -310,14 +360,28 @@ namespace WebPos.Migrations
                         .HasColumnType("character varying(20)")
                         .HasColumnName("phone_number");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PhoneNumber")
-                        .IsUnique();
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "PhoneNumber")
+                        .IsUnique()
+                        .HasDatabaseName("UX_parties_tenant_phone");
+
+                    b.HasIndex("TenantId", "UpdatedAt")
+                        .HasDatabaseName("IX_parties_tenant_updated_at");
+
+                    b.HasIndex("TenantId", "PartyType", "Name")
+                        .IsUnique()
+                        .HasDatabaseName("UX_parties_tenant_type_name");
 
                     b.ToTable("parties", (string)null);
                 });
@@ -366,6 +430,10 @@ namespace WebPos.Migrations
                         .HasColumnType("character varying(100)")
                         .HasColumnName("reference_number");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.Property<long>("TransactionAmountPaisa")
                         .HasColumnType("bigint")
                         .HasColumnName("amount_paisa");
@@ -383,6 +451,8 @@ namespace WebPos.Migrations
                     b.HasIndex("PartyId");
 
                     b.HasIndex("PurchaseOrderId");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("party_ledgers", (string)null);
                 });
@@ -424,6 +494,12 @@ namespace WebPos.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_deleted");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(150)
@@ -440,6 +516,10 @@ namespace WebPos.Migrations
                         .HasColumnType("character varying(50)")
                         .HasColumnName("sku");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
@@ -453,6 +533,11 @@ namespace WebPos.Migrations
 
                     b.HasIndex("Sku")
                         .IsUnique();
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "UpdatedAt")
+                        .HasDatabaseName("IX_products_tenant_updated_at");
 
                     b.ToTable("products", (string)null);
                 });
@@ -482,7 +567,7 @@ namespace WebPos.Migrations
                         .HasColumnType("numeric(12,3)")
                         .HasColumnName("current_qty");
 
-                    b.Property<DateOnly>("ExpiryDate")
+                    b.Property<DateOnly?>("ExpiryDate")
                         .HasColumnType("date")
                         .HasColumnName("expiry_date");
 
@@ -511,6 +596,10 @@ namespace WebPos.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("supplier_id");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ProductId");
@@ -518,6 +607,8 @@ namespace WebPos.Migrations
                     b.HasIndex("PurchaseOrderId");
 
                     b.HasIndex("SupplierId");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("product_batches", (string)null);
                 });
@@ -541,11 +632,17 @@ namespace WebPos.Migrations
                         .HasColumnType("numeric(12,3)")
                         .HasColumnName("quantity_consumed");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ProductId");
 
                     b.HasIndex("ProductionLogId");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("production_consumption_items", (string)null);
                 });
@@ -575,12 +672,18 @@ namespace WebPos.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("operator_id");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.HasKey("Id");
 
                     b.HasIndex("BatchReference")
                         .IsUnique();
 
                     b.HasIndex("OperatorId");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("production_logs", (string)null);
                 });
@@ -612,6 +715,10 @@ namespace WebPos.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("target_batch_id");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ProductId");
@@ -619,6 +726,8 @@ namespace WebPos.Migrations
                     b.HasIndex("ProductionLogId");
 
                     b.HasIndex("TargetBatchId");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("production_yield_items", (string)null);
                 });
@@ -634,6 +743,12 @@ namespace WebPos.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("batch_id");
 
+                    b.Property<string>("BatchNumber")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("batch_number");
+
                     b.Property<decimal>("BonusQuantity")
                         .HasColumnType("numeric(12,3)")
                         .HasColumnName("bonus_quantity");
@@ -641,6 +756,10 @@ namespace WebPos.Migrations
                     b.Property<long>("CostPricePerUnitPaisa")
                         .HasColumnType("bigint")
                         .HasColumnName("cost_price_per_unit_paisa");
+
+                    b.Property<DateOnly?>("ExpiryDate")
+                        .HasColumnType("date")
+                        .HasColumnName("expiry_date");
 
                     b.Property<Guid>("ProductId")
                         .HasColumnType("uuid")
@@ -654,9 +773,18 @@ namespace WebPos.Migrations
                         .HasColumnType("numeric(12,3)")
                         .HasColumnName("quantity_received");
 
+                    b.Property<string>("RackLocation")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("rack_location");
+
                     b.Property<long>("RetailPricePerUnitPaisa")
                         .HasColumnType("bigint")
                         .HasColumnName("retail_price_per_unit_paisa");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
 
                     b.HasKey("Id");
 
@@ -665,6 +793,8 @@ namespace WebPos.Migrations
                     b.HasIndex("ProductId");
 
                     b.HasIndex("PurchaseOrderId");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("purchase_items", (string)null);
                 });
@@ -683,6 +813,10 @@ namespace WebPos.Migrations
                     b.Property<long>("DiscountPaisa")
                         .HasColumnType("bigint")
                         .HasColumnName("discount_paisa");
+
+                    b.Property<bool>("IsReceived")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_received");
 
                     b.Property<long>("NetPayablePaisa")
                         .HasColumnType("bigint")
@@ -712,11 +846,17 @@ namespace WebPos.Migrations
                         .HasColumnType("character varying(100)")
                         .HasColumnName("supplier_invoice_no");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ReceiverId");
 
                     b.HasIndex("SupplierId");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("purchase_orders", (string)null);
                 });
@@ -744,6 +884,10 @@ namespace WebPos.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("supplier_id");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.Property<long>("TotalCreditDeductionPaisa")
                         .HasColumnType("bigint")
                         .HasColumnName("total_credit_deduction_paisa");
@@ -755,6 +899,8 @@ namespace WebPos.Migrations
                     b.HasIndex("OriginalPurchaseOrderId");
 
                     b.HasIndex("SupplierId");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("purchase_returns", (string)null);
                 });
@@ -786,6 +932,10 @@ namespace WebPos.Migrations
                         .HasColumnType("numeric(12,3)")
                         .HasColumnName("quantity");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.HasKey("Id");
 
                     b.HasIndex("BatchId");
@@ -793,6 +943,8 @@ namespace WebPos.Migrations
                     b.HasIndex("ProductId");
 
                     b.HasIndex("PurchaseReturnId");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("purchase_return_items", (string)null);
                 });
@@ -814,10 +966,16 @@ namespace WebPos.Migrations
                         .HasColumnType("character varying(50)")
                         .HasColumnName("role_name");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.HasKey("Id");
 
                     b.HasIndex("RoleName")
                         .IsUnique();
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("roles", (string)null);
                 });
@@ -870,6 +1028,10 @@ namespace WebPos.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("tax_amount_paisa");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.Property<Guid?>("TerminalId")
                         .HasColumnType("uuid")
                         .HasColumnName("terminal_id");
@@ -885,6 +1047,8 @@ namespace WebPos.Migrations
                     b.HasIndex("CustomerId");
 
                     b.HasIndex("ShiftId");
+
+                    b.HasIndex("TenantId");
 
                     b.HasIndex("TerminalId");
 
@@ -920,6 +1084,10 @@ namespace WebPos.Migrations
                         .HasColumnType("numeric(12,3)")
                         .HasColumnName("quantity");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.Property<long>("UnitPricePaisa")
                         .HasColumnType("bigint")
                         .HasColumnName("unit_price_paisa");
@@ -931,6 +1099,8 @@ namespace WebPos.Migrations
                     b.HasIndex("InvoiceNo");
 
                     b.HasIndex("ProductId");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("sales_items", (string)null);
                 });
@@ -960,6 +1130,10 @@ namespace WebPos.Migrations
                         .HasColumnType("character varying(100)")
                         .HasColumnName("original_invoice_no");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.Property<long>("TotalRefundPaisa")
                         .HasColumnType("bigint")
                         .HasColumnName("total_refund_paisa");
@@ -971,6 +1145,8 @@ namespace WebPos.Migrations
                     b.HasIndex("CustomerId");
 
                     b.HasIndex("OriginalInvoiceNo");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("sales_returns", (string)null);
                 });
@@ -1008,6 +1184,10 @@ namespace WebPos.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("sales_return_id");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.HasKey("Id");
 
                     b.HasIndex("BatchId");
@@ -1015,6 +1195,8 @@ namespace WebPos.Migrations
                     b.HasIndex("ProductId");
 
                     b.HasIndex("SalesReturnId");
+
+                    b.HasIndex("TenantId");
 
                     b.ToTable("sales_return_items", (string)null);
                 });
@@ -1069,6 +1251,10 @@ namespace WebPos.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("shift_id");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.Property<string>("VoucherNo")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -1083,10 +1269,47 @@ namespace WebPos.Migrations
 
                     b.HasIndex("ShiftId");
 
+                    b.HasIndex("TenantId");
+
                     b.HasIndex("VoucherNo")
                         .IsUnique();
 
                     b.ToTable("shift_expenses", (string)null);
+                });
+
+            modelBuilder.Entity("WebPos.Core.Models.Tenant", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_active");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("name");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("slug");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Slug")
+                        .IsUnique();
+
+                    b.ToTable("tenants", (string)null);
                 });
 
             modelBuilder.Entity("WebPos.Core.Models.Terminal", b =>
@@ -1110,6 +1333,10 @@ namespace WebPos.Migrations
                         .HasColumnType("character varying(100)")
                         .HasColumnName("mac_address");
 
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
                     b.Property<string>("TerminalName")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -1120,6 +1347,8 @@ namespace WebPos.Migrations
 
                     b.HasIndex("MacAddress")
                         .IsUnique();
+
+                    b.HasIndex("TenantId");
 
                     b.HasIndex("TerminalName")
                         .IsUnique();
@@ -1148,9 +1377,19 @@ namespace WebPos.Migrations
                         .HasColumnType("character varying(255)")
                         .HasColumnName("password_hash");
 
+                    b.Property<string>("PinHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("pin_hash");
+
                     b.Property<Guid>("RoleId")
                         .HasColumnType("uuid")
                         .HasColumnName("role_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -1164,7 +1403,13 @@ namespace WebPos.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("PinHash")
+                        .IsUnique()
+                        .HasFilter("\"pin_hash\" <> ''");
+
                     b.HasIndex("RoleId");
+
+                    b.HasIndex("TenantId");
 
                     b.HasIndex("Username")
                         .IsUnique();
@@ -1177,6 +1422,12 @@ namespace WebPos.Migrations
                     b.HasOne("WebPos.Core.Models.User", null)
                         .WithMany()
                         .HasForeignKey("CashierId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
@@ -1194,6 +1445,12 @@ namespace WebPos.Migrations
                         .HasForeignKey("ParentCategoryId")
                         .OnDelete(DeleteBehavior.Restrict);
 
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.Navigation("ParentCategory");
                 });
 
@@ -1202,6 +1459,12 @@ namespace WebPos.Migrations
                     b.HasOne("WebPos.Core.Models.Party", "Supplier")
                         .WithMany()
                         .HasForeignKey("SupplierId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
@@ -1228,11 +1491,35 @@ namespace WebPos.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.Navigation("Batch");
 
                     b.Navigation("LoggedByUser");
 
                     b.Navigation("Product");
+                });
+
+            modelBuilder.Entity("WebPos.Core.Models.GeneralLedgerEntry", b =>
+                {
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WebPos.Core.Models.Party", b =>
+                {
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("WebPos.Core.Models.PartyLedger", b =>
@@ -1253,6 +1540,12 @@ namespace WebPos.Migrations
                         .HasForeignKey("PurchaseOrderId")
                         .OnDelete(DeleteBehavior.Restrict);
 
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.Navigation("Party");
                 });
 
@@ -1262,6 +1555,12 @@ namespace WebPos.Migrations
                         .WithMany("Products")
                         .HasForeignKey("CategoryId")
                         .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.Navigation("Category");
                 });
@@ -1282,6 +1581,12 @@ namespace WebPos.Migrations
                     b.HasOne("WebPos.Core.Models.Party", "Supplier")
                         .WithMany()
                         .HasForeignKey("SupplierId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
@@ -1306,6 +1611,12 @@ namespace WebPos.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.Navigation("Product");
 
                     b.Navigation("ProductionLog");
@@ -1316,6 +1627,12 @@ namespace WebPos.Migrations
                     b.HasOne("WebPos.Core.Models.User", "Operator")
                         .WithMany()
                         .HasForeignKey("OperatorId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
@@ -1340,6 +1657,12 @@ namespace WebPos.Migrations
                         .WithMany("ProductionYieldItems")
                         .HasForeignKey("TargetBatchId")
                         .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.Navigation("Product");
 
@@ -1367,6 +1690,12 @@ namespace WebPos.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.Navigation("Batch");
 
                     b.Navigation("Product");
@@ -1385,6 +1714,12 @@ namespace WebPos.Migrations
                     b.HasOne("WebPos.Core.Models.Party", "Supplier")
                         .WithMany()
                         .HasForeignKey("SupplierId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
@@ -1410,6 +1745,12 @@ namespace WebPos.Migrations
                     b.HasOne("WebPos.Core.Models.Party", "Supplier")
                         .WithMany()
                         .HasForeignKey("SupplierId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
@@ -1440,11 +1781,26 @@ namespace WebPos.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.Navigation("Batch");
 
                     b.Navigation("Product");
 
                     b.Navigation("PurchaseReturn");
+                });
+
+            modelBuilder.Entity("WebPos.Core.Models.Role", b =>
+                {
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("WebPos.Core.Models.SalesInvoice", b =>
@@ -1463,6 +1819,12 @@ namespace WebPos.Migrations
                     b.HasOne("WebPos.Core.Models.CashierShift", "Shift")
                         .WithMany()
                         .HasForeignKey("ShiftId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
@@ -1500,6 +1862,12 @@ namespace WebPos.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.Navigation("Batch");
 
                     b.Navigation("Invoice");
@@ -1523,6 +1891,12 @@ namespace WebPos.Migrations
                     b.HasOne("WebPos.Core.Models.SalesInvoice", "OriginalInvoice")
                         .WithMany("SalesReturns")
                         .HasForeignKey("OriginalInvoiceNo")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
@@ -1553,6 +1927,12 @@ namespace WebPos.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.Navigation("Batch");
 
                     b.Navigation("Product");
@@ -1573,6 +1953,21 @@ namespace WebPos.Migrations
                         .HasForeignKey("ShiftId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WebPos.Core.Models.Terminal", b =>
+                {
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("WebPos.Core.Models.User", b =>
@@ -1580,6 +1975,12 @@ namespace WebPos.Migrations
                     b.HasOne("WebPos.Core.Models.Role", "Role")
                         .WithMany("Users")
                         .HasForeignKey("RoleId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 

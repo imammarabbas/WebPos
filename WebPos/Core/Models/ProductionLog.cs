@@ -1,6 +1,8 @@
+using WebPos.Core.Entities;
+
 namespace WebPos.Core.Models;
 
-public class ProductionLog
+public class ProductionLog : BaseEntity
 {
     public Guid Id { get; set; }
 

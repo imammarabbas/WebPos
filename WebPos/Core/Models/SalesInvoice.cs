@@ -1,6 +1,8 @@
+using WebPos.Core.Entities;
+
 namespace WebPos.Core.Models;
 
-public class SalesInvoice
+public class SalesInvoice : BaseEntity
 {
     public string InvoiceNo { get; set; } = string.Empty;
 

@@ -1,0 +1,129 @@
+@page "/start-shift"
+@using Common.Models
+@inject LoginService LoginService
+@inject ShiftService ShiftService
+@inject ISessionService SessionService
+@inject TerminalOptions TerminalOptions
+@inject NavigationManager Navigation
+
+<PageTitle>Start Shift</PageTitle>
+
+<div class="terminal-shell">
+    <section class="shift-card">
+        <header>
+            <span class="brand">WebPos</span>
+            <h1>Start Shift</h1>
+            @if (LoginService.CurrentCashier is not null)
+            {
+                <p>Cashier: <strong>@LoginService.CurrentCashier.Name</strong></p>
+            }
+        </header>
+
+        @if (!string.IsNullOrWhiteSpace(_errorMessage))
+        {
+            <div class="alert-red" role="alert">@_errorMessage</div>
+        }
+
+        <form @onsubmit="StartShiftAsync" @onsubmit:preventDefault>
+            <label for="openingCash">Opening cash (Rs)</label>
+            <input id="openingCash"
+                   class="cash-input"
+                   type="number"
+                   inputmode="decimal"
+                   min="0"
+                   step="0.01"
+                   autofocus
+                   @bind="_openingCashText"
+                   @bind:event="oninput"
+                   disabled="@_isBusy" />
+
+            <div class="terminal-id">
+                Terminal: @(TerminalOptions.TerminalId == Guid.Empty
+                    ? "Not configured"
+                    : TerminalOptions.TerminalId)
+            </div>
+
+            <button type="submit"
+                    class="start-button"
+                    disabled="@(_isBusy || TerminalOptions.TerminalId == Guid.Empty)">
+                @(_isBusy ? "Authorizing…" : "Start Shift")
+            </button>
+        </form>
+    </section>
+</div>
+
+@code {
+    private string _openingCashText = "0.00";
+    private string? _errorMessage;
+    private bool _isBusy;
+
+    protected override void OnInitialized()
+    {
+        if (LoginService.CurrentCashier is null)
+        {
+            Navigation.NavigateTo("/login");
+        }
+
+        if (TerminalOptions.TerminalId == Guid.Empty)
+        {
+            _errorMessage =
+                "Terminal is not configured. Set the WEBPOS_TERMINAL_ID environment variable.";
+        }
+    }
+
+    private async Task StartShiftAsync()
+    {
+        CashierDto? cashier = LoginService.CurrentCashier;
+        if (cashier is null)
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
+        if (!decimal.TryParse(_openingCashText, out decimal openingCash)
+            || openingCash < 0
+            || openingCash > long.MaxValue / 100m)
+        {
+            _errorMessage = "Enter a valid non-negative opening cash amount.";
+            return;
+        }
+
+        _errorMessage = null;
+        _isBusy = true;
+        try
+        {
+            long openingCashPaisa =
+                (long)Math.Round(openingCash * 100m, MidpointRounding.AwayFromZero);
+
+            Result<ShiftDto> result = await ShiftService.StartShiftAsync(
+                cashier.CashierId,
+                TerminalOptions.TerminalId,
+                openingCashPaisa);
+
+            if (!result.Success || result.Data is null)
+            {
+                _errorMessage = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                    ? "The server could not authorize this shift."
+                    : result.ErrorMessage;
+                return;
+            }
+
+            ShiftDto shift = result.Data;
+            if (shift.CashierId != cashier.CashierId
+                || shift.TerminalId != TerminalOptions.TerminalId
+                || !string.Equals(shift.Status, "OPEN", StringComparison.Ordinal))
+            {
+                _errorMessage = "The server returned an invalid shift context.";
+                return;
+            }
+
+            // Bind local state only after the server has authorized and persisted the shift.
+            SessionService.SetSession(shift.ShiftId, shift.CashierId, shift.TerminalId);
+            Navigation.NavigateTo("/sales");
+        }
+        finally
+        {
+            _isBusy = false;
+        }
+    }
+}

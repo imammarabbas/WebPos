@@ -1,6 +1,8 @@
+using WebPos.Core.Entities;
+
 namespace WebPos.Core.Models;
 
-public class CashierShift
+public class CashierShift : BaseEntity
 {
     public Guid Id { get; set; }
 

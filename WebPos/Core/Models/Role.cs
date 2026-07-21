@@ -1,6 +1,8 @@
+using WebPos.Core.Entities;
+
 namespace WebPos.Core.Models;
 
-public class Role
+public class Role : BaseEntity
 {
     public Guid Id { get; set; }
 

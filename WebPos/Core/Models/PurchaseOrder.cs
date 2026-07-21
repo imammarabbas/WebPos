@@ -1,6 +1,8 @@
+using WebPos.Core.Entities;
+
 namespace WebPos.Core.Models;
 
-public class PurchaseOrder
+public class PurchaseOrder : BaseEntity
 {
     public Guid Id { get; set; }
 
@@ -17,6 +19,12 @@ public class PurchaseOrder
     public long NetPayablePaisa { get; set; }
 
     public string PaymentStatus { get; set; } = string.Empty;
+
+    /// <summary>
+    /// True after ReceiveStockAsync posts inventory batches and AP ledger entries.
+    /// Guards against double-posting the same invoice.
+    /// </summary>
+    public bool IsReceived { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
 

@@ -1,6 +1,8 @@
+using WebPos.Core.Entities;
+
 namespace WebPos.Core.Models;
 
-public class PurchaseItem
+public class PurchaseItem : BaseEntity
 {
     public Guid Id { get; set; }
 
@@ -15,6 +17,12 @@ public class PurchaseItem
     public long CostPricePerUnitPaisa { get; set; }
 
     public long RetailPricePerUnitPaisa { get; set; }
+
+    public string BatchNumber { get; set; } = string.Empty;
+
+    public DateOnly? ExpiryDate { get; set; }
+
+    public string? RackLocation { get; set; }
 
     public Guid? BatchId { get; set; }
 

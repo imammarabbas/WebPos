@@ -1,0 +1,39 @@
+## Build
+**/bin/
+**/obj/
+**/out/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## IDE / OS
+.vs/
+.idea/
+*.swp
+*~
+Thumbs.db
+Desktop.ini
+
+## Secrets / local env
+.env
+.env.local
+*.pfx
+*.pem
+!docs/**/*.md
+
+## Test / coverage
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+## NuGet
+*.nupkg
+**/packages/
+
+## MAUI / Windows
+**/AppPackages/
+**/BundleArtifacts/
+*.appx
+*.msix

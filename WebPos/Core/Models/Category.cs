@@ -1,6 +1,8 @@
+using WebPos.Core.Entities;
+
 namespace WebPos.Core.Models;
 
-public class Category
+public class Category : BaseEntity
 {
     public Guid Id { get; set; }
 

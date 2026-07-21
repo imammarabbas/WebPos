@@ -1,12 +1,16 @@
+using WebPos.Core.Entities;
+
 namespace WebPos.Core.Models;
 
-public class User
+public class User : BaseEntity
 {
     public Guid Id { get; set; }
 
     public string Username { get; set; } = string.Empty;
 
     public string PasswordHash { get; set; } = string.Empty;
+
+    public string PinHash { get; set; } = string.Empty;
 
     public Guid RoleId { get; set; }
 

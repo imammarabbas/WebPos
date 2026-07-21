@@ -1,6 +1,8 @@
+using WebPos.Core.Entities;
+
 namespace WebPos.Core.Models;
 
-public class SalesItem
+public class SalesItem : BaseEntity
 {
     public Guid Id { get; set; }
 

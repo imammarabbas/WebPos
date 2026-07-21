@@ -1,6 +1,8 @@
+using WebPos.Core.Entities;
+
 namespace WebPos.Core.Models;
 
-public class Party
+public class Party : BaseEntity
 {
     public Guid Id { get; set; }
 
@@ -15,6 +17,9 @@ public class Party
     public long CreditLimitPaisa { get; set; }
 
     public long CurrentBalancePaisa { get; set; }
+
+    /// <summary>Soft delete for sync: clients remove the record from local stores.</summary>
+    public bool IsDeleted { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
 

@@ -1,0 +1,225 @@
+@page "/sales"
+@using Common.Models
+@using WebPos.WindowsTerminal.Services
+@inject SalesService SalesService
+
+<PageTitle>Sales Terminal</PageTitle>
+
+<div class="terminal-shell" @onkeydown="OnKeyDown">
+    <header class="terminal-header">
+        <span class="terminal-brand">WebPos</span>
+        <span class="terminal-mode">CASH SALE</span>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(_errorMessage))
+    {
+        <div class="alert-red" role="alert" aria-live="assertive">
+            @_errorMessage
+        </div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_successMessage))
+    {
+        <div class="alert-ok" role="status" aria-live="polite">
+            @_successMessage
+        </div>
+    }
+
+    <form class="terminal-form" @onsubmit="ProcessSaleAsync" @onsubmit:preventDefault>
+        <label class="field-label" for="productSearch">Find product</label>
+        <input id="productSearch"
+               class="terminal-input search-input"
+               type="search"
+               placeholder="Scan barcode or type name / SKU"
+               autocomplete="off"
+               autofocus
+               @ref="_searchInput"
+               @bind="_searchText"
+               @bind:event="oninput"
+               disabled="@_isBusy" />
+
+        <label class="field-label" for="productSelect">Product / batch</label>
+        <select id="productSelect"
+                class="terminal-input product-select"
+                @bind="_selectedBatchId"
+                @bind:after="SelectProduct"
+                disabled="@(_isBusy || _isLoadingProducts)">
+            <option value="@Guid.Empty">Select a product…</option>
+            @foreach (SalesProductDto product in FilteredProducts)
+            {
+                <option value="@product.BatchId">
+                    @product.Name · @product.Sku · @product.BatchNumber
+                </option>
+            }
+        </select>
+
+        @if (_selectedProduct is not null)
+        {
+            <section class="price-panel" aria-live="polite">
+                <div>
+                    <span class="price-caption">Unit price</span>
+                    <strong class="price-value">
+                        Rs @(_selectedProduct.UnitPricePaisa / 100m).ToString("N2")
+                    </strong>
+                </div>
+                <div class="stock-value">
+                    Available: @_selectedProduct.AvailableStock.ToString("0.##")
+                </div>
+            </section>
+        }
+
+        <label class="field-label" for="quantityInput">Quantity</label>
+        <input id="quantityInput"
+               class="terminal-input quantity-input"
+               type="number"
+               inputmode="decimal"
+               step="0.01"
+               min="0.01"
+               autocomplete="off"
+               @bind="_quantityText"
+               @bind:event="oninput"
+               disabled="@_isBusy" />
+
+        <button type="submit"
+                class="process-btn"
+                disabled="@(_isBusy || !CanSubmit)"
+                accesskey="p">
+            @if (_isBusy)
+            {
+                <span>Processing…</span>
+            }
+            else
+            {
+                <span>Process Sale</span>
+                <kbd class="hint">Enter</kbd>
+            }
+        </button>
+    </form>
+</div>
+
+@code {
+    private ElementReference _searchInput;
+    private IReadOnlyList<SalesProductDto> _products = [];
+    private SalesProductDto? _selectedProduct;
+    private Guid _selectedBatchId;
+    private string _searchText = string.Empty;
+    private string _quantityText = "1";
+    private string? _errorMessage;
+    private string? _successMessage;
+    private bool _isLoadingProducts;
+    private bool _isBusy;
+
+    private IEnumerable<SalesProductDto> FilteredProducts
+    {
+        get
+        {
+            string search = _searchText.Trim();
+            return string.IsNullOrEmpty(search)
+                ? _products
+                : _products.Where(product =>
+                    product.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
+                    || product.Sku.Contains(search, StringComparison.OrdinalIgnoreCase)
+                    || product.Barcode.Contains(search, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    private bool CanSubmit =>
+        _selectedProduct is { UnitPricePaisa: > 0 }
+        && decimal.TryParse(_quantityText, out decimal quantity)
+        && quantity > 0
+        && quantity <= _selectedProduct.AvailableStock;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProductsAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await _searchInput.FocusAsync();
+        }
+    }
+
+    private async Task LoadProductsAsync()
+    {
+        _isLoadingProducts = true;
+        Result<IReadOnlyList<SalesProductDto>> result =
+            await SalesService.GetProductsForSaleAsync();
+
+        _isLoadingProducts = false;
+        if (result.Success && result.Data is not null)
+        {
+            _products = result.Data;
+            return;
+        }
+
+        _errorMessage = string.IsNullOrWhiteSpace(result.ErrorMessage)
+            ? "Unable to load products."
+            : result.ErrorMessage;
+    }
+
+    private void SelectProduct()
+    {
+        _selectedProduct = _products.FirstOrDefault(
+            product => product.BatchId == _selectedBatchId);
+        _errorMessage = null;
+        _successMessage = null;
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "F12" && !_isBusy && CanSubmit)
+        {
+            await ProcessSaleAsync();
+        }
+    }
+
+    private async Task ProcessSaleAsync()
+    {
+        _errorMessage = null;
+        _successMessage = null;
+
+        if (_selectedProduct is null
+            || !decimal.TryParse(_quantityText, out decimal quantity)
+            || !CanSubmit)
+        {
+            _errorMessage = "Select an in-stock product and enter a valid quantity.";
+            return;
+        }
+
+        _isBusy = true;
+        try
+        {
+            Result<CompleteSaleResult> result =
+                await SalesService.CompleteSaleAsync(_selectedProduct, quantity);
+
+            if (!result.Success)
+            {
+                _errorMessage = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                    ? "Sale failed."
+                    : result.ErrorMessage;
+                return;
+            }
+
+            CompleteSaleResult data = result.Data!;
+            _successMessage =
+                $"Sale OK — {data.InvoiceNo} · Rs {data.TotalAmountPaisa / 100m:N2}";
+            _selectedBatchId = Guid.Empty;
+            _selectedProduct = null;
+            _quantityText = "1";
+            _searchText = string.Empty;
+            await LoadProductsAsync();
+            await _searchInput.FocusAsync();
+        }
+        catch (SessionNotActiveException)
+        {
+            _errorMessage = "Start Shift before processing a sale.";
+        }
+        finally
+        {
+            _isBusy = false;
+        }
+    }
+}

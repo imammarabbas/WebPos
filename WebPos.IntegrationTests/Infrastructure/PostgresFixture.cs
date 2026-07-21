@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using WebPos.Core.Abstractions;
 using WebPos.Core.Data;
+using WebPos.Core.Entities;
+using WebPos.Core.Interfaces;
 using WebPos.Core.Services;
 
 namespace WebPos.IntegrationTests.Infrastructure;
@@ -67,7 +69,7 @@ public sealed class IntegrationTestScope : IAsyncDisposable, IDisposable
 
     public ITransactionService TransactionService { get; }
 
-    public PartyLedgerService PartyLedgerService { get; }
+    public IPartyLedgerService PartyLedgerService { get; }
 
     public ISalesService SalesService { get; }
 
@@ -75,11 +77,25 @@ public sealed class IntegrationTestScope : IAsyncDisposable, IDisposable
 
     public IntegrationTestScope(DbContextOptions<WebPosDbContext> options)
     {
-        DbContext = new WebPosDbContext(options);
+        ITenantService tenantService = new FixedTenantService(TenantDefaults.MasterTenantId);
+        DbContext = new WebPosDbContext(options, tenantService);
         TransactionService = new TransactionService(DbContext);
-        PartyLedgerService = new PartyLedgerService(DbContext, TransactionService);
+        PartyLedgerService = new PartyLedgerService(
+            DbContext,
+            TransactionService,
+            tenantService);
         SalesService = new SalesService(DbContext, TransactionService, PartyLedgerService);
-        SalesReturnService = new SalesReturnService(DbContext, TransactionService, PartyLedgerService);
+        SalesReturnService = new SalesReturnService(
+            DbContext,
+            TransactionService,
+            PartyLedgerService);
+    }
+
+    private sealed class FixedTenantService(Guid tenantId) : ITenantService
+    {
+        public Guid TenantId { get; } = tenantId;
+
+        public bool IsResolved => TenantId != Guid.Empty;
     }
 
     public void Dispose() => DbContext.Dispose();

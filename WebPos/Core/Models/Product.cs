@@ -1,6 +1,8 @@
+using WebPos.Core.Entities;
+
 namespace WebPos.Core.Models;
 
-public class Product
+public class Product : BaseEntity
 {
     public Guid Id { get; set; }
 
@@ -19,6 +21,9 @@ public class Product
     public int ConversionMultiplier { get; set; }
 
     public bool ShowOnWebshop { get; set; }
+
+    /// <summary>Soft delete for sync: clients remove the record from local stores.</summary>
+    public bool IsDeleted { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
 

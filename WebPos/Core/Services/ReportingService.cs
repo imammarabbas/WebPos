@@ -5,16 +5,20 @@ using Microsoft.EntityFrameworkCore;
 using WebPos.Core.Abstractions;
 using WebPos.Core.Constants;
 using WebPos.Core.Data;
+using WebPos.Core.Interfaces;
 
 namespace WebPos.Core.Services;
 
 public sealed class ReportingService : IReportingService
 {
     private readonly WebPosDbContext _context;
+    private readonly ITenantService _tenantService;
 
-    public ReportingService(WebPosDbContext context)
+    public ReportingService(WebPosDbContext context, ITenantService tenantService)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
+        _tenantService = tenantService
+            ?? throw new ArgumentNullException(nameof(tenantService));
     }
 
     public async Task<IReadOnlyList<ExpenseCategorySummary>> GetExpenseSummaryByCategoryAsync(
@@ -22,9 +26,15 @@ public sealed class ReportingService : IReportingService
         DateTimeOffset to,
         CancellationToken cancellationToken = default)
     {
-        List<ExpenseCategorySummary> shiftExpenses = await _context.ShiftExpenses
+        EnsureTenantResolved();
+        Guid tenantId = _tenantService.TenantId;
+
+        return await _context.ShiftExpenses
             .AsNoTracking()
-            .Where(e => e.LoggedAt >= from && e.LoggedAt <= to)
+            .Where(e =>
+                e.TenantId == tenantId
+                && e.LoggedAt >= from
+                && e.LoggedAt <= to)
             .GroupBy(e => e.ExpenseCategory)
             .Select(g => new ExpenseCategorySummary
             {
@@ -34,8 +44,6 @@ public sealed class ReportingService : IReportingService
             })
             .OrderByDescending(x => x.TotalAmountPaisa)
             .ToListAsync(cancellationToken);
-
-        return shiftExpenses;
     }
 
     public async Task<long> GetMaintenanceSpendAsync(
@@ -43,23 +51,21 @@ public sealed class ReportingService : IReportingService
         DateTimeOffset to,
         CancellationToken cancellationToken = default)
     {
-        long fromShiftExpenses = await _context.ShiftExpenses
-            .AsNoTracking()
-            .Where(e => e.ExpenseCategory == ExpenseCategories.Maintenance
-                        && e.LoggedAt >= from
-                        && e.LoggedAt <= to)
-            .SumAsync(e => e.AmountPaisa, cancellationToken);
+        EnsureTenantResolved();
+        Guid tenantId = _tenantService.TenantId;
 
+        // Ledger is the SSOT for financial totals. ShiftExpenses is operational detail only;
+        // Math.Max previously masked divergence between the two sources.
         string maintenanceAccount = LedgerAccounts.Expense(ExpenseCategories.Maintenance);
 
-        long fromLedger = await _context.GeneralLedgerEntries
+        return await _context.GeneralLedgerEntries
             .AsNoTracking()
-            .Where(e => e.AccountCode == maintenanceAccount
-                        && e.CreatedAt >= from
-                        && e.CreatedAt <= to)
+            .Where(e =>
+                e.TenantId == tenantId
+                && e.AccountCode == maintenanceAccount
+                && e.CreatedAt >= from
+                && e.CreatedAt <= to)
             .SumAsync(e => e.DebitPaisa, cancellationToken);
-
-        return Math.Max(fromShiftExpenses, fromLedger);
     }
 
     public async Task<IReadOnlyList<ProductProfitSummary>> GetGrossProfitByProductAsync(
@@ -67,30 +73,31 @@ public sealed class ReportingService : IReportingService
         DateTimeOffset to,
         CancellationToken cancellationToken = default)
     {
-        var salesData = await _context.SalesItems
-            .AsNoTracking()
-            .Where(i => i.Invoice.CreatedAt >= from && i.Invoice.CreatedAt <= to)
-            .Select(i => new
-            {
-                i.ProductId,
-                ProductName = i.Product.Name,
-                i.Quantity,
-                i.UnitPricePaisa,
-                i.Batch.CostPricePaisa
-            })
-            .ToListAsync(cancellationToken);
+        EnsureTenantResolved();
+        Guid tenantId = _tenantService.TenantId;
 
-        return salesData
-            .GroupBy(x => new { x.ProductId, x.ProductName })
+        // GroupBy/Sum stay on IQueryable so aggregation runs in SQL, not in memory.
+        return await _context.SalesItems
+            .AsNoTracking()
+            .Where(i =>
+                i.TenantId == tenantId
+                && i.Invoice.TenantId == tenantId
+                && i.Invoice.CreatedAt >= from
+                && i.Invoice.CreatedAt <= to)
+            .GroupBy(i => new { i.ProductId, ProductName = i.Product.Name })
             .Select(g => new ProductProfitSummary
             {
                 ProductId = g.Key.ProductId,
                 ProductName = g.Key.ProductName,
-                RevenuePaisa = g.Sum(x => (long)Math.Round(x.Quantity * x.UnitPricePaisa, MidpointRounding.AwayFromZero)),
-                CostPaisa = g.Sum(x => (long)Math.Round(x.Quantity * x.CostPricePaisa, MidpointRounding.AwayFromZero))
+                RevenuePaisa = (long)Math.Round(
+                    g.Sum(x => x.Quantity * x.UnitPricePaisa),
+                    MidpointRounding.AwayFromZero),
+                CostPaisa = (long)Math.Round(
+                    g.Sum(x => x.Quantity * x.Batch.CostPricePaisa),
+                    MidpointRounding.AwayFromZero)
             })
-            .OrderByDescending(x => x.GrossProfitPaisa)
-            .ToList();
+            .OrderByDescending(x => x.RevenuePaisa - x.CostPaisa)
+            .ToListAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<AccountCashFlowSummary>> GetCashFlowByAccountAsync(
@@ -98,9 +105,15 @@ public sealed class ReportingService : IReportingService
         DateTimeOffset to,
         CancellationToken cancellationToken = default)
     {
+        EnsureTenantResolved();
+        Guid tenantId = _tenantService.TenantId;
+
         return await _context.GeneralLedgerEntries
             .AsNoTracking()
-            .Where(e => e.CreatedAt >= from && e.CreatedAt <= to)
+            .Where(e =>
+                e.TenantId == tenantId
+                && e.CreatedAt >= from
+                && e.CreatedAt <= to)
             .GroupBy(e => e.AccountCode)
             .Select(g => new AccountCashFlowSummary
             {
@@ -117,7 +130,8 @@ public sealed class ReportingService : IReportingService
         DateTimeOffset to,
         CancellationToken cancellationToken = default)
     {
-        IReadOnlyList<ExpenseCategorySummary> rows = await GetExpenseSummaryByCategoryAsync(from, to, cancellationToken);
+        IReadOnlyList<ExpenseCategorySummary> rows =
+            await GetExpenseSummaryByCategoryAsync(from, to, cancellationToken);
 
         StringBuilder builder = new();
         builder.AppendLine("ExpenseCategory,TotalAmountPaisa,TransactionCount");
@@ -139,7 +153,8 @@ public sealed class ReportingService : IReportingService
         DateTimeOffset to,
         CancellationToken cancellationToken = default)
     {
-        IReadOnlyList<ExpenseCategorySummary> rows = await GetExpenseSummaryByCategoryAsync(from, to, cancellationToken);
+        IReadOnlyList<ExpenseCategorySummary> rows =
+            await GetExpenseSummaryByCategoryAsync(from, to, cancellationToken);
 
         return JsonSerializer.Serialize(new
         {
@@ -148,6 +163,15 @@ public sealed class ReportingService : IReportingService
             generatedAt = DateTimeOffset.UtcNow,
             categories = rows
         }, new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private void EnsureTenantResolved()
+    {
+        if (!_tenantService.IsResolved || _tenantService.TenantId == Guid.Empty)
+        {
+            throw new InvalidOperationException(
+                "Tenant context is not resolved for reporting operations.");
+        }
     }
 
     private static string CsvEscape(string value)

@@ -10,12 +10,12 @@ public sealed class SalesService : ISalesService
 {
     private readonly WebPosDbContext _context;
     private readonly ITransactionService _transactionService;
-    private readonly PartyLedgerService _partyLedgerService;
+    private readonly IPartyLedgerService _partyLedgerService;
 
     public SalesService(
         WebPosDbContext context,
         ITransactionService transactionService,
-        PartyLedgerService partyLedgerService)
+        IPartyLedgerService partyLedgerService)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _transactionService = transactionService ?? throw new ArgumentNullException(nameof(transactionService));
@@ -41,12 +41,19 @@ public sealed class SalesService : ISalesService
                 throw new InvalidOperationException("Net sale amount must be greater than zero.");
             }
 
-            CashierShift? shift = await _context.CashierShifts
-                .FirstOrDefaultAsync(s => s.Id == request.ShiftId, ct);
+            CashierShift? shift = request.TerminalId is Guid terminalId
+                ? await _context.CashierShifts.FirstOrDefaultAsync(candidate =>
+                    candidate.Id == request.ShiftId
+                    && candidate.Status == "OPEN"
+                    && candidate.TerminalId == terminalId
+                    && candidate.CashierId == request.CashierId,
+                    ct)
+                : null;
 
-            if (shift is null || !string.Equals(shift.Status, "OPEN", StringComparison.OrdinalIgnoreCase))
+            if (shift is null)
             {
-                throw new InvalidOperationException("An open cashier shift is required to complete a sale.");
+                throw new ShiftAuthorizationException(
+                    "The shift is inactive or is not authorized for this terminal and cashier.");
             }
 
             if (string.Equals(request.PaymentMethod, "CREDIT", StringComparison.OrdinalIgnoreCase))
@@ -75,6 +82,18 @@ public sealed class SalesService : ISalesService
                 if (!batches.TryGetValue(line.BatchId, out ProductBatch? batch))
                 {
                     throw new InvalidOperationException($"Batch {line.BatchNumber} was not found.");
+                }
+
+                if (batch.ProductId != line.ProductId)
+                {
+                    throw new InvalidOperationException(
+                        $"Batch {line.BatchNumber} does not belong to product {line.ProductName}.");
+                }
+
+                if (line.UnitPricePaisa != batch.RetailPricePaisa)
+                {
+                    throw new InvalidOperationException(
+                        $"The price for {line.ProductName} has changed. Refresh the product list and try again.");
                 }
 
                 if (line.Quantity > batch.CurrentQty)
