@@ -1,0 +1,17 @@
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Components.Authorization
+@using WebPos.Core.Services
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ICircuitTenantContext CircuitTenantContext
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        AuthenticationState state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        string? tid = state.User.FindFirst(HttpContextTenantService.JwtTenantClaimType)?.Value;
+        if (Guid.TryParse(tid, out Guid tenantId) && tenantId != Guid.Empty)
+        {
+            CircuitTenantContext.TenantId = tenantId;
+        }
+    }
+}

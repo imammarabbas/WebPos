@@ -1,0 +1,63 @@
+@namespace WebPos.Components.Pages.Master.Bi
+@using WebPos.Core.Abstractions
+
+<svg class="bi-donut" viewBox="0 0 120 120" aria-hidden="true">
+    @foreach (var seg in _segments)
+    {
+        <path d="@seg.Path" fill="@seg.Color" stroke="#1c2128" stroke-width="1" />
+    }
+    <circle cx="60" cy="60" r="34" fill="#1c2128" />
+    @((MarkupString)_labelMarkup)
+</svg>
+
+@code {
+    private static readonly string[] Palette =
+    [
+        "#34d399", "#60a5fa", "#fbbf24", "#a78bfa", "#f87171", "#2dd4bf", "#fb923c"
+    ];
+
+    [Parameter] public IReadOnlyList<BiShareSlice>? Slices { get; set; }
+
+    private List<(string Path, string Color)> _segments = [];
+    private string _labelMarkup = string.Empty;
+
+    protected override void OnParametersSet()
+    {
+        IReadOnlyList<BiShareSlice> slices = Slices ?? [];
+        long total = slices.Sum(s => s.AmountPaisa);
+        string center = total <= 0 ? "—" : $"{total / 100m:N0}";
+        _labelMarkup =
+            $"""<text x="60" y="56" text-anchor="middle" fill="#9aa3af" font-size="8">PROFIT</text><text x="60" y="70" text-anchor="middle" fill="#f8fafc" font-size="11" font-weight="700">{center}</text>""";
+        _segments = [];
+        if (total <= 0)
+        {
+            _segments.Add((DescribeArc(60, 60, 48, 0, 359.9), "#374151"));
+            return;
+        }
+
+        double angle = -90;
+        for (int i = 0; i < slices.Count; i++)
+        {
+            double sweep = slices[i].AmountPaisa * 360.0 / total;
+            if (sweep <= 0.01)
+            {
+                continue;
+            }
+
+            _segments.Add((DescribeArc(60, 60, 48, angle, angle + sweep), Palette[i % Palette.Length]));
+            angle += sweep;
+        }
+    }
+
+    private static string DescribeArc(double cx, double cy, double r, double startDeg, double endDeg)
+    {
+        double start = startDeg * Math.PI / 180;
+        double end = endDeg * Math.PI / 180;
+        double x1 = cx + r * Math.Cos(start);
+        double y1 = cy + r * Math.Sin(start);
+        double x2 = cx + r * Math.Cos(end);
+        double y2 = cy + r * Math.Sin(end);
+        int large = endDeg - startDeg > 180 ? 1 : 0;
+        return $"M {cx} {cy} L {x1:0.##} {y1:0.##} A {r} {r} 0 {large} 1 {x2:0.##} {y2:0.##} Z";
+    }
+}

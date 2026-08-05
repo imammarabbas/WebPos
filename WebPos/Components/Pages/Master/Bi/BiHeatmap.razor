@@ -1,0 +1,42 @@
+@namespace WebPos.Components.Pages.Master.Bi
+@using WebPos.Core.Abstractions
+
+<div class="bi-heatmap" role="img" aria-label="Hour versus day heatmap">
+    <div class="bi-heatmap-axis">
+        @for (int h = 0; h < 24; h++)
+        {
+            <span>@h</span>
+        }
+    </div>
+    <div class="bi-heatmap-grid">
+        @for (int d = 0; d < 7; d++)
+        {
+            <div class="bi-heatmap-col">
+                <div class="bi-heatmap-day">@_days[d]</div>
+                @for (int h = 0; h < 24; h++)
+                {
+                    int count = _map.GetValueOrDefault((d, h));
+                    double intensity = _max == 0 ? 0 : count / (double)_max;
+                    <div class="bi-heatmap-cell"
+                         style="--bi-heat:@intensity.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)"
+                         title="@($"{_days[d]} {h:00}:00 — {count} invoices")"></div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private static readonly string[] _days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+    [Parameter] public IReadOnlyList<BiHeatCell>? Cells { get; set; }
+
+    private Dictionary<(int Day, int Hour), int> _map = new();
+    private int _max;
+
+    protected override void OnParametersSet()
+    {
+        _map = (Cells ?? []).ToDictionary(c => (c.Weekday, c.Hour), c => c.InvoiceCount);
+        _max = _map.Values.DefaultIfEmpty(0).Max();
+    }
+}

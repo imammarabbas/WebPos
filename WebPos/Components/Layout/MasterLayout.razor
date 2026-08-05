@@ -1,0 +1,412 @@
+@inherits LayoutComponentBase
+@implements IAsyncDisposable
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Components.Authorization
+@using WebPos.Core.Abstractions
+@using WebPos.Core.Security
+@using WebPos.Core.Services
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IMasterOverviewService OverviewService
+@inject IStoreStatusService StoreStatusService
+@inject ICircuitTenantContext CircuitTenantContext
+
+<link rel="stylesheet" href="master.css" />
+
+<div class="mm-shell">
+    <CircuitTenantInitializer />
+
+    <header class="mm-topbar">
+        <div class="mm-brand">
+            <div class="mm-logo" aria-hidden="true">PM</div>
+            <div class="mm-brand-text">
+                <div class="mm-brand-title">POS Master · Copenhagen Mart</div>
+                <div class="mm-brand-sub">MASTER DATA • v2.4.1</div>
+            </div>
+        </div>
+
+        <form class="mm-search" @onsubmit="HandleSearch" @onsubmit:preventDefault>
+            <input type="search"
+                   class="mm-search-input"
+                   placeholder="Search anything..."
+                   @bind="_searchText"
+                   @bind:event="oninput"
+                   aria-label="Search anything" />
+        </form>
+
+        <div class="mm-top-actions">
+            <div class="mm-new-wrap">
+                <button type="button" class="mm-new-btn" @onclick="ToggleNewMenu" aria-expanded="@_newOpen">
+                    + New
+                </button>
+                @if (_newOpen)
+                {
+                    <div class="mm-new-menu" @onclick:stopPropagation>
+                        <a href="/master/products?new=1" @onclick="CloseNewMenu">Product</a>
+                        <a href="/master/parties?role=CUSTOMER&new=1" @onclick="CloseNewMenu">Customer</a>
+                        <a href="/master/parties?role=SUPPLIER&new=1" @onclick="CloseNewMenu">Supplier</a>
+                        <a href="/master/purchases?new=1" @onclick="CloseNewMenu">Purchase</a>
+                        <a href="/master/expenses" @onclick="CloseNewMenu">Expense</a>
+                    </div>
+                }
+            </div>
+            <div class="mm-profile-wrap">
+                <button type="button"
+                        class="mm-avatar"
+                        title="@_displayName"
+                        aria-expanded="@_profileOpen"
+                        @onclick="ToggleProfileMenu">
+                    @_initials
+                </button>
+                @if (_profileOpen)
+                {
+                    <div class="mm-profile-menu" @onclick:stopPropagation>
+                        <div class="mm-profile-meta">
+                            <strong>@_displayName</strong>
+                            <span>@_roleName</span>
+                        </div>
+                        <button type="button" class="mm-logout-btn" @onclick="LogoutAsync">Logout</button>
+                    </div>
+                }
+            </div>
+        </div>
+    </header>
+
+    <div class="mm-body">
+        <aside class="mm-sidebar">
+            <nav class="mm-nav">
+                <NavLink class="mm-nav-link" href="/master" Match="NavLinkMatch.All">
+                    <span class="mm-nav-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+                    </span>
+                    <span>Dashboard</span>
+                </NavLink>
+
+                <div class="mm-nav-section">Finance</div>
+                <NavLink class="mm-nav-link" href="/master/profitability">
+                    <span class="mm-nav-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>
+                    </span>
+                    <span>Analytics</span>
+                </NavLink>
+                <NavLink class="mm-nav-link" href="/master/reports">
+                    <span class="mm-nav-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 17V10"/><path d="M12 17V7"/><path d="M16 17v-4"/></svg>
+                    </span>
+                    <span>Reports</span>
+                </NavLink>
+                <NavLink class="mm-nav-link" href="/master/parties">
+                    <span class="mm-nav-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                    </span>
+                    <span>Parties</span>
+                </NavLink>
+                <NavLink class="mm-nav-link" href="/master/cash">
+                    <span class="mm-nav-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>
+                    </span>
+                    <span>Cash</span>
+                </NavLink>
+                <NavLink class="mm-nav-link" href="/master/expenses">
+                    <span class="mm-nav-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M9 5h6"/><path d="M9 3h6a2 2 0 0 1 2 2v14l-5-2-5 2V5a2 2 0 0 1 2-2z"/></svg>
+                    </span>
+                    <span>Expenses</span>
+                </NavLink>
+
+                <div class="mm-nav-section">Catalog</div>
+                <NavLink class="mm-nav-link" href="/master/products">
+                    <span class="mm-nav-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg>
+                    </span>
+                    <span>Products</span>
+                    @if (_overview?.LowStockCount > 0)
+                    {
+                        <span class="mm-nav-badge">@_overview.LowStockCount</span>
+                    }
+                </NavLink>
+                <NavLink class="mm-nav-link" href="/master/categories">
+                    <span class="mm-nav-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><circle cx="7" cy="7" r="1.25"/></svg>
+                    </span>
+                    <span>Categories</span>
+                </NavLink>
+                <NavLink class="mm-nav-link" href="/master/brands">
+                    <span class="mm-nav-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 2l2.4 7.2H22l-6 4.8 2.3 7L12 16.8 5.7 21l2.3-7-6-4.8h7.6L12 2z"/></svg>
+                    </span>
+                    <span>Brands</span>
+                </NavLink>
+
+                <div class="mm-nav-section">Ops</div>
+                <NavLink class="mm-nav-link" href="/master/purchases">
+                    <span class="mm-nav-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h8.8a2 2 0 0 0 2-1.5L22 8H7"/></svg>
+                    </span>
+                    <span>Purchases</span>
+                </NavLink>
+                <NavLink class="mm-nav-link" href="/master/shifts">
+                    <span class="mm-nav-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                    </span>
+                    <span>Open shifts</span>
+                </NavLink>
+            </nav>
+
+            <div class="mm-sidebar-bottom">
+                <div class="mm-status-card">
+                    <div class="mm-status-title">Store Status</div>
+                    @if (_statusLoaded)
+                    {
+                        <div class="mm-status-row">
+                            <span class="mm-dot @(_storeStatus?.ApiOnline == true ? "online" : "offline")"></span>
+                            <span>@(_storeStatus?.ApiOnline == true ? "Online" : "Offline")</span>
+                            <span class="mm-status-sep">·</span>
+                            <span>Till @(_storeStatus?.TillOpen == true ? "open" : "closed")</span>
+                        </div>
+                        <div class="mm-status-metrics">
+                            <div>
+                                <div class="mm-status-label">Today</div>
+                                <div class="mm-status-value">Rs @FormatRs(_overview?.TodayRevenuePaisa ?? 0)</div>
+                            </div>
+                            <div>
+                                <div class="mm-status-label">Orders</div>
+                                <div class="mm-status-value">@(_overview?.TodayOrderCount ?? 0)</div>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="mm-status-row muted">Loading…</div>
+                    }
+                </div>
+
+                <NavLink class="mm-nav-link mm-nav-admin" href="/admin/users">Admin Users</NavLink>
+            </div>
+        </aside>
+
+        <main class="mm-main">
+            @Body
+        </main>
+    </div>
+
+    <footer class="mm-footer">© Copenhagen Mart 2026</footer>
+</div>
+
+@code {
+    private static readonly TimeSpan StatusPollInterval = TimeSpan.FromSeconds(5);
+
+    private string _searchText = string.Empty;
+    private bool _newOpen;
+    private bool _profileOpen;
+    private string _displayName = "User";
+    private string _roleName = "User";
+    private string _initials = "U";
+    private MasterOverviewDto? _overview;
+    private StoreStatusDto? _storeStatus;
+    private bool _statusLoaded;
+    private PeriodicTimer? _statusTimer;
+    private CancellationTokenSource? _statusCts;
+    private Task? _statusPollTask;
+
+    protected override async Task OnInitializedAsync()
+    {
+        AuthenticationState state = await AuthStateProvider.GetAuthenticationStateAsync();
+        ClaimsPrincipal user = state.User;
+        _displayName = user.Identity?.Name ?? "User";
+        _roleName = user.FindFirst(ClaimTypes.Role)?.Value ?? "User";
+        _initials = GetInitials(_displayName);
+
+        try
+        {
+            _overview = await OverviewService.GetOverviewAsync();
+            _storeStatus = new StoreStatusDto
+            {
+                TillOpen = _overview.TillOpen,
+                ApiOnline = _overview.ApiOnline,
+                OpenShiftCount = _overview.TillOpen ? 1 : 0
+            };
+        }
+        catch
+        {
+            _overview = null;
+            _storeStatus = null;
+        }
+
+        _statusLoaded = true;
+        StartStatusPolling();
+    }
+
+    private void StartStatusPolling()
+    {
+        _statusCts = new CancellationTokenSource();
+        _statusTimer = new PeriodicTimer(StatusPollInterval);
+        CancellationToken token = _statusCts.Token;
+        _statusPollTask = PollStoreStatusAsync(token);
+    }
+
+    private async Task PollStoreStatusAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (await _statusTimer!.WaitForNextTickAsync(cancellationToken))
+            {
+                try
+                {
+                    StoreStatusDto status = await StoreStatusService.GetStatusAsync(cancellationToken);
+                    _storeStatus = status;
+                    await InvokeAsync(StateHasChanged);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch
+                {
+                    // Keep last known status; overview KPIs stay until next full load.
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Layout disposed.
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_statusCts is not null)
+        {
+            await _statusCts.CancelAsync();
+        }
+
+        _statusTimer?.Dispose();
+        if (_statusPollTask is not null)
+        {
+            try
+            {
+                await _statusPollTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        _statusCts?.Dispose();
+    }
+
+    private void ToggleNewMenu()
+    {
+        _newOpen = !_newOpen;
+        if (_newOpen)
+        {
+            _profileOpen = false;
+        }
+    }
+
+    private void ToggleProfileMenu()
+    {
+        _profileOpen = !_profileOpen;
+        if (_profileOpen)
+        {
+            _newOpen = false;
+        }
+    }
+
+    private void CloseNewMenu() => _newOpen = false;
+
+    private async Task LogoutAsync()
+    {
+        _profileOpen = false;
+        CircuitTenantContext.TenantId = null;
+        if (AuthStateProvider is PosAuthStateProvider posAuth)
+        {
+            await posAuth.MarkUserAsLoggedOut();
+        }
+
+        Navigation.NavigateTo("/account/logout", forceLoad: true);
+    }
+
+    private void HandleSearch()
+    {
+        string q = _searchText.Trim();
+        if (string.IsNullOrEmpty(q))
+        {
+            return;
+        }
+
+        string lower = q.ToLowerInvariant();
+        string encoded = Uri.EscapeDataString(q);
+
+        if (ContainsAny(lower, "customer", "party", "client"))
+        {
+            Navigation.NavigateTo($"/master/parties?role=CUSTOMER&q={encoded}");
+        }
+        else if (ContainsAny(lower, "supplier", "vendor"))
+        {
+            Navigation.NavigateTo($"/master/parties?role=SUPPLIER&q={encoded}");
+        }
+        else if (ContainsAny(lower, "expense", "overhead", "rent"))
+        {
+            Navigation.NavigateTo("/master/expenses");
+        }
+        else if (ContainsAny(lower, "analytics", "bi ", " bi", "profitability", "dashboard bi"))
+        {
+            Navigation.NavigateTo("/master/profitability");
+        }
+        else if (ContainsAny(lower, "report", "pnl", "p&l"))
+        {
+            Navigation.NavigateTo("/master/reports");
+        }
+        else if (ContainsAny(lower, "profit"))
+        {
+            Navigation.NavigateTo("/master/profitability");
+        }
+        else if (ContainsAny(lower, "categor"))
+        {
+            Navigation.NavigateTo($"/master/categories?q={encoded}");
+        }
+        else if (ContainsAny(lower, "brand"))
+        {
+            Navigation.NavigateTo($"/master/brands?q={encoded}");
+        }
+        else if (ContainsAny(lower, "purchase", "invoice", "po "))
+        {
+            Navigation.NavigateTo($"/master/purchases?q={encoded}");
+        }
+        else if (ContainsAny(lower, "product", "sku", "barcode", "item"))
+        {
+            Navigation.NavigateTo($"/master/products?q={encoded}");
+        }
+        else
+        {
+            Navigation.NavigateTo($"/master/products?q={encoded}");
+        }
+
+        _newOpen = false;
+    }
+
+    private static bool ContainsAny(string haystack, params string[] needles) =>
+        needles.Any(n => haystack.Contains(n, StringComparison.Ordinal));
+
+    private static string GetInitials(string name)
+    {
+        string[] parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0)
+        {
+            return "U";
+        }
+
+        if (parts.Length == 1)
+        {
+            return parts[0].Length >= 2
+                ? parts[0][..2].ToUpperInvariant()
+                : parts[0].ToUpperInvariant();
+        }
+
+        return $"{char.ToUpperInvariant(parts[0][0])}{char.ToUpperInvariant(parts[^1][0])}";
+    }
+
+    private static string FormatRs(long paisa) =>
+        (paisa / 100m).ToString("N0");
+}

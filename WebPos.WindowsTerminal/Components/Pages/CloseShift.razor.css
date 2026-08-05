@@ -1,0 +1,109 @@
+.terminal-shell {
+    min-height: 100vh;
+    margin: -1.1rem -1.5rem;
+    padding: 2rem;
+    display: grid;
+    place-items: center;
+    background: radial-gradient(ellipse at top, #1a2433 0%, #0b0f14 60%);
+    color: #f2f5f8;
+    font-family: "Segoe UI", sans-serif;
+}
+
+.shift-card {
+    width: min(100%, 34rem);
+    padding: 1.75rem;
+    border: 1px solid #2d3b4f;
+    border-radius: 6px;
+    background: #121820;
+}
+
+.brand {
+    color: #3dd68c;
+    font-weight: 800;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+}
+
+h1 {
+    margin: .25rem 0;
+    font-size: 2rem;
+}
+
+h2 {
+    margin: 0 0 1rem;
+    font-size: 1.25rem;
+}
+
+header p,
+.terminal-id {
+    color: #a8b3c2;
+}
+
+label {
+    display: block;
+    margin: 1.25rem 0 .5rem;
+    color: #a8b3c2;
+    font-weight: 700;
+}
+
+.cash-input {
+    width: 100%;
+    padding: .8rem 1rem;
+    border: 2px solid #3a4a5e;
+    border-radius: 4px;
+    background: #080c11;
+    color: #fff;
+    font-size: 2.2rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.start-button {
+    width: 100%;
+    min-height: 4.25rem;
+    border: 0;
+    border-radius: 4px;
+    background: #3dd68c;
+    color: #062416;
+    font-size: 1.35rem;
+    font-weight: 800;
+}
+
+.start-button:disabled {
+    cursor: not-allowed;
+    opacity: .45;
+}
+
+.alert-red {
+    margin: 1rem 0;
+    padding: 1rem;
+    border: 2px solid #ff4d4d;
+    border-radius: 4px;
+    background: #3a1010;
+    color: #ffb4b4;
+    font-weight: 700;
+}
+
+.variance-panel dl {
+    display: grid;
+    grid-template-columns: 8rem 1fr;
+    gap: .5rem 1rem;
+    margin: 0 0 1.5rem;
+}
+
+.variance-panel dt {
+    color: #a8b3c2;
+}
+
+.variance-panel dd {
+    margin: 0;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.variance-panel .ok {
+    color: #3dd68c;
+}
+
+.variance-panel .warn {
+    color: #ffe566;
+}

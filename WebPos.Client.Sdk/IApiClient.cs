@@ -16,6 +16,18 @@ public interface IApiClient
         StartShiftRequest request,
         CancellationToken cancellationToken = default);
 
+    Task<OpenShiftDto?> GetOpenShiftAsync(
+        Guid? terminalId = null,
+        CancellationToken cancellationToken = default);
+
+    Task<CashVarianceReport> ForceCloseShiftAsync(
+        Guid shiftId,
+        CancellationToken cancellationToken = default);
+
+    Task<CashVarianceReport> CloseShiftAsync(
+        CloseShiftRequest request,
+        CancellationToken cancellationToken = default);
+
     Task<CompleteSaleResult> CompleteSaleAsync(
         CompleteSaleRequest request,
         CancellationToken cancellationToken = default);
@@ -26,7 +38,49 @@ public interface IApiClient
     Task<IReadOnlyList<SalesProductDto>> GetProductsForSaleAsync(
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<SalesProductDto>> GetProductsForReceiveAsync(
+        CancellationToken cancellationToken = default);
+
     Task<ReturnItemsResult> ReturnItemsAsync(
         ReturnItemsRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<PartyDto>> GetPartiesAsync(
+        string? role = null,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<SalesInvoiceSummaryDto>> GetInvoicesAsync(
+        Guid? shiftId = null,
+        int limit = 50,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<SalesInvoiceSummaryDto>> SearchInvoicesAsync(
+        string? invoice = null,
+        string? customer = null,
+        string? product = null,
+        int limit = 40,
+        CancellationToken cancellationToken = default);
+
+    Task<SalesInvoiceDetailDto> GetInvoiceAsync(
+        string invoiceNo,
+        CancellationToken cancellationToken = default);
+
+    Task<CashVarianceReport> GetShiftReconciliationAsync(
+        Guid shiftId,
+        CancellationToken cancellationToken = default);
+
+    Task<ManagerPinVerifiedDto> VerifyManagerPinAsync(
+        string pin,
+        CancellationToken cancellationToken = default);
+
+    Task<ReceiveStockResultDto> QuickReceiveAsync(
+        QuickReceiveRequestDto request,
+        CancellationToken cancellationToken = default);
+
+    Task<ReceiveStockResultDto> DirectReceiveAsync(
+        QuickReceiveRequestDto request,
+        CancellationToken cancellationToken = default);
+
+    Task<StoreStatusDto> GetStoreStatusAsync(
         CancellationToken cancellationToken = default);
 }

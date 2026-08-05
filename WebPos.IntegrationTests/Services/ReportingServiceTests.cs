@@ -38,6 +38,7 @@ public sealed class ReportingServiceTests
         profit[0].RevenuePaisa.Should().Be(200_00);
         profit[0].CostPaisa.Should().Be(100_00);
         profit[0].GrossProfitPaisa.Should().Be(100_00);
+        profit[0].MarginPercent.Should().Be(50m);
 
         IReadOnlyList<AccountCashFlowSummary> cashFlow =
             await harness.ReportingService.GetCashFlowByAccountAsync(from, to);
@@ -104,8 +105,17 @@ public sealed class ReportingServiceTests
 
             await SeedTenantDataAsync(context, tenantId);
 
-            IReportingService reportingService = new ReportingService(context, tenantService);
+            IReportingService reportingService = new ReportingService(
+                new TestDbContextFactory(options, tenantService),
+                tenantService);
             return new ReportingHarness(context, reportingService, tenantId, databaseName);
+        }
+
+        private sealed class TestDbContextFactory(
+            DbContextOptions<WebPosDbContext> options,
+            ITenantService tenant) : IDbContextFactory<WebPosDbContext>
+        {
+            public WebPosDbContext CreateDbContext() => new(options, tenant);
         }
 
         public async Task SeedForeignTenantAsync(Guid otherTenantId)
@@ -163,6 +173,7 @@ public sealed class ReportingServiceTests
                 BatchId = Guid.NewGuid(),
                 Quantity = 99m,
                 UnitPricePaisa = 999_00,
+                UnitCostPaisa = 500_00,
                 DiscountAppliedPaisa = 0
             });
             await foreignContext.SaveChangesAsync();
@@ -319,6 +330,7 @@ public sealed class ReportingServiceTests
                 BatchId = batchId,
                 Quantity = 2m,
                 UnitPricePaisa = 100_00,
+                UnitCostPaisa = 50_00,
                 DiscountAppliedPaisa = 0
             });
             await context.SaveChangesAsync();

@@ -23,15 +23,27 @@ services:
       - "8080:8080"
     environment:
       ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      DisableHttpsRedirection: "true"
+      DataProtection__KeysPath: /app/dp-keys
       ConnectionStrings__DefaultConnection: "Server=postgres;Port=5432;Database=WebPos;User Id=postgres;Password=${POSTGRES_PASSWORD:-sa};"
       Security__PinHashKey: ${SECURITY_PIN_HASH_KEY}
       Security__Jwt__Key: ${SECURITY_JWT_KEY}
       Security__Enrollment__PrivateKeyPem: ${SECURITY_ENROLLMENT_PRIVATE_KEY_PEM}
       Security__Enrollment__PublicKeyPem: ${SECURITY_ENROLLMENT_PUBLIC_KEY_PEM}
       Pilot__TerminalId: ${PILOT_TERMINAL_ID:-00000000-0000-0000-0000-000000000010}
+      Pilot__OwnerPassword: ${PILOT_OWNER_PASSWORD:-ammar123}
+      Pilot__AdminPassword: ${PILOT_ADMIN_PASSWORD:-admin123}
+      Pilot__OwnerPin: ${PILOT_OWNER_PIN:-9753}
+      Pilot__ManagerPin: ${PILOT_MANAGER_PIN:-8642}
+      Pilot__CashierPin: ${PILOT_CASHIER_PIN:-2468}
+      Pilot__AbcCashierPin: ${PILOT_ABC_CASHIER_PIN:-1357}
+    volumes:
+      - webpos_dpkeys:/app/dp-keys
     depends_on:
       postgres:
         condition: service_healthy
 
 volumes:
   webpos_pgdata:
+  webpos_dpkeys:

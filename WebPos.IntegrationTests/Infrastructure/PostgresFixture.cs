@@ -4,6 +4,7 @@ using WebPos.Core.Data;
 using WebPos.Core.Entities;
 using WebPos.Core.Interfaces;
 using WebPos.Core.Services;
+using WebPos.Core.Validation;
 
 namespace WebPos.IntegrationTests.Infrastructure;
 
@@ -15,14 +16,14 @@ public sealed class PostgresFixture : IAsyncLifetime
 {
     // Matches WebPos/appsettings.json DefaultConnection (local WebPos_Test database).
     private const string ConnectionString =
-        "Server=localhost;Port=5432;Database=WebPos_Test;User Id=postgres;Password=sa;";
+        "Server=localhost;Port=5432;Database=WebPos_Test;User Id=postgres;Password=sa;Include Error Detail=true";
 
     private DbContextOptions<WebPosDbContext>? _options;
 
     public async Task InitializeAsync()
     {
         _options = new DbContextOptionsBuilder<WebPosDbContext>()
-            .UseNpgsql(ConnectionString)
+            .UseNpgsql(ConnectionString, npgsql => npgsql.MigrationsAssembly("WebPos"))
             .Options;
 
         await ResetDatabase();
@@ -67,28 +68,72 @@ public sealed class IntegrationTestScope : IAsyncDisposable, IDisposable
 {
     public WebPosDbContext DbContext { get; }
 
+    public ITenantService TenantService { get; }
+
     public ITransactionService TransactionService { get; }
 
     public IPartyLedgerService PartyLedgerService { get; }
+
+    public IPartyService PartyService { get; }
+
+    public IProcurementService ProcurementService { get; }
 
     public ISalesService SalesService { get; }
 
     public ISalesReturnService SalesReturnService { get; }
 
+    public IReportingService ReportingService { get; }
+
+    public ICashAccountService CashAccountService { get; }
+
+    public ICashTransferService CashTransferService { get; }
+
     public IntegrationTestScope(DbContextOptions<WebPosDbContext> options)
     {
-        ITenantService tenantService = new FixedTenantService(TenantDefaults.MasterTenantId);
-        DbContext = new WebPosDbContext(options, tenantService);
+        TenantService = new FixedTenantService(TenantDefaults.MasterTenantId);
+        DbContext = new WebPosDbContext(options, TenantService);
         TransactionService = new TransactionService(DbContext);
         PartyLedgerService = new PartyLedgerService(
             DbContext,
             TransactionService,
-            tenantService);
-        SalesService = new SalesService(DbContext, TransactionService, PartyLedgerService);
+            TenantService);
+        PartyService = new PartyService(
+            DbContext,
+            TransactionService,
+            PartyLedgerService,
+            TenantService,
+            new CreatePartyRequestValidator(DbContext, TenantService));
+        CashAccountService = new CashAccountService(DbContext, TenantService);
+        CashTransferService = new CashTransferService(
+            DbContext,
+            TransactionService,
+            TenantService);
+        ProcurementService = new ProcurementService(
+            DbContext,
+            TransactionService,
+            PartyLedgerService,
+            PartyService,
+            CashAccountService,
+            TenantService);
+        SalesService = new SalesService(
+            DbContext,
+            TransactionService,
+            PartyLedgerService,
+            CashAccountService);
         SalesReturnService = new SalesReturnService(
             DbContext,
             TransactionService,
             PartyLedgerService);
+        ReportingService = new ReportingService(
+            new TestDbContextFactory(options, TenantService),
+            TenantService);
+    }
+
+    private sealed class TestDbContextFactory(
+        DbContextOptions<WebPosDbContext> options,
+        ITenantService tenant) : IDbContextFactory<WebPosDbContext>
+    {
+        public WebPosDbContext CreateDbContext() => new(options, tenant);
     }
 
     private sealed class FixedTenantService(Guid tenantId) : ITenantService

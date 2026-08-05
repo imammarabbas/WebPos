@@ -1,0 +1,87 @@
+using Common.Models;
+
+namespace WebPos.WindowsTerminal.Services;
+
+public sealed class CartService
+{
+    private readonly List<CartLine> _lines = [];
+
+    public event Action? Changed;
+
+    public IReadOnlyList<CartLine> Lines => _lines;
+
+    public long SubtotalPaisa => _lines.Sum(line => line.LineTotalPaisa);
+
+    public bool IsEmpty => _lines.Count == 0;
+
+    public void Add(SalesProductDto product, decimal quantity = 1m)
+    {
+        ArgumentNullException.ThrowIfNull(product);
+
+        if (quantity <= 0)
+        {
+            return;
+        }
+
+        CartLine? existing = _lines.FirstOrDefault(
+            line => line.Product.BatchId == product.BatchId);
+
+        if (existing is not null)
+        {
+            existing.Quantity += quantity;
+        }
+        else
+        {
+            _lines.Add(new CartLine
+            {
+                Product = product,
+                Quantity = quantity
+            });
+        }
+
+        Changed?.Invoke();
+    }
+
+    public void SetQuantity(Guid batchId, decimal quantity)
+    {
+        CartLine? line = _lines.FirstOrDefault(entry => entry.Product.BatchId == batchId);
+        if (line is null)
+        {
+            return;
+        }
+
+        if (quantity <= 0)
+        {
+            _lines.Remove(line);
+        }
+        else
+        {
+            line.Quantity = quantity;
+        }
+
+        Changed?.Invoke();
+    }
+
+    public void Remove(Guid batchId)
+    {
+        CartLine? line = _lines.FirstOrDefault(entry => entry.Product.BatchId == batchId);
+        if (line is null)
+        {
+            return;
+        }
+
+        _lines.Remove(line);
+        Changed?.Invoke();
+    }
+
+    public void Clear()
+    {
+        if (_lines.Count == 0)
+        {
+            return;
+        }
+
+        _lines.Clear();
+        Changed?.Invoke();
+    }
+}

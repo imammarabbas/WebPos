@@ -1,0 +1,324 @@
+@page "/master/expenses"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Common.Models
+@using WebPos.Core.Abstractions
+@using WebPos.Core.Constants
+@using WebPos.Core.Services
+@inject IExpenseService ExpenseService
+@inject IShiftService ShiftService
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>Expenses · Copenhagen Mart</PageTitle>
+
+<div class="mm-page">
+    <div class="mm-page-header">
+        <div>
+            <h1>Expenses</h1>
+            <p>Shop overhead with GL posting — till cash only when tied to an open shift</p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+    @if (!string.IsNullOrEmpty(_success))
+    {
+        <div class="mm-alert mm-alert-ok">@_success</div>
+    }
+
+    <div class="mm-grid-2">
+        <div class="mm-card">
+            <h2>Record expense</h2>
+
+            <div class="mm-form-grid">
+                <div class="mm-field full">
+                    <label>Posting mode</label>
+                    <div class="mm-segmented">
+                        <button type="button"
+                                class="mm-seg @(_tieToShift ? "active" : null)"
+                                @onclick="() => SetMode(true)">
+                            Tie to open shift
+                        </button>
+                        <button type="button"
+                                class="mm-seg @(!_tieToShift ? "active" : null)"
+                                @onclick="() => SetMode(false)">
+                            General overhead
+                        </button>
+                    </div>
+                    <p class="mm-muted" style="margin: 0.4rem 0 0; font-size: 0.85rem;">
+                        @if (_tieToShift)
+                        {
+                            <text>Deducts from that till’s expected cash when paid in cash.</text>
+                        }
+                        else
+                        {
+                            <text>Bank / card / company cash — no till drawer impact.</text>
+                        }
+                    </p>
+                </div>
+
+                @if (_tieToShift)
+                {
+                    <div class="mm-field full">
+                        <label for="exp-shift">Open shift</label>
+                        <InputSelect id="exp-shift" @bind-Value="_selectedShiftId">
+                            <option value="">Select open shift…</option>
+                            @foreach (OpenShiftDto s in _openShifts)
+                            {
+                                <option value="@s.ShiftId">@FormatShift(s)</option>
+                            }
+                        </InputSelect>
+                    </div>
+                }
+
+                <div class="mm-field">
+                    <label for="exp-cat">Category</label>
+                    <InputSelect id="exp-cat" @bind-Value="_category">
+                        @foreach (string c in ExpenseCategories.All.Where(c => c != ExpenseCategories.Discount))
+                        {
+                            <option value="@c">@c</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div class="mm-field">
+                    <label for="exp-amt">Amount (Rs)</label>
+                    <InputNumber id="exp-amt" @bind-Value="_amountRs" />
+                </div>
+                <div class="mm-field">
+                    <label for="exp-pay">Payment method</label>
+                    <InputSelect id="exp-pay" @bind-Value="_paymentMethod">
+                        <option value="CASH">Cash</option>
+                        <option value="BANK_TRANSFER">Bank transfer</option>
+                        <option value="EASYPAISA">EasyPaisa</option>
+                        <option value="JAZZCASH">JazzCash</option>
+                    </InputSelect>
+                </div>
+                <div class="mm-field">
+                    <label for="exp-receipt">Receipt / ref</label>
+                    <InputText id="exp-receipt" @bind-Value="_receiptRef" />
+                </div>
+                <div class="mm-field full">
+                    <label for="exp-desc">Description</label>
+                    <InputTextArea id="exp-desc" @bind-Value="_description" rows="2" />
+                </div>
+            </div>
+
+            <div class="mm-form-actions">
+                <button type="button" class="mm-btn mm-btn-primary" disabled="@_saving" @onclick="SaveAsync">
+                    @(_saving ? "Posting…" : "Post expense")
+                </button>
+            </div>
+        </div>
+
+        <div class="mm-card">
+            <h2>Recent register</h2>
+            <div class="mm-toolbar" style="gap: 0.5rem; margin-bottom: 0.75rem;">
+                <input class="form-control" type="date" @bind="_fromDate" />
+                <input class="form-control" type="date" @bind="_toDate" />
+                <button type="button" class="mm-btn" disabled="@_loading" @onclick="LoadListAsync">Refresh</button>
+            </div>
+
+            @if (_items.Count == 0)
+            {
+                <p class="mm-muted mb-0">No expenses in range.</p>
+            }
+            else
+            {
+                <div class="mm-table-wrap">
+                    <table class="mm-table">
+                        <thead>
+                            <tr>
+                                <th>When</th>
+                                <th>Category</th>
+                                <th>Voucher</th>
+                                <th>Mode</th>
+                                <th>Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (ExpenseListItemDto e in _items)
+                            {
+                                <tr>
+                                    <td>@e.LoggedAt.LocalDateTime.ToString("dd MMM HH:mm")</td>
+                                    <td>@e.ExpenseCategory</td>
+                                    <td>@e.VoucherNo</td>
+                                    <td>@(e.ShiftId is null ? "Overhead" : "Till")</td>
+                                    <td>Rs @FormatRs(e.AmountPaisa)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+<style>
+    .mm-segmented { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+    .mm-seg {
+        border: 1px solid var(--mm-border, #d8dce2);
+        background: #fff;
+        border-radius: 0.55rem;
+        padding: 0.45rem 0.75rem;
+        font-size: 0.88rem;
+        cursor: pointer;
+        color: #374151;
+    }
+    .mm-seg.active {
+        background: #1a1a1a;
+        border-color: #1a1a1a;
+        color: #fff;
+        font-weight: 600;
+    }
+</style>
+
+@code {
+    private readonly List<ExpenseListItemDto> _items = [];
+    private readonly List<OpenShiftDto> _openShifts = [];
+    private bool _tieToShift;
+    private string _selectedShiftId = string.Empty;
+    private string _category = ExpenseCategories.Other;
+    private decimal _amountRs;
+    private string _paymentMethod = "BANK_TRANSFER";
+    private string _receiptRef = string.Empty;
+    private string _description = string.Empty;
+    private DateTime _fromDate = DateTime.UtcNow.Date.AddDays(-30);
+    private DateTime _toDate = DateTime.UtcNow.Date;
+    private bool _saving;
+    private bool _loading;
+    private string? _error;
+    private string? _success;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadOpenShiftsAsync();
+        await LoadListAsync();
+    }
+
+    private void SetMode(bool tieToShift)
+    {
+        _tieToShift = tieToShift;
+        if (!_tieToShift)
+        {
+            _selectedShiftId = string.Empty;
+            if (_paymentMethod == "CASH")
+            {
+                _paymentMethod = "BANK_TRANSFER";
+            }
+        }
+    }
+
+    private async Task LoadOpenShiftsAsync()
+    {
+        try
+        {
+            _openShifts.Clear();
+            _openShifts.AddRange(await ShiftService.ListOpenShiftsAsync());
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task LoadListAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            DateTimeOffset from = new(_fromDate.Date, TimeSpan.Zero);
+            DateTimeOffset to = new(_toDate.Date.AddDays(1).AddTicks(-1), TimeSpan.Zero);
+            _items.Clear();
+            _items.AddRange(await ExpenseService.ListExpensesAsync(from, to));
+        }
+        catch (Exception ex)
+        {
+            _error = ex.InnerException?.Message ?? ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _error = null;
+        _success = null;
+        try
+        {
+            long amountPaisa = (long)Math.Round(_amountRs * 100m, MidpointRounding.AwayFromZero);
+            if (amountPaisa <= 0)
+            {
+                _error = "Enter an amount greater than zero.";
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_description))
+            {
+                _error = "Description is required.";
+                return;
+            }
+
+            Guid? shiftId = null;
+            if (_tieToShift)
+            {
+                if (!Guid.TryParse(_selectedShiftId, out Guid parsed) || parsed == Guid.Empty)
+                {
+                    _error = "Select an open shift for till-tied expenses.";
+                    return;
+                }
+
+                shiftId = parsed;
+            }
+
+            AuthenticationState state = await AuthStateProvider.GetAuthenticationStateAsync();
+            string? id = state.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(id, out Guid userId))
+            {
+                _error = "Could not resolve signed-in user.";
+                return;
+            }
+
+            RecordExpenseResult result = await ExpenseService.RecordShiftExpenseAsync(new RecordExpenseRequest
+            {
+                ShiftId = shiftId,
+                LoggedByUserId = userId,
+                Description = _description.Trim(),
+                ExpenseCategory = _category,
+                ReceiptReference = _receiptRef.Trim(),
+                PaymentMethod = _paymentMethod,
+                AmountPaisa = amountPaisa
+            });
+
+            _success = $"Posted {_category} — voucher {result.VoucherNo}.";
+            _amountRs = 0;
+            _description = string.Empty;
+            _receiptRef = string.Empty;
+            await LoadListAsync();
+            await LoadOpenShiftsAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.InnerException?.Message ?? ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+
+    private static string FormatShift(OpenShiftDto s) =>
+        $"{s.TerminalName ?? s.TerminalId.ToString("N")[..8]} · {s.CashierName} · opened {s.OpenedAt.LocalDateTime:dd MMM HH:mm}";
+}

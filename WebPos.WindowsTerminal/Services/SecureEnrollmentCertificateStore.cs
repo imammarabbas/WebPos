@@ -16,18 +16,33 @@ public sealed class SecureEnrollmentCertificateStore(
 
     public EnrollmentIdentity? Identity { get; private set; }
 
+    public bool IsEnrolled => Identity is not null && !string.IsNullOrWhiteSpace(Token);
+
+    /// <summary>
+    /// Loads a previously stored certificate. Missing cert is allowed (show enroll UI).
+    /// </summary>
     public async Task InitializeAsync()
     {
         string? token = await SecureStorage.Default.GetAsync(SecureStorageKey);
         if (string.IsNullOrWhiteSpace(token))
         {
-            throw new InvalidOperationException(
-                "Terminal enrollment certificate is missing. Re-enrollment is required.");
+            Token = null;
+            Identity = null;
+            return;
         }
 
-        EnrollmentIdentity identity = _validator.Validate(token);
-        Token = token;
-        Identity = identity;
+        try
+        {
+            EnrollmentIdentity identity = _validator.Validate(token);
+            Token = token;
+            Identity = identity;
+        }
+        catch
+        {
+            SecureStorage.Default.Remove(SecureStorageKey);
+            Token = null;
+            Identity = null;
+        }
     }
 
     public async Task StoreAsync(string token)

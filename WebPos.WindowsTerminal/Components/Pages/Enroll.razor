@@ -1,0 +1,130 @@
+@page "/enroll"
+@using Common.Models
+@using WebPos.Client.Sdk
+@using WebPos.Client.Sdk.Exceptions
+@inject IApiClient ApiClient
+@inject SecureEnrollmentCertificateStore CertificateStore
+@inject TerminalOptions TerminalOptions
+@inject NavigationManager Navigation
+
+<PageTitle>Terminal Enrollment</PageTitle>
+
+<div class="terminal-shell">
+    <section class="login-card">
+        <header>
+            <span class="brand">WebPos</span>
+            <h1>Enroll Terminal</h1>
+            <p class="hint">One-time setup. Requires admin credentials and API reachability.</p>
+        </header>
+
+        @if (!string.IsNullOrWhiteSpace(_errorMessage))
+        {
+            <div class="alert-red" role="alert">@_errorMessage</div>
+        }
+
+        @if (!string.IsNullOrWhiteSpace(_successMessage))
+        {
+            <div class="alert-ok" role="status">@_successMessage</div>
+        }
+
+        <form @onsubmit="EnrollAsync" @onsubmit:preventDefault>
+            <label for="terminalId">Terminal ID</label>
+            <input id="terminalId"
+                   class="pin-display"
+                   type="text"
+                   @bind="_terminalIdText"
+                   disabled="@_isBusy" />
+
+            <label for="adminUser">Admin username</label>
+            <input id="adminUser"
+                   class="pin-display"
+                   type="text"
+                   autocomplete="username"
+                   @bind="_adminUsername"
+                   disabled="@_isBusy" />
+
+            <label for="adminPassword">Admin password</label>
+            <input id="adminPassword"
+                   class="pin-display"
+                   type="password"
+                   autocomplete="current-password"
+                   @bind="_adminPassword"
+                   disabled="@_isBusy" />
+
+            <button class="login-button" type="submit" disabled="@_isBusy">
+                @(_isBusy ? "Enrolling…" : "Enroll")
+            </button>
+        </form>
+    </section>
+</div>
+
+@code {
+    private string _terminalIdText = "00000000-0000-0000-0000-000000000010";
+    private string _adminUsername = "admin";
+    private string _adminPassword = string.Empty;
+    private string? _errorMessage;
+    private string? _successMessage;
+    private bool _isBusy;
+
+    protected override void OnInitialized()
+    {
+        if (CertificateStore.IsEnrolled && TerminalOptions.IsEnrolled)
+        {
+            Navigation.NavigateTo("/login");
+        }
+    }
+
+    private async Task EnrollAsync()
+    {
+        _errorMessage = null;
+        _successMessage = null;
+
+        if (!Guid.TryParse(_terminalIdText.Trim(), out Guid terminalId)
+            || terminalId == Guid.Empty)
+        {
+            _errorMessage = "Enter a valid terminal ID.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_adminUsername)
+            || string.IsNullOrWhiteSpace(_adminPassword))
+        {
+            _errorMessage = "Admin username and password are required.";
+            return;
+        }
+
+        _isBusy = true;
+        try
+        {
+            EnrollmentCertificateDto cert = await ApiClient.EnrollTerminalAsync(
+                new EnrollTerminalRequest
+                {
+                    TerminalId = terminalId,
+                    AdminUsername = _adminUsername.Trim(),
+                    AdminPassword = _adminPassword
+                });
+
+            await CertificateStore.StoreAsync(cert.Token);
+            TerminalOptions.ApplyEnrollment(cert.TenantId, cert.TerminalId);
+            _adminPassword = string.Empty;
+            _successMessage = "Terminal enrolled. Redirecting to login…";
+            await Task.Delay(600);
+            Navigation.NavigateTo("/login");
+        }
+        catch (WebPosClientException ex)
+        {
+            _errorMessage = ex.StatusCode == System.Net.HttpStatusCode.Unauthorized
+                ? "Admin credentials rejected."
+                : ex.Message;
+        }
+        catch (Exception ex)
+        {
+            _errorMessage =
+                $"Enrollment failed. Check API URL and enrollment public key. ({ex.Message})";
+        }
+        finally
+        {
+            _isBusy = false;
+        }
+    }
+}

@@ -162,6 +162,208 @@ public sealed class SalesControllerTests
     }
 
     [Fact]
+    public async Task ListInvoices_Should_ReturnCompletedSaleForShift()
+    {
+        await using SalesApiFactory factory = new();
+        HttpClient client = factory.CreateClient();
+        SaleSeedData seed = await SeedAsync(factory);
+        CompleteSaleRequest request = BuildValidRequest(seed, discountAmountPaisa: 0L);
+
+        using HttpResponseMessage completeResponse = await ApiTestClient.SendAsync(
+            client,
+            factory,
+            HttpMethod.Post,
+            "/api/sales/complete",
+            seed.TenantId,
+            seed.TerminalId,
+            request);
+        completeResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using HttpResponseMessage listResponse = await ApiTestClient.SendAsync(
+            client,
+            factory,
+            HttpMethod.Get,
+            $"/api/sales/invoices?shiftId={seed.ShiftId:D}&limit=10",
+            seed.TenantId,
+            seed.TerminalId);
+
+        listResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        IReadOnlyList<SalesInvoiceSummaryDto>? invoices =
+            await ApiTestClient.ReadJsonAsync<IReadOnlyList<SalesInvoiceSummaryDto>>(listResponse, JsonOptions);
+
+        SalesInvoiceSummaryDto invoice = invoices.Should().ContainSingle(
+            item => item.InvoiceNo == request.InvoiceNo).Subject;
+        invoice.TotalAmountPaisa.Should().Be(30_000L);
+        invoice.PaymentMethod.Should().Be("CASH");
+        invoice.ItemCount.Should().Be(1);
+        invoice.ReturnedAmountPaisa.Should().Be(0L);
+        invoice.ProductLabels.Should().Contain("1001");
+    }
+
+    [Fact]
+    public async Task ListInvoices_WithoutShiftId_Should_ReturnTenantWideRecent()
+    {
+        await using SalesApiFactory factory = new();
+        HttpClient client = factory.CreateClient();
+        SaleSeedData seed = await SeedAsync(factory);
+        CompleteSaleRequest request = BuildValidRequest(seed, discountAmountPaisa: 0L);
+
+        using HttpResponseMessage completeResponse = await ApiTestClient.SendAsync(
+            client,
+            factory,
+            HttpMethod.Post,
+            "/api/sales/complete",
+            seed.TenantId,
+            seed.TerminalId,
+            request);
+        completeResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using HttpResponseMessage listResponse = await ApiTestClient.SendAsync(
+            client,
+            factory,
+            HttpMethod.Get,
+            "/api/sales/invoices?limit=20",
+            seed.TenantId,
+            seed.TerminalId);
+
+        listResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        IReadOnlyList<SalesInvoiceSummaryDto>? invoices =
+            await ApiTestClient.ReadJsonAsync<IReadOnlyList<SalesInvoiceSummaryDto>>(listResponse, JsonOptions);
+
+        SalesInvoiceSummaryDto invoice = invoices.Should().Contain(
+            item => item.InvoiceNo == request.InvoiceNo).Subject;
+        invoice.TerminalId.Should().Be(seed.TerminalId);
+    }
+
+    [Fact]
+    public async Task GetInvoice_Should_ReturnLinesWithReturnableQuantity()
+    {
+        await using SalesApiFactory factory = new();
+        HttpClient client = factory.CreateClient();
+        SaleSeedData seed = await SeedAsync(factory);
+        CompleteSaleRequest request = BuildValidRequest(seed, discountAmountPaisa: 0L);
+
+        using HttpResponseMessage completeResponse = await ApiTestClient.SendAsync(
+            client,
+            factory,
+            HttpMethod.Post,
+            "/api/sales/complete",
+            seed.TenantId,
+            seed.TerminalId,
+            request);
+        completeResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using HttpResponseMessage detailResponse = await ApiTestClient.SendAsync(
+            client,
+            factory,
+            HttpMethod.Get,
+            $"/api/sales/invoices/{Uri.EscapeDataString(request.InvoiceNo)}",
+            seed.TenantId,
+            seed.TerminalId);
+
+        detailResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        SalesInvoiceDetailDto? detail =
+            await ApiTestClient.ReadJsonAsync<SalesInvoiceDetailDto>(detailResponse, JsonOptions);
+
+        detail.Should().NotBeNull();
+        detail!.InvoiceNo.Should().Be(request.InvoiceNo);
+        detail.ShiftId.Should().Be(seed.ShiftId);
+        SalesInvoiceLineDto line = detail.Lines.Should().ContainSingle().Subject;
+        line.ProductId.Should().Be(seed.ProductId);
+        line.QuantitySold.Should().Be(2m);
+        line.QuantityReturned.Should().Be(0m);
+        line.ReturnableQuantity.Should().Be(2m);
+    }
+
+    [Fact]
+    public async Task SearchInvoices_Should_MatchInvoiceFragmentAndProductLabels()
+    {
+        await using SalesApiFactory factory = new();
+        HttpClient client = factory.CreateClient();
+        SaleSeedData seed = await SeedAsync(factory);
+        CompleteSaleRequest request = BuildValidRequest(seed, discountAmountPaisa: 0L);
+
+        using HttpResponseMessage completeResponse = await ApiTestClient.SendAsync(
+            client,
+            factory,
+            HttpMethod.Post,
+            "/api/sales/complete",
+            seed.TenantId,
+            seed.TerminalId,
+            request);
+        completeResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        string fragment = request.InvoiceNo[^8..];
+        using HttpResponseMessage searchResponse = await ApiTestClient.SendAsync(
+            client,
+            factory,
+            HttpMethod.Get,
+            $"/api/sales/invoices/search?invoice={Uri.EscapeDataString(fragment)}&limit=20",
+            seed.TenantId,
+            seed.TerminalId);
+
+        searchResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        IReadOnlyList<SalesInvoiceSummaryDto>? invoices =
+            await ApiTestClient.ReadJsonAsync<IReadOnlyList<SalesInvoiceSummaryDto>>(searchResponse, JsonOptions);
+
+        SalesInvoiceSummaryDto invoice = invoices.Should().ContainSingle(
+            item => item.InvoiceNo == request.InvoiceNo).Subject;
+        invoice.ProductLabels.Should().Contain("1001");
+        invoice.ItemCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task SearchInvoices_Should_MatchProductShortCode()
+    {
+        await using SalesApiFactory factory = new();
+        HttpClient client = factory.CreateClient();
+        SaleSeedData seed = await SeedAsync(factory);
+        CompleteSaleRequest request = BuildValidRequest(seed, discountAmountPaisa: 0L);
+
+        using HttpResponseMessage completeResponse = await ApiTestClient.SendAsync(
+            client,
+            factory,
+            HttpMethod.Post,
+            "/api/sales/complete",
+            seed.TenantId,
+            seed.TerminalId,
+            request);
+        completeResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using HttpResponseMessage searchResponse = await ApiTestClient.SendAsync(
+            client,
+            factory,
+            HttpMethod.Get,
+            "/api/sales/invoices/search?product=1001&limit=20",
+            seed.TenantId,
+            seed.TerminalId);
+
+        searchResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        IReadOnlyList<SalesInvoiceSummaryDto>? invoices =
+            await ApiTestClient.ReadJsonAsync<IReadOnlyList<SalesInvoiceSummaryDto>>(searchResponse, JsonOptions);
+
+        invoices.Should().Contain(item => item.InvoiceNo == request.InvoiceNo);
+    }
+
+    [Fact]
+    public async Task SearchInvoices_Should_Return400_WhenNoCriteriaProvided()
+    {
+        await using SalesApiFactory factory = new();
+        HttpClient client = factory.CreateClient();
+        SaleSeedData seed = await SeedAsync(factory);
+
+        using HttpResponseMessage searchResponse = await ApiTestClient.SendAsync(
+            client,
+            factory,
+            HttpMethod.Get,
+            "/api/sales/invoices/search",
+            seed.TenantId,
+            seed.TerminalId);
+
+        searchResponse.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
     public async Task CompleteSale_Should_Return400_WhenClientPriceIsStale()
     {
         await using SalesApiFactory factory = new();

@@ -45,6 +45,9 @@ public sealed class SalesApiFactory : WebApplicationFactory<Program>
 
             services.AddDbContext<WebPosDbContext>(options =>
                 options.UseInMemoryDatabase(_databaseName));
+            services.AddDbContextFactory<WebPosDbContext>(options =>
+                options.UseInMemoryDatabase(_databaseName),
+                lifetime: ServiceLifetime.Scoped);
         });
     }
 
@@ -99,6 +102,7 @@ public sealed class SalesApiFactory : WebApplicationFactory<Program>
                 d.ServiceType == typeof(DbContextOptions<WebPosDbContext>)
                 || d.ServiceType == typeof(DbContextOptions)
                 || d.ServiceType == typeof(WebPosDbContext)
+                || d.ServiceType == typeof(IDbContextFactory<WebPosDbContext>)
                 || (d.ServiceType.IsGenericType
                     && d.ServiceType.GetGenericTypeDefinition() == typeof(IDbContextOptionsConfiguration<>)
                     && d.ServiceType.GenericTypeArguments[0] == typeof(WebPosDbContext)))
@@ -111,5 +115,6 @@ public sealed class SalesApiFactory : WebApplicationFactory<Program>
 
         services.RemoveAll(typeof(DbContextOptions<WebPosDbContext>));
         services.RemoveAll(typeof(WebPosDbContext));
+        services.RemoveAll(typeof(IDbContextFactory<WebPosDbContext>));
     }
 }

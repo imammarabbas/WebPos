@@ -98,7 +98,8 @@ public sealed class MultiTenantArchitectureAuditTests
                     EnrollmentCertificateValidator.AuthenticationType))
         };
         var tenantService = new HttpContextTenantService(
-            new HttpContextAccessor { HttpContext = httpContext });
+            new HttpContextAccessor { HttpContext = httpContext },
+            new CircuitTenantContext());
         Guid firstProductId = Guid.NewGuid();
         Guid secondProductId = Guid.NewGuid();
 

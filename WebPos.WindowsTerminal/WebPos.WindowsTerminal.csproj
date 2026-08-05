@@ -28,7 +28,7 @@
         <MauiXamlInflator>SourceGen</MauiXamlInflator>
 
         <!-- Display name -->
-        <ApplicationTitle>WebPos.WindowsTerminal</ApplicationTitle>
+        <ApplicationTitle>Copenhagen Mart POS</ApplicationTitle>
 
         <!-- App Identifier -->
         <ApplicationId>com.companyname.webpos.windowsterminal</ApplicationId>

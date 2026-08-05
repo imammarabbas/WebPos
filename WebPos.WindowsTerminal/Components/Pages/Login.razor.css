@@ -33,6 +33,12 @@ h1 {
     font-size: 2rem;
 }
 
+.login-hint {
+    margin: .35rem 0 0;
+    color: #a8b3c2;
+    font-size: .9rem;
+}
+
 label {
     display: block;
     margin-bottom: .5rem;

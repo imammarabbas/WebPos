@@ -59,6 +59,83 @@ public sealed class ApiClient : IApiClient
             cancellationToken);
     }
 
+    public async Task<OpenShiftDto?> GetOpenShiftAsync(
+        Guid? terminalId = null,
+        CancellationToken cancellationToken = default)
+    {
+        string path = terminalId is Guid id && id != Guid.Empty
+            ? $"api/shift/open?terminalId={id:D}"
+            : "api/shift/open";
+
+        using HttpRequestMessage request = new(HttpMethod.Get, path);
+        request.Headers.TryAddWithoutValidation(ApiVersionHeaderName, "1.0.0");
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new WebPosClientException(
+                HttpStatusCode.ServiceUnavailable,
+                $"Failed to reach WebPos API at '{path}'.",
+                requestPath: path,
+                innerException: ex);
+        }
+
+        using (response)
+        {
+            if (response.StatusCode == HttpStatusCode.NoContent)
+            {
+                return null;
+            }
+
+            string responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new WebPosClientException(
+                    response.StatusCode,
+                    $"WebPos API call to '{path}' failed with {(int)response.StatusCode} ({response.StatusCode}).",
+                    responseBody: responseBody,
+                    requestPath: path);
+            }
+
+            return JsonSerializer.Deserialize<OpenShiftDto>(responseBody, JsonOptions);
+        }
+    }
+
+    public Task<CashVarianceReport> ForceCloseShiftAsync(
+        Guid shiftId,
+        CancellationToken cancellationToken = default)
+    {
+        if (shiftId == Guid.Empty)
+        {
+            throw new ArgumentException("Shift id is required.", nameof(shiftId));
+        }
+
+        return SendAsync<CashVarianceReport>(
+            HttpMethod.Post,
+            $"api/shift/{shiftId:D}/force-close",
+            content: null,
+            cancellationToken);
+    }
+
+    public Task<CashVarianceReport> CloseShiftAsync(
+        CloseShiftRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync<CashVarianceReport>(
+            HttpMethod.Post,
+            "api/shift/close",
+            request,
+            cancellationToken);
+    }
+
     public Task<CompleteSaleResult> CompleteSaleAsync(
         CompleteSaleRequest request,
         CancellationToken cancellationToken = default)
@@ -87,6 +164,14 @@ public sealed class ApiClient : IApiClient
             content: null,
             cancellationToken);
 
+    public Task<IReadOnlyList<SalesProductDto>> GetProductsForReceiveAsync(
+        CancellationToken cancellationToken = default) =>
+        SendAsync<IReadOnlyList<SalesProductDto>>(
+            HttpMethod.Get,
+            "api/products/for-receive",
+            content: null,
+            cancellationToken);
+
     public Task<ReturnItemsResult> ReturnItemsAsync(
         ReturnItemsRequest request,
         CancellationToken cancellationToken = default)
@@ -98,6 +183,144 @@ public sealed class ApiClient : IApiClient
             request,
             cancellationToken);
     }
+
+    public Task<IReadOnlyList<PartyDto>> GetPartiesAsync(
+        string? role = null,
+        CancellationToken cancellationToken = default)
+    {
+        string path = string.IsNullOrWhiteSpace(role)
+            ? "api/parties"
+            : $"api/parties?role={Uri.EscapeDataString(role)}";
+
+        return SendAsync<IReadOnlyList<PartyDto>>(
+            HttpMethod.Get,
+            path,
+            content: null,
+            cancellationToken);
+    }
+
+    public Task<IReadOnlyList<SalesInvoiceSummaryDto>> GetInvoicesAsync(
+        Guid? shiftId = null,
+        int limit = 50,
+        CancellationToken cancellationToken = default)
+    {
+        int clamped = Math.Clamp(limit, 1, 200);
+        string path = shiftId is Guid id && id != Guid.Empty
+            ? $"api/sales/invoices?shiftId={id:D}&limit={clamped}"
+            : $"api/sales/invoices?limit={clamped}";
+
+        return SendAsync<IReadOnlyList<SalesInvoiceSummaryDto>>(
+            HttpMethod.Get,
+            path,
+            content: null,
+            cancellationToken);
+    }
+
+    public Task<IReadOnlyList<SalesInvoiceSummaryDto>> SearchInvoicesAsync(
+        string? invoice = null,
+        string? customer = null,
+        string? product = null,
+        int limit = 40,
+        CancellationToken cancellationToken = default)
+    {
+        var parts = new List<string>
+        {
+            $"limit={Math.Clamp(limit, 1, 200)}"
+        };
+
+        if (!string.IsNullOrWhiteSpace(invoice))
+        {
+            parts.Add($"invoice={Uri.EscapeDataString(invoice.Trim())}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(customer))
+        {
+            parts.Add($"customer={Uri.EscapeDataString(customer.Trim())}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(product))
+        {
+            parts.Add($"product={Uri.EscapeDataString(product.Trim())}");
+        }
+
+        return SendAsync<IReadOnlyList<SalesInvoiceSummaryDto>>(
+            HttpMethod.Get,
+            $"api/sales/invoices/search?{string.Join('&', parts)}",
+            content: null,
+            cancellationToken);
+    }
+
+    public Task<SalesInvoiceDetailDto> GetInvoiceAsync(
+        string invoiceNo,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(invoiceNo);
+        return SendAsync<SalesInvoiceDetailDto>(
+            HttpMethod.Get,
+            $"api/sales/invoices/{Uri.EscapeDataString(invoiceNo)}",
+            content: null,
+            cancellationToken);
+    }
+
+    public Task<CashVarianceReport> GetShiftReconciliationAsync(
+        Guid shiftId,
+        CancellationToken cancellationToken = default)
+    {
+        if (shiftId == Guid.Empty)
+        {
+            throw new ArgumentException("Shift id is required.", nameof(shiftId));
+        }
+
+        return SendAsync<CashVarianceReport>(
+            HttpMethod.Get,
+            $"api/shift/{shiftId:D}/reconciliation",
+            content: null,
+            cancellationToken);
+    }
+
+    public Task<ManagerPinVerifiedDto> VerifyManagerPinAsync(
+        string pin,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pin);
+        return SendAsync<ManagerPinVerifiedDto>(
+            HttpMethod.Post,
+            "api/auth/verify-manager-pin",
+            new LoginRequest { Pin = pin },
+            cancellationToken);
+    }
+
+    public Task<ReceiveStockResultDto> QuickReceiveAsync(
+        QuickReceiveRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync<ReceiveStockResultDto>(
+            HttpMethod.Post,
+            "api/purchases/quick-receive",
+            request,
+            cancellationToken);
+    }
+
+    public Task<ReceiveStockResultDto> DirectReceiveAsync(
+        QuickReceiveRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync<ReceiveStockResultDto>(
+            HttpMethod.Post,
+            "api/purchases/direct-receive",
+            request,
+            cancellationToken);
+    }
+
+    public Task<StoreStatusDto> GetStoreStatusAsync(
+        CancellationToken cancellationToken = default) =>
+        SendAsync<StoreStatusDto>(
+            HttpMethod.Get,
+            "api/store/status",
+            content: null,
+            cancellationToken);
 
     private async Task<TResponse> SendAsync<TResponse>(
         HttpMethod method,
@@ -144,9 +367,14 @@ public sealed class ApiClient : IApiClient
 
             if (!response.IsSuccessStatusCode)
             {
+                string? detail = TryReadProblemDetail(responseBody);
+                string message = string.IsNullOrWhiteSpace(detail)
+                    ? $"WebPos API call to '{path}' failed with {(int)response.StatusCode} ({response.StatusCode})."
+                    : detail;
+
                 throw new WebPosClientException(
                     response.StatusCode,
-                    $"WebPos API call to '{path}' failed with {(int)response.StatusCode} ({response.StatusCode}).",
+                    message,
                     responseBody: responseBody,
                     requestPath: path);
             }
@@ -181,5 +409,35 @@ public sealed class ApiClient : IApiClient
                     innerException: ex);
             }
         }
+    }
+
+    private static string? TryReadProblemDetail(string responseBody)
+    {
+        if (string.IsNullOrWhiteSpace(responseBody))
+        {
+            return null;
+        }
+
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(responseBody);
+            if (doc.RootElement.TryGetProperty("detail", out JsonElement detail)
+                && detail.ValueKind == JsonValueKind.String)
+            {
+                return detail.GetString();
+            }
+
+            if (doc.RootElement.TryGetProperty("title", out JsonElement title)
+                && title.ValueKind == JsonValueKind.String)
+            {
+                return title.GetString();
+            }
+        }
+        catch (JsonException)
+        {
+            // Keep generic status message when body is not ProblemDetails JSON.
+        }
+
+        return null;
     }
 }

@@ -44,7 +44,7 @@ public sealed class PinLoginTests
     {
         HmacPinHasher hasher = CreateHasher();
         await using WebPosDbContext context = CreateContext();
-        User cashier = await SeedCashierAsync(context, pinHash: hasher.HashPin(Pin));
+        User cashier = await SeedUserAsync(context, "Cashier", pinHash: hasher.HashPin(Pin));
         LoginService service = new(context, hasher);
 
         Common.Models.CashierDto? result = await service.LoginAsync(Pin);
@@ -55,12 +55,31 @@ public sealed class PinLoginTests
     }
 
     [Fact]
+    public async Task LoginAsync_ShouldAllowManagerPin()
+    {
+        const string managerPin = "8642";
+        HmacPinHasher hasher = CreateHasher();
+        await using WebPosDbContext context = CreateContext();
+        User manager = await SeedUserAsync(
+            context,
+            "Manager",
+            pinHash: hasher.HashPin(managerPin));
+        LoginService service = new(context, hasher);
+
+        Common.Models.CashierDto? result = await service.LoginAsync(managerPin);
+
+        result.Should().NotBeNull();
+        result!.CashierId.Should().Be(manager.Id);
+    }
+
+    [Fact]
     public async Task LoginAsync_ShouldFallbackToPasswordHash_WhenPinHashIsEmpty()
     {
         HmacPinHasher hasher = CreateHasher();
         await using WebPosDbContext context = CreateContext();
-        User cashier = await SeedCashierAsync(
+        User cashier = await SeedUserAsync(
             context,
+            "Cashier",
             pinHash: string.Empty,
             passwordHash: CryptoHelper.HashPassword(Pin));
         LoginService service = new(context, hasher);
@@ -93,8 +112,9 @@ public sealed class PinLoginTests
         return new WebPosDbContext(options, new FixedTenantService(TenantDefaults.MasterTenantId));
     }
 
-    private static async Task<User> SeedCashierAsync(
+    private static async Task<User> SeedUserAsync(
         WebPosDbContext context,
+        string roleName,
         string pinHash,
         string? passwordHash = null)
     {
@@ -117,14 +137,14 @@ public sealed class PinLoginTests
         {
             Id = Guid.NewGuid(),
             TenantId = tenantId,
-            RoleName = "Cashier",
+            RoleName = roleName,
             CreatedAt = now
         };
-        User cashier = new()
+        User user = new()
         {
             Id = Guid.NewGuid(),
             TenantId = tenantId,
-            Username = $"cashier-{Guid.NewGuid():N}",
+            Username = $"{roleName.ToLowerInvariant()}-{Guid.NewGuid():N}",
             PasswordHash = passwordHash ?? CryptoHelper.HashPassword("legacy-password"),
             PinHash = pinHash,
             RoleId = role.Id,
@@ -135,9 +155,9 @@ public sealed class PinLoginTests
         };
 
         context.Roles.Add(role);
-        context.Users.Add(cashier);
+        context.Users.Add(user);
         await context.SaveChangesAsync();
-        return cashier;
+        return user;
     }
 
     private sealed class FixedTenantService(Guid tenantId) : ITenantService

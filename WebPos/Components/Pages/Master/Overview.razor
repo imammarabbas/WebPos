@@ -1,0 +1,120 @@
+@page "/master"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using WebPos.Core.Abstractions
+@inject IMasterOverviewService OverviewService
+
+<PageTitle>Master Overview · Copenhagen Mart</PageTitle>
+
+<div class="mm-page">
+    <div class="mm-page-header">
+        <div>
+            <h1>Dashboard</h1>
+            <p>Copenhagen Mart master data overview</p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+    else if (_overview is null)
+    {
+        <p class="mm-muted">Loading overview…</p>
+    }
+    else
+    {
+        <div class="mm-kpi-grid">
+            <div class="mm-kpi">
+                <div class="mm-kpi-label">Products</div>
+                <div class="mm-kpi-value">@_overview.ProductCount</div>
+            </div>
+            <div class="mm-kpi">
+                <div class="mm-kpi-label">Customers</div>
+                <div class="mm-kpi-value">@_overview.CustomerCount</div>
+            </div>
+            <div class="mm-kpi">
+                <div class="mm-kpi-label">Suppliers</div>
+                <div class="mm-kpi-value">@_overview.SupplierCount</div>
+            </div>
+            <div class="mm-kpi">
+                <div class="mm-kpi-label">Low stock</div>
+                <div class="mm-kpi-value">@_overview.LowStockCount</div>
+                @if (_overview.LowStockCount > 0)
+                {
+                    <a class="mm-kpi-cta" href="/master/products?low=1">Review →</a>
+                }
+            </div>
+        </div>
+
+        <div class="mm-grid-2">
+            <div class="mm-card">
+                <h2>Recent activity</h2>
+                @if (_overview.RecentActivity.Count == 0)
+                {
+                    <p class="mm-muted mb-0">No recent activity.</p>
+                }
+                else
+                {
+                    <ul class="mm-activity">
+                        @foreach (ActivityItemDto item in _overview.RecentActivity)
+                        {
+                            <li>
+                                <span class="mm-activity-kind">@item.Kind</span>
+                                <div>
+                                    <div class="mm-activity-title">@item.Title</div>
+                                    <div class="mm-activity-detail">@item.Detail</div>
+                                </div>
+                                <span class="mm-activity-time">@item.At.ToLocalTime().ToString("g")</span>
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
+
+            <div class="mm-card">
+                <h2>Inventory by category</h2>
+                @if (_overview.InventoryByCategory.Count == 0)
+                {
+                    <p class="mm-muted mb-0">No category stock yet.</p>
+                }
+                else
+                {
+                    @foreach (CategoryStockDto row in _overview.InventoryByCategory)
+                    {
+                        <div class="mm-bar-row">
+                            <span>@row.CategoryName</span>
+                            <div class="mm-bar-track">
+                                <div class="mm-bar-fill" style="width: @(Math.Clamp(row.Percent, 0, 100))%"></div>
+                            </div>
+                            <span>@row.ProductCount</span>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+
+        <div class="mm-tip">
+            <strong>Tip:</strong> Use <strong>NO BARCODE</strong> as the barcode value for loose or unlabeled items so cashiers can still find them by short code or name.
+        </div>
+    }
+</div>
+
+@code {
+    private MasterOverviewDto? _overview;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _overview = await OverviewService.GetOverviewAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+}

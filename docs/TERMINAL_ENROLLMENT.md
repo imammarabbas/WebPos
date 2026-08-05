@@ -4,27 +4,44 @@ One-time setup per POS terminal before daily use.
 
 ## Prerequisites
 
-- WebPos API running and reachable (HTTPS).
-- PostgreSQL migrated (`dotnet ef database update --project WebPos`).
-- Production secrets configured (see `.env.example` / `appsettings.Production.json`).
-- A **Terminal** row exists in the database (pilot seed creates id `00000000-0000-0000-0000-000000000010`).
-- Admin credentials (default seed: `admin` / `admin123` — change in production).
+- WebPos API running (`docker compose up --build` or local Kestrel).
+- Migrations applied automatically on API startup (non-Testing).
+- Secrets generated: `pwsh -File scripts/Generate-PilotEnv.ps1` (writes `.env` + terminal public key).
+- Pilot terminal id: `00000000-0000-0000-0000-000000000010` (override with `PILOT_TERMINAL_ID`).
+- Default pilot credentials (change for real shops):
+  - Admin: `admin` / `admin123` (`PILOT_ADMIN_PASSWORD`)
+  - Cashier PIN: `2468` (`PILOT_CASHIER_PIN`)
 
-## 1. Generate enrollment keys (server)
+## 1. Generate enrollment keys
 
-Generate a 3072-bit RSA key pair. Store **private** key on the API server only:
-
-```bash
-openssl genrsa -out enrollment-private.pem 3072
-openssl rsa -in enrollment-private.pem -pubout -out enrollment-public.pem
+```powershell
+powershell -File scripts\Generate-PilotEnv.ps1
 ```
 
-Set environment variables (or Key Vault):
+### API host options
 
-- `Security__Enrollment__PrivateKeyPem` — full PEM private key
-- `Security__Enrollment__PublicKeyPem` — full PEM public key (also on terminal for validation)
+**A) Docker** (needs Docker Hub reachability):
 
-## 2. Enroll the terminal
+```powershell
+docker compose up --build -d
+```
+
+**B) Local host** (recommended when Docker Hub DNS fails):
+
+```powershell
+dotnet run --project WebPos\WebPos.csproj -c Debug --no-launch-profile --environment Pilot --urls http://localhost:8080
+```
+
+Wait until `GET http://localhost:8080/health` returns Healthy.
+
+## 2. Enroll from Windows Terminal (recommended)
+
+1. Launch **WebPos.WindowsTerminal**.
+2. Open **Enroll Terminal** (`/enroll`) if not already enrolled.
+3. Confirm Terminal ID, enter admin username/password, tap **Enroll**.
+4. Certificate is stored in Windows Secure Storage; you are redirected to PIN login.
+
+## 3. Enroll via API (optional / smoke)
 
 **POST** `/api/terminal-enrollment`  
 Header: `X-Api-Version: 1.0.0`
@@ -37,43 +54,39 @@ Header: `X-Api-Version: 1.0.0`
 }
 ```
 
-Response includes `token` (enrollment JWT), `tenantId`, `terminalId`, `expiresAtUtc`.
+Automated smoke (API only):
 
-Save the token securely on the terminal via `SecureEnrollmentCertificateStore` (Windows Terminal does this automatically when enrollment UI is used, or inject via secure provisioning).
+```powershell
+pwsh -File scripts/Day1-PilotSmoke.ps1
+```
 
-## 3. Configure Windows Terminal
+## 4. Configure API base URL
 
-Edit `WebPos.WindowsTerminal/appsettings.json` or set environment variable:
+`WebPos.WindowsTerminal/appsettings.json` (updated by Generate-PilotEnv):
 
 ```json
 {
   "WebPosSdk": {
-    "BaseAddress": "https://your-api-host:8080/",
+    "BaseAddress": "http://localhost:8080/",
     "ApiVersion": "1.0.0"
   }
 }
 ```
 
-Or: `WebPosSdk__BaseAddress=https://your-api-host:8080/`
+Or: `WebPosSdk__BaseAddress=http://your-api-host:8080/`
 
-## 4. Daily shift flow (pilot)
+## 5. Daily shift flow (pilot)
 
-1. Launch **WebPos.WindowsTerminal** (valid enrollment cert required).
-2. **PIN login** — `POST /api/auth/login` (SDK sends enrollment Bearer automatically).
-3. **Start shift** — `POST /api/shift/start`.
-4. **Load products** — `GET /api/products/for-sale`.
-5. **Complete sale** — `POST /api/sales/complete`.
-6. **Close shift** — `POST /api/shift/close` → review cash variance report.
+1. PIN login (`2468` for seeded cashier).
+2. **Start shift** — opening cash.
+3. **Sales** — Buffalo/Cow milk catalog is seeded at API startup.
+4. **Close shift** — blind cash count → variance report.
 
-Optional: `GET /api/sync/bootstrap` on shift start for offline catalogue cache.
-
-## 5. Verify health
+## 6. Verify health
 
 ```bash
-curl https://your-api-host:8080/health
+curl http://localhost:8080/health
 ```
-
-Should return `Healthy` when database is reachable.
 
 ## Troubleshooting
 
@@ -82,4 +95,5 @@ Should return `Healthy` when database is reachable.
 | 401 on API calls | Missing/expired enrollment Bearer or invalid JWT |
 | 403 on sales/shift | Tenant claim does not match resolved tenant |
 | 426 | Missing or wrong `X-Api-Version` header |
-| Terminal won't start | No enrollment certificate in secure store |
+| Enroll fails validating token | Terminal missing `Security:Enrollment:PublicKeyPem` (re-run Generate-PilotEnv) |
+| No products on sales screen | Catalog seed failed — check API logs for StartupSeeding |

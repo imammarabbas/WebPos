@@ -1,17 +1,135 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
-    <div class="container-fluid">
-        <a class="navbar-brand" href="">WebPos Terminal</a>
+﻿@implements IDisposable
+@inject ISessionService SessionService
+@inject LoginApiClient Login
+@inject ShiftStatusApiClient ShiftStatus
+@inject NavigationManager Navigation
+
+<div class="sidebar-shell">
+    <div class="sidebar-brand">
+        <span class="brand-kicker">TERMINAL POS</span>
+        <a class="navbar-brand" href="sales">Copenhagen Mart</a>
+        <span class="role-badge">
+            <span class="online-dot @(ShiftStatus.IsApiOnline ? "on" : "off")"></span>
+            ROLE: CASHIER
+        </span>
+    </div>
+
+    <input type="checkbox" title="Navigation menu" class="navbar-toggler" id="navToggler" />
+
+    <div class="nav-scrollable" onclick="document.getElementById('navToggler')?.click()">
+        <nav class="nav flex-column">
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="sales" Match="NavLinkMatch.Prefix">
+                    <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> POS Terminal
+                </NavLink>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="recent-bills">
+                    <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Recent Bills
+                </NavLink>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="returns">
+                    <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Returns
+                </NavLink>
+            </div>
+            <div class="nav-item px-3">
+                <button type="button" class="nav-link" style="background:none;border:0;width:100%;text-align:left;cursor:pointer;"
+                        @onclick="GoReceiveGoods">
+                    <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Receive Goods
+                </button>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="close-shift">
+                    <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Close Shift
+                </NavLink>
+            </div>
+        </nav>
+
+        <div class="quick-stats">
+            <div class="stat-row">
+                <span>Drawer</span>
+                <strong>Rs @FormatRs(ShiftStatus.ExpectedCashPaisa)</strong>
+            </div>
+            <div class="stat-row">
+                <span>Shift</span>
+                <strong>@(SessionService.IsActive ? $"OPEN · {ShiftLabel}" : "—")</strong>
+            </div>
+            <div class="stat-row">
+                <span>Terminal</span>
+                <strong class="@(ShiftStatus.IsApiOnline ? "online-text" : "offline-text")">
+                    @(ShiftStatus.IsApiOnline ? "Online" : "Offline")
+                </strong>
+            </div>
+        </div>
+    </div>
+
+    <div class="sidebar-footer">
+        <div class="cashier-avatar">@CashierInitials</div>
+        <div class="cashier-meta">
+            <strong>@CashierDisplayName</strong>
+            <span>Cashier · Copenhagen</span>
+        </div>
+        <button type="button"
+                class="logout-btn"
+                title="Lock keeps the server shift open. Same PIN can resume; another PIN needs Close Shift or Master Force Close."
+                @onclick="LockTerminal">
+            Lock
+        </button>
+        <span class="lock-hint">Keeps shift open</span>
     </div>
 </div>
 
-<input type="checkbox" title="Navigation menu" class="navbar-toggler" />
+@code {
+    private string CashierDisplayName =>
+        !string.IsNullOrWhiteSpace(SessionService.CashierName)
+            ? SessionService.CashierName
+            : Login.CurrentCashier?.Name ?? "Cashier";
 
-<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
-    <nav class="nav flex-column">
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="sales">
-                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Sales
-            </NavLink>
-        </div>
-    </nav>
-</div>
+    private string ShiftLabel =>
+        SessionService.OpenedAt is DateTimeOffset opened
+            ? opened.ToLocalTime().ToString("HH:mm")
+            : "—";
+
+    private string CashierInitials
+    {
+        get
+        {
+            string name = CashierDisplayName.Trim();
+            string[] parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 2)
+            {
+                return $"{char.ToUpperInvariant(parts[0][0])}{char.ToUpperInvariant(parts[1][0])}";
+            }
+
+            return name.Length >= 2
+                ? name[..2].ToUpperInvariant()
+                : name.ToUpperInvariant();
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        ShiftStatus.Changed += OnStatusChanged;
+        if (SessionService.IsActive)
+        {
+            await ShiftStatus.RefreshAsync();
+        }
+    }
+
+    private void OnStatusChanged() => InvokeAsync(StateHasChanged);
+
+    private void LockTerminal()
+    {
+        SessionService.ClearSession();
+        Login.ClearCashier();
+        _ = ShiftStatus.RefreshAsync();
+        Navigation.NavigateTo("/login", forceLoad: true);
+    }
+
+    private void GoReceiveGoods() => Navigation.NavigateTo("/sales?receive=1");
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+
+    public void Dispose() => ShiftStatus.Changed -= OnStatusChanged;
+}

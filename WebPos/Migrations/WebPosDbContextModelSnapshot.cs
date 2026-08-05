@@ -17,10 +17,81 @@ namespace WebPos.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.9")
+                .HasAnnotation("ProductVersion", "10.0.10")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.Entity("WebPos.Core.Models.CashAccount", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("AccountCode")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("account_code");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_active");
+
+                    b.Property<bool>("IsSystem")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_system");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("name");
+
+                    b.Property<string>("PaymentMethodKey")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("payment_method_key");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer")
+                        .HasColumnName("sort_order");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid?>("TerminalId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("terminal_id");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("account_type");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TerminalId");
+
+                    b.HasIndex("TenantId", "AccountCode")
+                        .IsUnique()
+                        .HasDatabaseName("UX_cash_accounts_tenant_account_code");
+
+                    b.HasIndex("TenantId", "TerminalId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_cash_accounts_tenant_terminal")
+                        .HasFilter("\"terminal_id\" IS NOT NULL");
+
+                    b.HasIndex("TenantId", "Type", "SortOrder")
+                        .HasDatabaseName("IX_cash_accounts_tenant_type_sort");
+
+                    b.ToTable("cash_accounts", (string)null);
+                });
 
             modelBuilder.Entity("WebPos.Core.Models.CashierShift", b =>
                 {
@@ -397,6 +468,14 @@ namespace WebPos.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<long>("CreditPaisa")
+                        .HasColumnType("bigint")
+                        .HasColumnName("credit_paisa");
+
+                    b.Property<long>("DebitPaisa")
+                        .HasColumnType("bigint")
+                        .HasColumnName("debit_paisa");
+
                     b.Property<string>("InvoiceNo")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
@@ -457,6 +536,52 @@ namespace WebPos.Migrations
                     b.ToTable("party_ledgers", (string)null);
                 });
 
+            modelBuilder.Entity("WebPos.Core.Models.PartyPaymentAllocation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<long>("AmountPaisa")
+                        .HasColumnType("bigint")
+                        .HasColumnName("amount_paisa");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("InvoiceNo")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("invoice_no");
+
+                    b.Property<Guid>("PartyLedgerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("party_ledger_id");
+
+                    b.Property<Guid?>("PurchaseOrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("purchase_order_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InvoiceNo");
+
+                    b.HasIndex("PartyLedgerId")
+                        .HasDatabaseName("IX_party_payment_allocations_party_ledger_id");
+
+                    b.HasIndex("PurchaseOrderId");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("party_payment_allocations", (string)null);
+                });
+
             modelBuilder.Entity("WebPos.Core.Models.Product", b =>
                 {
                     b.Property<Guid>("Id")
@@ -500,11 +625,32 @@ namespace WebPos.Migrations
                         .HasDefaultValue(false)
                         .HasColumnName("is_deleted");
 
+                    b.Property<bool>("IsLoose")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_loose");
+
+                    b.Property<decimal>("MinStockQty")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)")
+                        .HasDefaultValue(10m)
+                        .HasColumnName("min_stock_qty");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(150)
                         .HasColumnType("character varying(150)")
                         .HasColumnName("name");
+
+                    b.Property<string>("ShortCode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasDefaultValue("")
+                        .HasColumnName("short_code");
 
                     b.Property<bool>("ShowOnWebshop")
                         .HasColumnType("boolean")
@@ -535,6 +681,10 @@ namespace WebPos.Migrations
                         .IsUnique();
 
                     b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "ShortCode")
+                        .IsUnique()
+                        .HasFilter("short_code <> ''");
 
                     b.HasIndex("TenantId", "UpdatedAt")
                         .HasDatabaseName("IX_products_tenant_updated_at");
@@ -806,6 +956,10 @@ namespace WebPos.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<long>("AmountPaidPaisa")
+                        .HasColumnType("bigint")
+                        .HasColumnName("amount_paid_paisa");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -987,6 +1141,10 @@ namespace WebPos.Migrations
                         .HasColumnType("character varying(100)")
                         .HasColumnName("invoice_no");
 
+                    b.Property<long>("AmountPaidPaisa")
+                        .HasColumnType("bigint")
+                        .HasColumnName("amount_paid_paisa");
+
                     b.Property<Guid>("CashierId")
                         .HasColumnType("uuid")
                         .HasColumnName("cashier_id");
@@ -1087,6 +1245,10 @@ namespace WebPos.Migrations
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
+
+                    b.Property<long>("UnitCostPaisa")
+                        .HasColumnType("bigint")
+                        .HasColumnName("unit_cost_paisa");
 
                     b.Property<long>("UnitPricePaisa")
                         .HasColumnType("bigint")
@@ -1247,7 +1409,7 @@ namespace WebPos.Migrations
                         .HasColumnType("character varying(100)")
                         .HasColumnName("receipt_reference");
 
-                    b.Property<Guid>("ShiftId")
+                    b.Property<Guid?>("ShiftId")
                         .HasColumnType("uuid")
                         .HasColumnName("shift_id");
 
@@ -1417,6 +1579,22 @@ namespace WebPos.Migrations
                     b.ToTable("users", (string)null);
                 });
 
+            modelBuilder.Entity("WebPos.Core.Models.CashAccount", b =>
+                {
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("WebPos.Core.Models.Terminal", "Terminal")
+                        .WithMany()
+                        .HasForeignKey("TerminalId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Terminal");
+                });
+
             modelBuilder.Entity("WebPos.Core.Models.CashierShift", b =>
                 {
                     b.HasOne("WebPos.Core.Models.User", null)
@@ -1547,6 +1725,37 @@ namespace WebPos.Migrations
                         .IsRequired();
 
                     b.Navigation("Party");
+                });
+
+            modelBuilder.Entity("WebPos.Core.Models.PartyPaymentAllocation", b =>
+                {
+                    b.HasOne("WebPos.Core.Models.SalesInvoice", "Invoice")
+                        .WithMany()
+                        .HasForeignKey("InvoiceNo")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("WebPos.Core.Models.PartyLedger", "PartyLedger")
+                        .WithMany("Allocations")
+                        .HasForeignKey("PartyLedgerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("WebPos.Core.Models.PurchaseOrder", "PurchaseOrder")
+                        .WithMany()
+                        .HasForeignKey("PurchaseOrderId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Invoice");
+
+                    b.Navigation("PartyLedger");
+
+                    b.Navigation("PurchaseOrder");
                 });
 
             modelBuilder.Entity("WebPos.Core.Models.Product", b =>
@@ -1948,17 +2157,18 @@ namespace WebPos.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("WebPos.Core.Models.CashierShift", null)
+                    b.HasOne("WebPos.Core.Models.CashierShift", "Shift")
                         .WithMany("ShiftExpenses")
                         .HasForeignKey("ShiftId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("WebPos.Core.Models.Tenant", null)
                         .WithMany()
                         .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.Navigation("Shift");
                 });
 
             modelBuilder.Entity("WebPos.Core.Models.Terminal", b =>
@@ -2002,6 +2212,11 @@ namespace WebPos.Migrations
             modelBuilder.Entity("WebPos.Core.Models.Party", b =>
                 {
                     b.Navigation("Ledgers");
+                });
+
+            modelBuilder.Entity("WebPos.Core.Models.PartyLedger", b =>
+                {
+                    b.Navigation("Allocations");
                 });
 
             modelBuilder.Entity("WebPos.Core.Models.Product", b =>

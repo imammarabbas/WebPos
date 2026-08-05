@@ -1,0 +1,370 @@
+@page "/master/purchases"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.WebUtilities
+@using WebPos.Core.Abstractions
+@inject IPurchaseService PurchaseService
+@inject IPartyService PartyService
+@inject IProductAdminService ProductService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager Navigation
+
+<PageTitle>Purchases · Copenhagen Mart</PageTitle>
+
+<div class="mm-page">
+    <div class="mm-page-header">
+        <div>
+            <h1>Purchases</h1>
+            <p>Purchase orders and stock receiving</p>
+        </div>
+        <button type="button" class="mm-btn mm-btn-primary" @onclick="ShowCreate">+ New purchase</button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+    @if (!string.IsNullOrEmpty(_success))
+    {
+        <div class="mm-alert mm-alert-ok">@_success</div>
+    }
+
+    <div class="mm-toolbar">
+        <input class="form-control" style="max-width: 280px;" placeholder="Filter purchases…" @bind="_filter" @bind:event="oninput" />
+    </div>
+
+    @if (_showForm)
+    {
+        <div class="mm-card">
+            <h2>Create purchase order</h2>
+            <EditForm Model="_form" OnValidSubmit="CreateAsync">
+                <div class="mm-form-grid">
+                    <div class="mm-field">
+                        <label for="po-supplier">Supplier</label>
+                        <InputSelect id="po-supplier" @bind-Value="_form.SupplierId">
+                            <option value="">— Select —</option>
+                            @foreach (PartyDto s in _suppliers)
+                            {
+                                <option value="@s.Id">@s.Name</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    <div class="mm-field">
+                        <label for="po-invoice">Supplier invoice no</label>
+                        <InputText id="po-invoice" @bind-Value="_form.SupplierInvoiceNo" />
+                    </div>
+                    <div class="mm-field">
+                        <label for="po-date">Purchase date</label>
+                        <InputDate id="po-date" @bind-Value="_form.PurchaseDate" />
+                    </div>
+                    <div class="mm-field">
+                        <label for="po-discount">Discount (Rs)</label>
+                        <InputNumber id="po-discount" @bind-Value="_form.DiscountRs" />
+                    </div>
+                </div>
+
+                <div class="mm-line-editor">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <strong>Lines</strong>
+                        <button type="button" class="mm-btn" @onclick="AddLine">+ Line</button>
+                    </div>
+                    @for (int i = 0; i < _form.Lines.Count; i++)
+                    {
+                        int index = i;
+                        LineForm line = _form.Lines[index];
+                        <div class="mm-line-row">
+                            <div class="mm-field">
+                                <label>Product</label>
+                                <InputSelect @bind-Value="line.ProductId">
+                                    <option value="">— Select —</option>
+                                    @foreach (ProductAdminDto p in _products)
+                                    {
+                                        <option value="@p.Id">@p.Name (@p.Sku)</option>
+                                    }
+                                </InputSelect>
+                            </div>
+                            <div class="mm-field">
+                                <label>Qty</label>
+                                <InputNumber @bind-Value="line.Quantity" />
+                            </div>
+                            <div class="mm-field">
+                                <label>Cost (Rs)</label>
+                                <InputNumber @bind-Value="line.PurchasePriceRs" />
+                            </div>
+                            <div class="mm-field">
+                                <label>Retail (Rs)</label>
+                                <InputNumber @bind-Value="line.RetailPriceRs" />
+                            </div>
+                            <button type="button" class="mm-btn mm-btn-danger" @onclick="() => RemoveLine(index)">✕</button>
+                        </div>
+                    }
+                </div>
+
+                <div class="mm-form-actions">
+                    <button type="submit" class="mm-btn mm-btn-primary" disabled="@_saving">
+                        @(_saving ? "Creating…" : "Create PO")
+                    </button>
+                    <button type="button" class="mm-btn" @onclick="HideCreate" disabled="@_saving">Cancel</button>
+                </div>
+            </EditForm>
+        </div>
+    }
+
+    <div class="mm-card">
+        <h2>Purchase orders</h2>
+        <div class="mm-table-wrap">
+            <table class="mm-table">
+                <thead>
+                    <tr>
+                        <th>Invoice</th>
+                        <th>Supplier</th>
+                        <th>Net</th>
+                        <th>Lines</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (PurchaseOrderSummaryDto po in Filtered)
+                    {
+                        <tr class="mm-row-click" style="cursor:pointer;" @onclick="() => OpenDetail(po.Id)">
+                            <td>
+                                <a href="/master/purchases/@po.Id" @onclick:stopPropagation>@po.SupplierInvoiceNo</a>
+                            </td>
+                            <td>@(po.SupplierName ?? po.SupplierId.ToString("N")[..8])</td>
+                            <td>Rs @FormatRs(po.NetPayablePaisa)</td>
+                            <td>@po.LineCount</td>
+                            <td>
+                                @if (po.IsReceived)
+                                {
+                                    <span class="mm-badge mm-badge-ok">Received</span>
+                                }
+                                else
+                                {
+                                    <span class="mm-badge mm-badge-warn">Open</span>
+                                }
+                                <span class="mm-muted"> @po.PaymentStatus</span>
+                            </td>
+                            <td>@po.CreatedAt.ToLocalTime().ToString("g")</td>
+                            <td @onclick:stopPropagation>
+                                <a class="mm-btn" href="/master/purchases/@po.Id">Open</a>
+                                @if (!po.IsReceived)
+                                {
+                                    <button type="button"
+                                            class="mm-btn mm-btn-primary"
+                                            disabled="@_saving"
+                                            @onclick="() => ReceiveAsync(po.Id)">
+                                        Receive
+                                    </button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@code {
+    private readonly List<PurchaseOrderSummaryDto> _orders = [];
+    private readonly List<PartyDto> _suppliers = [];
+    private readonly List<ProductAdminDto> _products = [];
+    private PurchaseForm _form = PurchaseForm.CreateDefault();
+    private Guid _receiverId;
+    private string _filter = string.Empty;
+    private bool _showForm;
+    private bool _saving;
+    private string? _error;
+    private string? _success;
+
+    private IEnumerable<PurchaseOrderSummaryDto> Filtered =>
+        string.IsNullOrWhiteSpace(_filter)
+            ? _orders
+            : _orders.Where(o =>
+                o.SupplierInvoiceNo.Contains(_filter, StringComparison.OrdinalIgnoreCase)
+                || (o.SupplierName?.Contains(_filter, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    protected override async Task OnInitializedAsync()
+    {
+        AuthenticationState state = await AuthStateProvider.GetAuthenticationStateAsync();
+        string? id = state.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (!Guid.TryParse(id, out _receiverId))
+        {
+            _error = "Signed-in user id is missing.";
+        }
+
+        Uri uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        var query = QueryHelpers.ParseQuery(uri.Query);
+        if (query.TryGetValue("q", out var q) && !string.IsNullOrWhiteSpace(q))
+        {
+            _filter = q.ToString();
+        }
+
+        await LoadAsync();
+        if (query.ContainsKey("new"))
+        {
+            ShowCreate();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _orders.Clear();
+            _orders.AddRange(await PurchaseService.ListAsync());
+            _suppliers.Clear();
+            _suppliers.AddRange(await PartyService.GetSuppliersAsync());
+            _products.Clear();
+            _products.AddRange(await ProductService.ListAsync());
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private void ShowCreate()
+    {
+        _form = PurchaseForm.CreateDefault();
+        _showForm = true;
+        _error = null;
+        _success = null;
+    }
+
+    private void OpenDetail(Guid purchaseOrderId) =>
+        Navigation.NavigateTo($"/master/purchases/{purchaseOrderId}");
+
+    private void HideCreate() => _showForm = false;
+
+    private void AddLine() => _form.Lines.Add(new LineForm());
+
+    private void RemoveLine(int index)
+    {
+        if (index >= 0 && index < _form.Lines.Count)
+        {
+            _form.Lines.RemoveAt(index);
+        }
+    }
+
+    private async Task CreateAsync()
+    {
+        if (_receiverId == Guid.Empty)
+        {
+            _error = "Cannot create purchase without a receiver user id.";
+            return;
+        }
+
+        if (!Guid.TryParse(_form.SupplierId, out Guid supplierId))
+        {
+            _error = "Select a supplier.";
+            return;
+        }
+
+        List<CreatePurchaseLineRequest> lines = [];
+        foreach (LineForm line in _form.Lines)
+        {
+            if (!Guid.TryParse(line.ProductId, out Guid productId))
+            {
+                _error = "Each line needs a product.";
+                return;
+            }
+
+            lines.Add(new CreatePurchaseLineRequest
+            {
+                ProductId = productId,
+                Quantity = line.Quantity,
+                PurchasePricePaisa = ToPaisa(line.PurchasePriceRs),
+                RetailPricePaisa = ToPaisa(line.RetailPriceRs)
+            });
+        }
+
+        if (lines.Count == 0)
+        {
+            _error = "Add at least one line.";
+            return;
+        }
+
+        _saving = true;
+        _error = null;
+        _success = null;
+        try
+        {
+            CreatePurchaseOrderResult result = await PurchaseService.CreatePurchaseOrderAsync(new CreatePurchaseRequest
+            {
+                SupplierId = supplierId,
+                ReceiverId = _receiverId,
+                SupplierInvoiceNo = _form.SupplierInvoiceNo.Trim(),
+                PurchaseDate = new DateTimeOffset(_form.PurchaseDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
+                DiscountPaisa = ToPaisa(_form.DiscountRs),
+                Lines = lines
+            });
+
+            _success = $"Purchase created ({result.PurchaseOrderId:N}). Net Rs {FormatRs(result.NetPayablePaisa)}.";
+            _showForm = false;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task ReceiveAsync(Guid purchaseOrderId)
+    {
+        _saving = true;
+        _error = null;
+        _success = null;
+        try
+        {
+            ReceiveStockResult result = await PurchaseService.ReceiveStockAsync(purchaseOrderId);
+            _success = $"Received stock for PO. Net Rs {FormatRs(result.NetPayablePaisa)}.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static long ToPaisa(decimal rs) =>
+        (long)Math.Round(rs * 100m, MidpointRounding.AwayFromZero);
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+
+    private sealed class PurchaseForm
+    {
+        public string SupplierId { get; set; } = string.Empty;
+        public string SupplierInvoiceNo { get; set; } = string.Empty;
+        public DateOnly PurchaseDate { get; set; } = DateOnly.FromDateTime(DateTime.UtcNow);
+        public decimal DiscountRs { get; set; }
+        public List<LineForm> Lines { get; set; } = [];
+
+        public static PurchaseForm CreateDefault() => new()
+        {
+            Lines = [new LineForm()]
+        };
+    }
+
+    private sealed class LineForm
+    {
+        public string ProductId { get; set; } = string.Empty;
+        public decimal Quantity { get; set; } = 1m;
+        public decimal PurchasePriceRs { get; set; }
+        public decimal RetailPriceRs { get; set; }
+    }
+}

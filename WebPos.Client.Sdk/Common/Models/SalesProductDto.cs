@@ -17,6 +17,12 @@ public sealed class SalesProductDto
 
     public required string Barcode { get; init; }
 
+    public required string ShortCode { get; init; }
+
+    public required string CategoryName { get; init; }
+
+    public bool IsLoose { get; init; }
+
     public long UnitPricePaisa { get; init; }
 
     public decimal AvailableStock { get; init; }

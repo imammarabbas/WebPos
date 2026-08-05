@@ -2,46 +2,56 @@
     position: relative;
     display: flex;
     flex-direction: column;
+    min-height: 100vh;
+    background: #f4f5f7;
 }
 
 main {
     flex: 1;
+    background: #f4f5f7;
 }
 
 .sidebar {
-    background-image: linear-gradient(180deg, rgb(5, 39, 103) 0%, #3a0647 70%);
+    background: #1a1d23;
 }
 
 .top-row {
-    background-color: #f7f7f7;
-    border-bottom: 1px solid #d6d5d5;
+    background-color: #fff;
+    border-bottom: 1px solid #e5e7eb;
     justify-content: flex-end;
     height: 3.5rem;
     display: flex;
     align-items: center;
 }
 
-    .top-row ::deep a, .top-row ::deep .btn-link {
-        white-space: nowrap;
-        margin-left: 1.5rem;
-        text-decoration: none;
-    }
+.top-row ::deep a,
+.top-row ::deep .btn-link {
+    white-space: nowrap;
+    margin-left: 1.5rem;
+    text-decoration: none;
+}
 
-    .top-row ::deep a:hover, .top-row ::deep .btn-link:hover {
-        text-decoration: underline;
-    }
+.top-row ::deep a:hover,
+.top-row ::deep .btn-link:hover {
+    text-decoration: underline;
+}
 
-    .top-row ::deep a:first-child {
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
+.top-row ::deep a:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.content {
+    background: #f4f5f7;
+}
 
 @media (max-width: 640.98px) {
     .top-row {
         justify-content: space-between;
     }
 
-    .top-row ::deep a, .top-row ::deep .btn-link {
+    .top-row ::deep a,
+    .top-row ::deep .btn-link {
         margin-left: 0;
     }
 }
@@ -52,7 +62,7 @@ main {
     }
 
     .sidebar {
-        width: 250px;
+        width: 240px;
         height: 100vh;
         position: sticky;
         top: 0;
@@ -70,8 +80,9 @@ main {
         width: 0;
     }
 
-    .top-row, article {
-        padding-left: 2rem !important;
-        padding-right: 1.5rem !important;
+    .top-row,
+    article {
+        padding-left: 1.25rem !important;
+        padding-right: 1.25rem !important;
     }
 }

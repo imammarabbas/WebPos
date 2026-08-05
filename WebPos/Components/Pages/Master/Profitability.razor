@@ -1,0 +1,572 @@
+@page "/master/profitability"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using System.Globalization
+@using System.Text
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.JSInterop
+@using WebPos.Components.Pages.Master.Bi
+@using WebPos.Core.Abstractions
+@using WebPos.Core.Data
+@using WebPos.Core.Interfaces
+@inject IReportingService ReportingService
+@inject ICategoryService CategoryService
+@inject IDbContextFactory<WebPosDbContext> DbFactory
+@inject ITenantService TenantService
+@inject IJSRuntime Js
+@inject NavigationManager Navigation
+
+<PageTitle>Analytics · Copenhagen Mart</PageTitle>
+
+<div class="mm-page mm-page-wide bi-print-root">
+    <div class="mm-page-header">
+        <div>
+            <h1>BI Intelligence</h1>
+            <p>Profitability &amp; analytics · snapshotted sale costs</p>
+        </div>
+        <div class="bi-no-print" style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+            <a class="mm-btn" href="/master/reports">Finance P&amp;L →</a>
+            <button type="button" class="mm-btn" disabled="@(_data is null)" @onclick="ExportCsvAsync">Export CSV</button>
+            <button type="button" class="mm-btn mm-btn-primary" disabled="@(_data is null)" @onclick="PrintAsync">Export BI Report · PDF</button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+
+    <div class="bi-filter-bar bi-no-print">
+        <button type="button" class="mm-btn @PresetClass("today")" @onclick="@(() => ApplyPresetAsync("today"))">Today</button>
+        <button type="button" class="mm-btn @PresetClass("7d")" @onclick="@(() => ApplyPresetAsync("7d"))">7 Days</button>
+        <button type="button" class="mm-btn @PresetClass("30d")" @onclick="@(() => ApplyPresetAsync("30d"))">30 Days</button>
+        <button type="button" class="mm-btn @PresetClass("90d")" @onclick="@(() => ApplyPresetAsync("90d"))">90 Days</button>
+        <button type="button" class="mm-btn @PresetClass("custom")" @onclick="MarkCustom">Custom</button>
+        <input class="form-control" type="date" @bind="_fromDate" @bind:after="MarkCustom" />
+        <input class="form-control" type="date" @bind="_toDate" @bind:after="MarkCustom" />
+        <select class="form-control" @bind="_categoryId" @bind:after="LoadAsync">
+            <option value="">All Categories</option>
+            @foreach (var c in _categories)
+            {
+                <option value="@c.Id">@c.Name</option>
+            }
+        </select>
+        <select class="form-control" @bind="_terminalId" @bind:after="LoadAsync">
+            <option value="">All Terminals</option>
+            @foreach (var t in _terminals)
+            {
+                <option value="@t.Id">@t.Name</option>
+            }
+        </select>
+        <select class="form-control" @bind="_paymentMethod" @bind:after="LoadAsync">
+            <option value="">All Payments</option>
+            <option value="CASH">CASH</option>
+            <option value="EASYPAISA">EASYPAISA</option>
+            <option value="JAZZCASH">JAZZCASH</option>
+            <option value="BANK_TRANSFER">BANK_TRANSFER</option>
+            <option value="CREDIT">CREDIT</option>
+        </select>
+        <label class="bi-compare">
+            <input type="checkbox" @bind="_compare" @bind:after="LoadAsync" />
+            Compare prev
+        </label>
+        <button type="button" class="mm-btn mm-btn-primary" disabled="@_loading" @onclick="LoadAsync">
+            @(_loading ? "Loading…" : "Refresh")
+        </button>
+        <span class="bi-range-label">@_rangeLabel</span>
+    </div>
+
+    @if (_data is null && _loading)
+    {
+        <p class="mm-muted">Loading analytics…</p>
+    }
+    else if (_data is not null)
+    {
+        var k = _data.Kpis;
+        <div class="bi-kpi-grid">
+            @KpiCard("Total Sales", FormatRs(k.SalesPaisa), k.SalesDeltaPercent, k.SalesSparklinePaisa, "#111827")
+            @KpiCard("Gross Profit", FormatRs(k.GrossProfitPaisa), k.GrossProfitDeltaPercent, k.ProfitSparklinePaisa, "#059669")
+            @KpiCard("Profit Margin %", $"{k.MarginPercent:N1}%", k.MarginDeltaPercent, k.ProfitSparklinePaisa, "#059669")
+            @KpiCard("Items Sold", k.ItemsSold.ToString("N0"), k.ItemsSoldDeltaPercent, k.SalesSparklinePaisa, "#111827")
+            @KpiCard("Avg Basket", FormatRs(k.AvgBasketPaisa), k.AvgBasketDeltaPercent, k.SalesSparklinePaisa, "#111827")
+            @KpiCard("Transactions", k.Transactions.ToString("N0"), k.TransactionsDeltaPercent, k.SalesSparklinePaisa, "#111827")
+        </div>
+
+        <div class="bi-split">
+            <div class="mm-card">
+                <h2>Category Intelligence</h2>
+                @if (_data.Categories.Count == 0)
+                {
+                    <p class="mm-muted mb-0">No category sales in range.</p>
+                }
+                else
+                {
+                    long maxSales = Math.Max(1, _data.Categories.Max(c => c.SalesPaisa));
+                    @foreach (var cat in _data.Categories.Take(8))
+                    {
+                        double salesPct = cat.SalesPaisa * 100.0 / maxSales;
+                        double profitPct = cat.SalesPaisa == 0 ? 0 : cat.ProfitPaisa * 100.0 / cat.SalesPaisa;
+                        <div style="margin-bottom:0.35rem;font-size:0.88rem;font-weight:650;">@cat.CategoryName</div>
+                        <div class="bi-cat-bar">
+                            <div class="sales" style="width:@salesPct.ToString("0.#", CultureInfo.InvariantCulture)%"></div>
+                            <div class="profit" style="width:@Math.Max(0, Math.Min(100, profitPct)).ToString("0.#", CultureInfo.InvariantCulture)%"></div>
+                        </div>
+                    }
+                    <div class="mm-table-wrap" style="margin-top:0.75rem;">
+                        <table class="mm-table">
+                            <thead>
+                                <tr>
+                                    <th>Category</th>
+                                    <th>Sales</th>
+                                    <th>Profit</th>
+                                    <th>Margin</th>
+                                    <th>% Total</th>
+                                    <th>Trend</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var cat in _data.Categories)
+                                {
+                                    <tr>
+                                        <td>@cat.CategoryName</td>
+                                        <td>Rs @FormatRs(cat.SalesPaisa)</td>
+                                        <td style="color:var(--bi-profit);font-weight:650;">Rs @FormatRs(cat.ProfitPaisa)</td>
+                                        <td>@cat.MarginPercent.ToString("N1")%</td>
+                                        <td>@cat.PercentOfTotal.ToString("N1")%</td>
+                                        <td>@GrowthBadge(cat.TrendPercent)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+
+            <div class="bi-deep">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+                    <h2 style="margin:0;">Profit Deep Dive</h2>
+                    <div class="bi-tabs" style="margin:0;">
+                        <button type="button" class="bi-tab @(_skuMode == "total" ? "active" : null)" @onclick='() => _skuMode = "total"'>Total Profit</button>
+                        <button type="button" class="bi-tab @(_skuMode == "unit" ? "active" : null)" @onclick='() => _skuMode = "unit"'>Per Unit</button>
+                    </div>
+                </div>
+                <p class="mm-muted" style="margin:0.5rem 0 0.85rem;font-size:0.8rem;">Where money is really made</p>
+                @{
+                    var skus = _data.TopSkus;
+                    long maxSku = skus.Count == 0
+                        ? 1
+                        : Math.Max(1, skus.Max(s => _skuMode == "unit" ? s.PerUnitProfitPaisa : s.TotalProfitPaisa));
+                }
+                @if (skus.Count == 0)
+                {
+                    <p class="mm-muted">No SKU profit in range.</p>
+                }
+                else
+                {
+                    @foreach (var sku in skus)
+                    {
+                        long val = _skuMode == "unit" ? sku.PerUnitProfitPaisa : sku.TotalProfitPaisa;
+                        double pct = val * 100.0 / maxSku;
+                        <div class="bi-sku-row">
+                            <span>@sku.ProductName</span>
+                            <div class="bi-sku-track"><div class="bi-sku-fill" style="width:@pct.ToString("0.#", CultureInfo.InvariantCulture)%"></div></div>
+                            <strong>Rs @FormatRs(val)</strong>
+                        </div>
+                    }
+                }
+                <div class="bi-donut-wrap">
+                    <BiDonut Slices="_data.CategoryProfitShare" />
+                    <div class="bi-donut-legend">
+                        <div style="font-weight:700;margin-bottom:0.25rem;">Profit by category</div>
+                        @foreach (var slice in _data.CategoryProfitShare.Take(6))
+                        {
+                            <div>@slice.Label · @slice.PercentOfTotal.ToString("N1")%</div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @if (_data.Insights.Count > 0)
+        {
+            <div class="bi-insights">
+                @foreach (var insight in _data.Insights)
+                {
+                    <div class="bi-insight @SeverityClass(insight.Severity)">
+                        <div class="title">@insight.Title</div>
+                        <div class="detail">@insight.Detail</div>
+                    </div>
+                }
+            </div>
+        }
+
+        <div class="mm-card bi-matrix" style="display:block;padding:1rem 1.1rem;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.5rem;">
+                <div>
+                    <h2 style="margin:0;">Product Performance Matrix</h2>
+                    <p class="mm-muted" style="margin:0.25rem 0 0;font-size:0.82rem;">Stars · Workhorses · Opportunities · Dogs · Declining detection</p>
+                </div>
+                <div class="bi-tabs">
+                    <button type="button" class="bi-tab @(_matrixTab == "top" ? "active" : null)" @onclick='() => _matrixTab = "top"'>Top Performers</button>
+                    <button type="button" class="bi-tab @(_matrixTab == "declining" ? "active" : null)" @onclick='() => _matrixTab = "declining"'>
+                        Declining
+                        @if (_data.Summary.AtRiskSkuCount > 0)
+                        {
+                            <span class="badge">@_data.Summary.AtRiskSkuCount</span>
+                        }
+                    </button>
+                    <button type="button" class="bi-tab @(_matrixTab == "low" ? "active" : null)" @onclick='() => _matrixTab = "low"'>Low Margin</button>
+                    <button type="button" class="bi-tab @(_matrixTab == "dead" ? "active" : null)" @onclick='() => _matrixTab = "dead"'>Dead Stock</button>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1.35fr 1fr;gap:1rem;">
+                <div class="mm-table-wrap">
+                    <table class="mm-table">
+                        <thead>
+                            <tr>
+                                <th>Product</th>
+                                <th>Cat</th>
+                                <th>Qty</th>
+                                <th>Sales</th>
+                                <th>Profit</th>
+                                <th>Margin</th>
+                                <th>Growth</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var p in FilteredProducts().Take(25))
+                            {
+                                <tr>
+                                    <td>@p.ProductName</td>
+                                    <td><span class="bi-cat-pill">@p.CategoryName</span></td>
+                                    <td>@p.Quantity.ToString("N0")</td>
+                                    <td>Rs @FormatRs(p.SalesPaisa)</td>
+                                    <td style="color:var(--bi-profit);font-weight:650;">Rs @FormatRs(p.ProfitPaisa)</td>
+                                    <td>@p.MarginPercent.ToString("N1")%</td>
+                                    <td>@GrowthBadge(p.GrowthPercent)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div>
+                    <div class="mm-muted" style="font-size:0.72rem;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:0.35rem;">Profitability Quadrant</div>
+                    <BiQuadrant Products="FilteredProducts().Where(p => !p.IsDeadStock).ToList()" />
+                    <div class="bi-quad-meta">
+                        <div class="mm-card">
+                            <div class="mm-kpi-label">Avg Margin</div>
+                            <div class="mm-kpi-value" style="font-size:1.25rem;">@_data.Summary.AvgMarginPercent.ToString("N1")%</div>
+                        </div>
+                        <div class="mm-card">
+                            <div class="mm-kpi-label">Stars Count</div>
+                            <div class="mm-kpi-value" style="font-size:1.25rem;">@_data.Summary.StarsCount products</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="mm-grid-2" style="margin-bottom:1rem;">
+            <div class="mm-card">
+                <h2>Terminal Performance</h2>
+                @if (_data.Terminals.Count == 0)
+                {
+                    <p class="mm-muted mb-0">No terminal sales.</p>
+                }
+                else
+                {
+                    @foreach (var t in _data.Terminals)
+                    {
+                        <div class="bi-share-row">
+                            <span>@t.Label</span>
+                            <div class="bi-share-track"><div class="bi-share-fill" style="width:@t.PercentOfTotal.ToString("0.#", CultureInfo.InvariantCulture)%"></div></div>
+                            <span>Rs @FormatRs(t.AmountPaisa) · @t.PercentOfTotal.ToString("N0")%</span>
+                        </div>
+                    }
+                }
+            </div>
+            <div class="mm-card">
+                <h2>Payment Breakdown</h2>
+                @if (_data.Payments.Count == 0)
+                {
+                    <p class="mm-muted mb-0">No payments.</p>
+                }
+                else
+                {
+                    @foreach (var p in _data.Payments)
+                    {
+                        <div class="bi-share-row">
+                            <span>@p.Label</span>
+                            <div class="bi-share-track"><div class="bi-share-fill" style="width:@p.PercentOfTotal.ToString("0.#", CultureInfo.InvariantCulture)%"></div></div>
+                            <span>@p.PercentOfTotal.ToString("N0")% · @p.Count tx</span>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+
+        <div class="bi-trends">
+            <div class="mm-card">
+                <h2>Sales &amp; Profit Trend</h2>
+                <p class="mm-muted" style="font-size:0.8rem;margin-top:-0.35rem;">Solid — Sales · Dashed — Profit</p>
+                <BiLineChart Points="_data.DailyTrend" />
+            </div>
+            <div class="mm-card">
+                <h2>Seasonality · MoM Growth</h2>
+                <div class="bi-mom">
+                    @{
+                        long maxMom = _data.MonthlySeasonality.Count == 0
+                            ? 1
+                            : Math.Max(1, _data.MonthlySeasonality.Max(m => m.SalesPaisa));
+                    }
+                    @foreach (var m in _data.MonthlySeasonality)
+                    {
+                        double size = 28 + (m.SalesPaisa / (double)maxMom) * 36;
+                        <div class="bi-mom-item">
+                            <div class="bi-mom-bubble" style="width:@(size.ToString("0", CultureInfo.InvariantCulture))px;height:@(size.ToString("0", CultureInfo.InvariantCulture))px;"></div>
+                            <strong>@m.Label</strong>
+                            @GrowthBadge(m.MomPercent)
+                        </div>
+                    }
+                </div>
+                @{
+                    var bestMonth = _data.MonthlySeasonality.Where(m => m.MomPercent.HasValue).OrderByDescending(m => m.MomPercent).FirstOrDefault();
+                }
+                @if (bestMonth?.MomPercent is decimal bestMom)
+                {
+                    <div style="margin-top:0.75rem;">
+                        <span class="bi-tab active" style="cursor:default;">Best month: @bestMonth.Label @FormatDelta(bestMom)</span>
+                    </div>
+                }
+                <div style="margin-top:1rem;">
+                    <div class="mm-muted" style="font-size:0.72rem;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:0.35rem;">Hour vs Day · Peak times</div>
+                    <BiHeatmap Cells="_data.Heatmap" />
+                </div>
+            </div>
+            <div class="bi-summary-dark">
+                <h2>Summary · @_preset.ToUpperInvariant()</h2>
+                <div class="bi-summary-row"><span>Total Sales</span><strong>Rs @FormatRs(_data.Summary.TotalSalesPaisa)</strong></div>
+                <div class="bi-summary-row"><span>Total Profit</span><span class="val-profit">Rs @FormatRs(_data.Summary.TotalProfitPaisa)</span></div>
+                <div class="bi-summary-row"><span>Avg Margin</span><strong>@_data.Summary.AvgMarginPercent.ToString("N1")%</strong></div>
+                <div class="bi-summary-row">
+                    <span>Best Category</span>
+                    <strong>
+                        @(_data.Summary.BestCategoryName ?? "—")
+                        @if (_data.Summary.BestCategoryMarginPercent is decimal bm)
+                        {
+                            <text> · @bm.ToString("N1")%</text>
+                        }
+                    </strong>
+                </div>
+                <div class="bi-summary-row">
+                    <span>At Risk</span>
+                    <span class="val-danger">@_data.Summary.AtRiskSkuCount declining SKUs</span>
+                </div>
+                <button type="button" class="mm-btn bi-no-print" style="width:100%;margin-top:1rem;background:#fff;color:#111;" @onclick="PrintAsync">
+                    Export BI Report · PDF
+                </button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private string _preset = "30d";
+    private DateOnly _fromDate;
+    private DateOnly _toDate;
+    private string _categoryId = "";
+    private string _terminalId = "";
+    private string _paymentMethod = "";
+    private bool _compare = true;
+    private bool _loading;
+    private string? _error;
+    private string _rangeLabel = "";
+    private string _skuMode = "total";
+    private string _matrixTab = "top";
+    private BiDashboardResult? _data;
+    private List<(Guid Id, string Name)> _categories = [];
+    private List<(Guid Id, string Name)> _terminals = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadFiltersAsync();
+        await ApplyPresetAsync("30d");
+    }
+
+    private async Task LoadFiltersAsync()
+    {
+        IReadOnlyList<CategoryDto> cats = await CategoryService.ListAsync();
+        _categories = cats.Select(c => (c.Id, c.Name)).ToList();
+
+        if (TenantService.IsResolved)
+        {
+            Guid tenantId = TenantService.TenantId;
+            await using WebPosDbContext db = await DbFactory.CreateDbContextAsync();
+            var terminalRows = await db.Terminals.AsNoTracking()
+                .Where(t => t.TenantId == tenantId && t.IsActive)
+                .OrderBy(t => t.TerminalName)
+                .Select(t => new { t.Id, t.TerminalName })
+                .ToListAsync();
+            _terminals = terminalRows.Select(t => (t.Id, t.TerminalName)).ToList();
+        }
+    }
+
+    private async Task ApplyPresetAsync(string preset)
+    {
+        _preset = preset;
+        DateOnly today = DateOnly.FromDateTime(DateTime.UtcNow);
+        (_fromDate, _toDate) = preset switch
+        {
+            "today" => (today, today),
+            "7d" => (today.AddDays(-6), today),
+            "90d" => (today.AddDays(-89), today),
+            "custom" => (_fromDate == default ? today.AddDays(-29) : _fromDate, _toDate == default ? today : _toDate),
+            _ => (today.AddDays(-29), today)
+        };
+        if (preset != "custom")
+        {
+            _preset = preset == "30d" || preset is "today" or "7d" or "90d" ? preset : "30d";
+        }
+
+        await LoadAsync();
+    }
+
+    private void MarkCustom() => _preset = "custom";
+
+    private string? PresetClass(string preset) =>
+        _preset == preset ? "mm-btn-primary" : null;
+
+    private async Task LoadAsync()
+    {
+        if (_loading)
+        {
+            return;
+        }
+
+        _loading = true;
+        _error = null;
+        try
+        {
+            DateTimeOffset from = new(_fromDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+            DateTimeOffset to = new(_toDate.ToDateTime(new TimeOnly(23, 59, 59)), TimeSpan.Zero);
+            _rangeLabel = $"{_fromDate:MMM d} – {_toDate:MMM d, yyyy}";
+
+            Guid? categoryId = Guid.TryParse(_categoryId, out Guid c) ? c : null;
+            Guid? terminalId = Guid.TryParse(_terminalId, out Guid t) ? t : null;
+
+            _data = await ReportingService.GetBiDashboardAsync(new BiDashboardQuery
+            {
+                From = from,
+                To = to,
+                CategoryId = categoryId,
+                TerminalId = terminalId,
+                PaymentMethod = string.IsNullOrWhiteSpace(_paymentMethod) ? null : _paymentMethod,
+                ComparePrevious = _compare
+            });
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _data = null;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private IEnumerable<BiProductRow> FilteredProducts()
+    {
+        IEnumerable<BiProductRow> q = _data?.Products ?? [];
+        return _matrixTab switch
+        {
+            "declining" => q.Where(p => p.IsDeclining).OrderBy(p => p.GrowthPercent),
+            "low" => q.Where(p => p.IsLowMargin).OrderBy(p => p.MarginPercent),
+            "dead" => q.Where(p => p.IsDeadStock).OrderByDescending(p => p.Quantity),
+            _ => q.Where(p => !p.IsDeadStock).OrderByDescending(p => p.ProfitPaisa)
+        };
+    }
+
+    private RenderFragment KpiCard(string label, string value, decimal? delta, IReadOnlyList<long> spark, string stroke) => __builder =>
+    {
+        <div class="bi-kpi">
+            <div class="bi-kpi-top">
+                <div class="mm-kpi-label">@label</div>
+                @if (delta is decimal d)
+                {
+                    <span class="bi-delta @DeltaClass(d)">@FormatDelta(d)</span>
+                }
+            </div>
+            <div class="mm-kpi-value" style="font-size:1.35rem;">@value</div>
+            <BiSparkline Values="spark" Stroke="@stroke" />
+        </div>
+    };
+
+    private static RenderFragment GrowthBadge(decimal? growth) => __builder =>
+    {
+        if (growth is not decimal g)
+        {
+            <span class="mm-muted">—</span>
+            return;
+        }
+
+        <span class="bi-growth @(g >= 0 ? "up" : "down")">@FormatDelta(g)</span>
+    };
+
+    private static string DeltaClass(decimal d) =>
+        d > 0.05m ? "up" : d < -0.05m ? "down" : "flat";
+
+    private static string FormatDelta(decimal d) =>
+        d >= 0 ? $"+{d:0.0}%" : $"{d:0.0}%";
+
+    private static string SeverityClass(string severity) => severity switch
+    {
+        "danger" => "danger",
+        "warning" => "warn",
+        "success" => "success",
+        _ => "info"
+    };
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N0");
+
+    private async Task PrintAsync() =>
+        await Js.InvokeVoidAsync("window.print");
+
+    private async Task ExportCsvAsync()
+    {
+        if (_data is null)
+        {
+            return;
+        }
+
+        StringBuilder sb = new();
+        sb.AppendLine("Product,Category,Qty,SalesPaisa,ProfitPaisa,MarginPercent,GrowthPercent,Quadrant");
+        foreach (var p in _data.Products)
+        {
+            sb.Append(Csv(p.ProductName)).Append(',');
+            sb.Append(Csv(p.CategoryName)).Append(',');
+            sb.Append(p.Quantity.ToString(CultureInfo.InvariantCulture)).Append(',');
+            sb.Append(p.SalesPaisa).Append(',');
+            sb.Append(p.ProfitPaisa).Append(',');
+            sb.Append(p.MarginPercent.ToString(CultureInfo.InvariantCulture)).Append(',');
+            sb.Append(p.GrowthPercent?.ToString(CultureInfo.InvariantCulture) ?? "").Append(',');
+            sb.AppendLine(p.Quadrant);
+        }
+
+        string b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(sb.ToString()));
+        await Js.InvokeVoidAsync("eval",
+            $@"(function(){{var a=document.createElement('a');a.href='data:text/csv;base64,{b64}';a.download='bi-products.csv';a.click();}})()");
+    }
+
+    private static string Csv(string value)
+    {
+        if (value.Contains('"') || value.Contains(',') || value.Contains('\n'))
+        {
+            return $"\"{value.Replace("\"", "\"\"")}\"";
+        }
+
+        return value;
+    }
+}

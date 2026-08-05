@@ -1,0 +1,299 @@
+@page "/master/reports"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.JSInterop
+@using WebPos.Core.Abstractions
+@inject IReportingService ReportingService
+@inject IJSRuntime Js
+
+<PageTitle>Reports · Copenhagen Mart</PageTitle>
+
+<div class="mm-page">
+    <div class="mm-page-header">
+        <div>
+            <h1>Financial reports</h1>
+            <p>P&amp;L from snapshotted sale costs and operating expenses</p>
+        </div>
+        <button type="button" class="mm-btn" disabled="@_loading" @onclick="ExportCsvAsync">Export expenses CSV</button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+
+    <div class="mm-toolbar" style="gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;">
+        <button type="button" class="mm-btn @PresetClass("today")" @onclick="@(() => ApplyPresetAsync("today"))">Today</button>
+        <button type="button" class="mm-btn @PresetClass("week")" @onclick="@(() => ApplyPresetAsync("week"))">This week</button>
+        <button type="button" class="mm-btn @PresetClass("month")" @onclick="@(() => ApplyPresetAsync("month"))">This month</button>
+        <input class="form-control" type="date" style="max-width: 11rem;" @bind="_fromDate" @bind:after="MarkCustom" />
+        <input class="form-control" type="date" style="max-width: 11rem;" @bind="_toDate" @bind:after="MarkCustom" />
+        <button type="button" class="mm-btn mm-btn-primary" disabled="@_loading" @onclick="LoadAsync">
+            @(_loading ? "Loading…" : "Refresh")
+        </button>
+    </div>
+
+    @if (_pnl is null && _loading)
+    {
+        <p class="mm-muted">Loading report…</p>
+    }
+    else if (_pnl is not null)
+    {
+        <div class="mm-kpi-grid" style="grid-template-columns: repeat(5, minmax(0, 1fr));">
+            <div class="mm-kpi">
+                <div class="mm-kpi-label">Revenue</div>
+                <div class="mm-kpi-value">Rs @FormatRs(_pnl.RevenuePaisa)</div>
+            </div>
+            <div class="mm-kpi">
+                <div class="mm-kpi-label">COGS</div>
+                <div class="mm-kpi-value">Rs @FormatRs(_pnl.CostPaisa)</div>
+            </div>
+            <div class="mm-kpi">
+                <div class="mm-kpi-label">Gross margin</div>
+                <div class="mm-kpi-value">@_pnl.GrossMarginPercent.ToString("N1")%</div>
+            </div>
+            <div class="mm-kpi">
+                <div class="mm-kpi-label">Expenses</div>
+                <div class="mm-kpi-value">Rs @FormatRs(_pnl.OperatingExpensesPaisa)</div>
+            </div>
+            <div class="mm-kpi">
+                <div class="mm-kpi-label">Net profit</div>
+                <div class="mm-kpi-value">Rs @FormatRs(_pnl.NetProfitPaisa)</div>
+            </div>
+        </div>
+
+        <div class="mm-grid-2">
+            <div class="mm-card">
+                <h2>By product</h2>
+                @if (_pnl.ProductProfits.Count == 0)
+                {
+                    <p class="mm-muted mb-0">No sales in range.</p>
+                }
+                else
+                {
+                    <div class="mm-table-wrap">
+                        <table class="mm-table">
+                            <thead>
+                                <tr>
+                                    <th>Product</th>
+                                    <th>Revenue</th>
+                                    <th>GP</th>
+                                    <th>Margin</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (ProductProfitSummary row in _pnl.ProductProfits.Take(25))
+                                {
+                                    <tr>
+                                        <td>@row.ProductName</td>
+                                        <td>Rs @FormatRs(row.RevenuePaisa)</td>
+                                        <td>Rs @FormatRs(row.GrossProfitPaisa)</td>
+                                        <td>@row.MarginPercent.ToString("N1")%</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+
+            <div class="mm-card">
+                <h2>By category</h2>
+                @if (_pnl.CategoryProfits.Count == 0)
+                {
+                    <p class="mm-muted mb-0">No categorized sales.</p>
+                }
+                else
+                {
+                    <div class="mm-table-wrap">
+                        <table class="mm-table">
+                            <thead>
+                                <tr>
+                                    <th>Category</th>
+                                    <th>Revenue</th>
+                                    <th>GP</th>
+                                    <th>Margin</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (CategoryProfitSummary row in _pnl.CategoryProfits)
+                                {
+                                    <tr>
+                                        <td>@row.CategoryName</td>
+                                        <td>Rs @FormatRs(row.RevenuePaisa)</td>
+                                        <td>Rs @FormatRs(row.GrossProfitPaisa)</td>
+                                        <td>@row.MarginPercent.ToString("N1")%</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="mm-grid-2" style="margin-top: 1rem;">
+            <div class="mm-card">
+                <h2>Operating expenses</h2>
+                @if (_pnl.ExpensesByCategory.Count == 0)
+                {
+                    <p class="mm-muted mb-0">No overhead in range.</p>
+                }
+                else
+                {
+                    <div class="mm-table-wrap">
+                        <table class="mm-table">
+                            <thead>
+                                <tr>
+                                    <th>Category</th>
+                                    <th>Count</th>
+                                    <th>Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (ExpenseCategorySummary row in _pnl.ExpensesByCategory)
+                                {
+                                    <tr>
+                                        <td>@row.ExpenseCategory</td>
+                                        <td>@row.TransactionCount</td>
+                                        <td>Rs @FormatRs(row.TotalAmountPaisa)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+
+            <div class="mm-card">
+                <h2>Cash flow by account</h2>
+                @if (_cashFlow.Count == 0)
+                {
+                    <p class="mm-muted mb-0">No GL activity in range.</p>
+                }
+                else
+                {
+                    <div class="mm-table-wrap">
+                        <table class="mm-table">
+                            <thead>
+                                <tr>
+                                    <th>Account</th>
+                                    <th>Debit</th>
+                                    <th>Credit</th>
+                                    <th>Net</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (AccountCashFlowSummary row in _cashFlow)
+                                {
+                                    <tr>
+                                        <td>@row.AccountCode</td>
+                                        <td>Rs @FormatRs(row.DebitTotalPaisa)</td>
+                                        <td>Rs @FormatRs(row.CreditTotalPaisa)</td>
+                                        <td>Rs @FormatRs(row.NetFlowPaisa)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private ProfitAndLossSummary? _pnl;
+    private readonly List<AccountCashFlowSummary> _cashFlow = [];
+    private DateTime _fromDate = DateTime.UtcNow.Date;
+    private DateTime _toDate = DateTime.UtcNow.Date;
+    private string _preset = "today";
+    private bool _loading;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync() => await ApplyPresetAsync("today");
+
+    private void MarkCustom() => _preset = "custom";
+
+    private string? PresetClass(string preset) =>
+        _preset == preset ? "mm-btn-primary" : null;
+
+    private async Task ApplyPresetAsync(string preset)
+    {
+        _preset = preset;
+        DateTime today = DateTime.UtcNow.Date;
+        switch (preset)
+        {
+            case "week":
+                int delta = ((int)today.DayOfWeek + 6) % 7;
+                _fromDate = today.AddDays(-delta);
+                _toDate = today;
+                break;
+            case "month":
+                _fromDate = new DateTime(today.Year, today.Month, 1);
+                _toDate = today;
+                break;
+            default:
+                _fromDate = today;
+                _toDate = today;
+                break;
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            (DateTimeOffset from, DateTimeOffset to) = Range();
+            _pnl = await ReportingService.GetProfitAndLossAsync(from, to);
+            _cashFlow.Clear();
+            _cashFlow.AddRange(await ReportingService.GetCashFlowByAccountAsync(from, to));
+        }
+        catch (Exception ex)
+        {
+            _error = ex.InnerException?.Message ?? ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task ExportCsvAsync()
+    {
+        try
+        {
+            (DateTimeOffset from, DateTimeOffset to) = Range();
+            string csv = await ReportingService.ExportExpenseReportCsvAsync(from, to);
+            string fileName = $"expenses-{_fromDate:yyyyMMdd}-{_toDate:yyyyMMdd}.csv";
+            await Js.InvokeVoidAsync(
+                "eval",
+                $@"(function(){{
+                    const blob = new Blob([{System.Text.Json.JsonSerializer.Serialize(csv)}], {{type:'text/csv'}});
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url; a.download = '{fileName}'; a.click();
+                    URL.revokeObjectURL(url);
+                }})()");
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private (DateTimeOffset From, DateTimeOffset To) Range()
+    {
+        DateTimeOffset from = new(_fromDate.Date, TimeSpan.Zero);
+        DateTimeOffset to = new(_toDate.Date.AddDays(1).AddTicks(-1), TimeSpan.Zero);
+        return (from, to);
+    }
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+}

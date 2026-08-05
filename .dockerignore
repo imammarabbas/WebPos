@@ -1,0 +1,17 @@
+**/bin/
+**/obj/
+**/.vs/
+**/.git/
+**/TestResults/
+**/*.user
+.env
+.env.local
+WebPos/appsettings.Pilot.json
+WebPos/appsettings.Development.Local.json
+WebPos/appsettings.Development.json
+WebPos.WindowsTerminal/
+WebPos.IntegrationTests/
+WebPos.Client.Sdk.Tests/
+WebPos.TenantVerification/
+docs/
+scripts/

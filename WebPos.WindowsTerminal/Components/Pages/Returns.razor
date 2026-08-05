@@ -1,0 +1,607 @@
+@page "/returns"
+@using System.Globalization
+@using Common.Models
+@inject ISessionService SessionService
+@inject InvoiceApiClient InvoiceApi
+@inject ShiftStatusApiClient ShiftStatus
+@inject NavigationManager Navigation
+
+<PageTitle>Returns</PageTitle>
+
+<div class="page-shell">
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="alert-red">@_error</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(_success))
+    {
+        <div class="alert-ok">@_success</div>
+    }
+
+    @if (_detail is null)
+    {
+        <section class="find-sale-card">
+            <div class="find-sale-header">
+                <div class="find-sale-title">
+                    <span class="find-icon" aria-hidden="true">🔍</span>
+                    <h1>Find Sale to Return</h1>
+                    <span class="ways-badge">3 ways</span>
+                </div>
+                <button type="button" class="recent-sales-btn" disabled="@_isLoading" @onclick="LoadRecentSalesAsync">
+                    Recent Sales
+                </button>
+            </div>
+
+            <EditForm Model="_search" OnValidSubmit="FindSaleAsync" class="find-sale-form">
+                <div class="search-row">
+                    <div class="search-field">
+                        <span class="field-icon" aria-hidden="true">#</span>
+                        <div class="field-body">
+                            <label class="field-label" for="invoiceSearch">Invoice / Sale ID</label>
+                            <InputText id="invoiceSearch"
+                                       class="search-input"
+                                       @bind-Value="_search.Invoice"
+                                       placeholder="e.g. INV-1021" />
+                        </div>
+                    </div>
+                    <div class="search-field">
+                        <span class="field-icon" aria-hidden="true">👤</span>
+                        <div class="field-body">
+                            <label class="field-label" for="customerSearch">Customer</label>
+                            <InputText id="customerSearch"
+                                       class="search-input"
+                                       @bind-Value="_search.Customer"
+                                       placeholder="Ali Khan, Sara..." />
+                        </div>
+                    </div>
+                    <div class="search-field">
+                        <span class="field-icon" aria-hidden="true">▦</span>
+                        <div class="field-body">
+                            <label class="field-label" for="productSearch">Product · Scan or type</label>
+                            <InputText id="productSearch"
+                                       class="search-input"
+                                       @bind-Value="_search.Product"
+                                       placeholder="Cola, Samosa..." />
+                        </div>
+                    </div>
+                    <button type="submit" class="find-btn" disabled="@_isLoading">
+                        🔍 Find Sale
+                    </button>
+                </div>
+            </EditForm>
+        </section>
+
+        <section class="bills-section">
+            <div class="bills-section-head">
+                <h2>@(_showingSearchResults ? "Search results" : "Recent bills")</h2>
+                <a class="link-btn" href="sales">← Back to POS</a>
+            </div>
+
+            @if (_isLoading)
+            {
+                <p class="muted">Loading…</p>
+            }
+            else if (_invoices.Count == 0)
+            {
+                <p class="muted">@(_showingSearchResults ? "No matching sales found." : "No bills for this shift yet.")</p>
+            }
+            else
+            {
+                <div class="bill-cards">
+                    @foreach (SalesInvoiceSummaryDto bill in _invoices)
+                    {
+                        <button type="button"
+                                class="bill-card"
+                                @onclick="() => OpenInvoiceAsync(bill.InvoiceNo)">
+                            <div class="bill-top">
+                                <strong>#@ShortId(bill.InvoiceNo)</strong>
+                                <span>@bill.CreatedAt.ToLocalTime().ToString("HH:mm")</span>
+                            </div>
+                            <div class="bill-amount">Rs @FormatRs(bill.TotalAmountPaisa)</div>
+                            <div class="bill-meta">
+                                @bill.ItemCount @(bill.ItemCount == 1 ? "item" : "items") · @PaymentLabel(bill.PaymentMethod)
+                            </div>
+                            @if (bill.ProductLabels.Count > 0)
+                            {
+                                <div class="product-chips">
+                                    @foreach (string label in bill.ProductLabels)
+                                    {
+                                        <span class="product-chip">@label</span>
+                                    }
+                                </div>
+                            }
+                        </button>
+                    }
+                </div>
+            }
+        </section>
+    }
+    else
+    {
+        <div class="return-layout">
+            <section class="invoice-meta-panel">
+                <div class="meta-top">
+                    <div>
+                        <p class="muted">Returning sale</p>
+                        <h1>#@ShortId(_detail.InvoiceNo)</h1>
+                    </div>
+                    <button type="button" class="secondary-btn" @onclick="ClearDetailAsync">Change sale</button>
+                </div>
+                <dl class="meta-grid">
+                    <div>
+                        <dt>Sold</dt>
+                        <dd>@_detail.CreatedAt.ToLocalTime().ToString("dd MMM · HH:mm")</dd>
+                    </div>
+                    <div>
+                        <dt>Payment</dt>
+                        <dd>@PaymentLabel(_detail.PaymentMethod)</dd>
+                    </div>
+                    <div>
+                        <dt>Customer</dt>
+                        <dd>@(string.IsNullOrWhiteSpace(_detail.CustomerName) ? "Walk-in" : _detail.CustomerName)</dd>
+                    </div>
+                    <div>
+                        <dt>Original total</dt>
+                        <dd>Rs @FormatRs(_detail.TotalAmountPaisa)</dd>
+                    </div>
+                </dl>
+                <button type="button" class="secondary-btn full-return-btn" @onclick="ApplyFullReturn">
+                    Return Entire Sale
+                </button>
+            </section>
+
+            <aside class="cart-panel">
+                <div class="cart-header">
+                    <h2>Return cart <span class="cart-count">@ActiveReturnLineCount</span></h2>
+                </div>
+
+                @if (_lines.Count == 0)
+                {
+                    <p class="muted">Nothing left to return on this invoice.</p>
+                }
+                else
+                {
+                    <ul class="cart-lines">
+                        @foreach (ReturnLineEdit line in _lines)
+                        {
+                            <li class="cart-line @(line.ReturnQuantity <= 0 ? "inactive" : string.Empty)">
+                                <div class="line-info">
+                                    <strong>@line.ProductName</strong>
+                                    <span>Rs @FormatRs(line.UnitPricePaisa) · max @line.ReturnableQuantity.ToString("0.##")</span>
+                                </div>
+                                <div class="line-actions">
+                                    <button type="button"
+                                            class="qty-btn"
+                                            disabled="@(line.ReturnQuantity <= 0 || _isBusy)"
+                                            @onclick="() => AdjustQty(line, -Step(line))">−</button>
+                                    @if (line.IsLoose)
+                                    {
+                                        <input class="qty-input loose"
+                                               type="number"
+                                               step="0.01"
+                                               min="0"
+                                               max="@line.ReturnableQuantity.ToString(CultureInfo.InvariantCulture)"
+                                               value="@line.ReturnQtyText"
+                                               @oninput="e => OnQtyInput(line, e.Value?.ToString())" />
+                                    }
+                                    else
+                                    {
+                                        <span class="line-qty">@line.ReturnQuantity.ToString("0.##")</span>
+                                    }
+                                    <button type="button"
+                                            class="qty-btn"
+                                            disabled="@(line.ReturnQuantity >= line.ReturnableQuantity || _isBusy)"
+                                            @onclick="() => AdjustQty(line, Step(line))">+</button>
+                                    <span class="line-total">Rs @FormatRs(line.LineGrossPaisa)</span>
+                                    <button type="button"
+                                            class="remove-btn"
+                                            title="Remove from return"
+                                            disabled="@_isBusy"
+                                            @onclick="() => ClearLine(line)">×</button>
+                                </div>
+                            </li>
+                        }
+                    </ul>
+
+                    <div class="totals">
+                        <div class="total-row">
+                            <span>Subtotal</span>
+                            <span>Rs @FormatRs(RefundGrossPaisa)</span>
+                        </div>
+                        @if (RefundDiscountPaisa > 0)
+                        {
+                            <div class="total-row">
+                                <span>Discount</span>
+                                <span>− Rs @FormatRs(RefundDiscountPaisa)</span>
+                            </div>
+                        }
+                        @if (_detail.TaxAmountPaisa > 0 && RefundTaxPaisa > 0)
+                        {
+                            <div class="total-row">
+                                <span>Tax</span>
+                                <span>Rs @FormatRs(RefundTaxPaisa)</span>
+                            </div>
+                        }
+                        <div class="total-row grand">
+                            <span>Total refund</span>
+                            <strong>Rs @FormatRs(RefundNetPaisa)</strong>
+                        </div>
+                    </div>
+
+                    <button type="button"
+                            class="pay-btn"
+                            disabled="@(_isBusy || ActiveReturnLineCount == 0)"
+                            @onclick="SubmitReturnAsync">
+                        @(_isBusy ? "Processing…" : "Confirm return")
+                    </button>
+                }
+            </aside>
+        </div>
+    }
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "invoice")]
+    public string? InvoiceQuery { get; set; }
+
+    private sealed class SearchModel
+    {
+        public string Invoice { get; set; } = string.Empty;
+        public string Customer { get; set; } = string.Empty;
+        public string Product { get; set; } = string.Empty;
+    }
+
+    private sealed class ReturnLineEdit
+    {
+        public Guid ProductId { get; init; }
+        public Guid BatchId { get; init; }
+        public required string ProductName { get; init; }
+        public bool IsLoose { get; init; }
+        public decimal QuantitySold { get; init; }
+        public decimal ReturnableQuantity { get; init; }
+        public long UnitPricePaisa { get; init; }
+        public string ReturnQtyText { get; set; } = "0";
+
+        public decimal ReturnQuantity
+        {
+            get
+            {
+                if (decimal.TryParse(ReturnQtyText, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal qty)
+                    || decimal.TryParse(ReturnQtyText, NumberStyles.Number, CultureInfo.CurrentCulture, out qty))
+                {
+                    return qty;
+                }
+
+                return 0m;
+            }
+        }
+
+        public long LineGrossPaisa =>
+            (long)Math.Round(ReturnQuantity * UnitPricePaisa, MidpointRounding.AwayFromZero);
+    }
+
+    private readonly SearchModel _search = new();
+    private IReadOnlyList<SalesInvoiceSummaryDto> _invoices = [];
+    private SalesInvoiceDetailDto? _detail;
+    private List<ReturnLineEdit> _lines = [];
+    private string? _error;
+    private string? _success;
+    private bool _isBusy;
+    private bool _isLoading;
+    private bool _showingSearchResults;
+
+    private int ActiveReturnLineCount => _lines.Count(line => line.ReturnQuantity > 0);
+
+    private long RefundGrossPaisa => _lines.Sum(line => line.LineGrossPaisa);
+
+    private long OriginalGrossPaisa =>
+        _detail?.Lines.Sum(line =>
+            (long)Math.Round(line.QuantitySold * line.UnitPricePaisa, MidpointRounding.AwayFromZero)) ?? 0L;
+
+    private long RefundDiscountPaisa
+    {
+        get
+        {
+            if (_detail is null || OriginalGrossPaisa <= 0 || RefundGrossPaisa <= 0)
+            {
+                return 0;
+            }
+
+            return (long)Math.Round(
+                (decimal)_detail.DiscountAmountPaisa * RefundGrossPaisa / OriginalGrossPaisa,
+                MidpointRounding.AwayFromZero);
+        }
+    }
+
+    private long RefundTaxPaisa
+    {
+        get
+        {
+            if (_detail is null || _detail.TaxAmountPaisa <= 0 || OriginalGrossPaisa <= 0 || RefundGrossPaisa <= 0)
+            {
+                return 0;
+            }
+
+            return (long)Math.Round(
+                (decimal)_detail.TaxAmountPaisa * RefundGrossPaisa / OriginalGrossPaisa,
+                MidpointRounding.AwayFromZero);
+        }
+    }
+
+    // Matches SalesReturnService: net = gross − proportional discount (tax not posted separately today).
+    private long RefundNetPaisa => Math.Max(0, RefundGrossPaisa - RefundDiscountPaisa);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!SessionService.IsActive)
+        {
+            Navigation.NavigateTo("/start-shift");
+            return;
+        }
+
+        await LoadRecentSalesAsync();
+
+        if (!string.IsNullOrWhiteSpace(InvoiceQuery))
+        {
+            await OpenInvoiceAsync(InvoiceQuery);
+        }
+    }
+
+    private async Task LoadRecentSalesAsync()
+    {
+        _error = null;
+        _showingSearchResults = false;
+        _isLoading = true;
+        try
+        {
+            Result<IReadOnlyList<SalesInvoiceSummaryDto>> list =
+                await InvoiceApi.ListRecentAsync(50);
+            if (!list.Success || list.Data is null)
+            {
+                _error = list.ErrorMessage ?? "Could not load recent sales.";
+                _invoices = [];
+                return;
+            }
+
+            _invoices = list.Data;
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task FindSaleAsync()
+    {
+        _error = null;
+        _success = null;
+
+        if (string.IsNullOrWhiteSpace(_search.Invoice)
+            && string.IsNullOrWhiteSpace(_search.Customer)
+            && string.IsNullOrWhiteSpace(_search.Product))
+        {
+            _error = "Enter an invoice, customer, or product to search.";
+            return;
+        }
+
+        _isLoading = true;
+        _showingSearchResults = true;
+        try
+        {
+            Result<IReadOnlyList<SalesInvoiceSummaryDto>> result = await InvoiceApi.SearchAsync(
+                string.IsNullOrWhiteSpace(_search.Invoice) ? null : _search.Invoice,
+                string.IsNullOrWhiteSpace(_search.Customer) ? null : _search.Customer,
+                string.IsNullOrWhiteSpace(_search.Product) ? null : _search.Product,
+                limit: 40);
+
+            if (!result.Success || result.Data is null)
+            {
+                _error = result.ErrorMessage ?? "Search failed.";
+                _invoices = [];
+                return;
+            }
+
+            _invoices = result.Data;
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task OpenInvoiceAsync(string invoiceNo)
+    {
+        _error = null;
+        _success = null;
+        if (string.IsNullOrWhiteSpace(invoiceNo))
+        {
+            return;
+        }
+
+        _isBusy = true;
+        try
+        {
+            Result<SalesInvoiceDetailDto> result = await InvoiceApi.GetAsync(invoiceNo);
+            if (!result.Success || result.Data is null)
+            {
+                _error = result.ErrorMessage ?? "Invoice not found.";
+                return;
+            }
+
+            _detail = result.Data;
+            _lines = _detail.Lines
+                .Where(line => line.ReturnableQuantity > 0)
+                .Select(line => new ReturnLineEdit
+                {
+                    ProductId = line.ProductId,
+                    BatchId = line.BatchId,
+                    ProductName = line.ProductName,
+                    IsLoose = line.IsLoose,
+                    QuantitySold = line.QuantitySold,
+                    ReturnableQuantity = line.ReturnableQuantity,
+                    UnitPricePaisa = line.UnitPricePaisa,
+                    ReturnQtyText = "0"
+                }).ToList();
+
+            if (_lines.Count == 0)
+            {
+                _error = "Nothing left to return on this invoice.";
+            }
+        }
+        finally
+        {
+            _isBusy = false;
+        }
+    }
+
+    private void ApplyFullReturn()
+    {
+        foreach (ReturnLineEdit line in _lines)
+        {
+            SetQty(line, line.ReturnableQuantity);
+        }
+    }
+
+    private async Task ClearDetailAsync()
+    {
+        _detail = null;
+        _lines = [];
+        _error = null;
+        await LoadRecentSalesAsync();
+    }
+
+    private static decimal Step(ReturnLineEdit line) => line.IsLoose ? 0.25m : 1m;
+
+    private void AdjustQty(ReturnLineEdit line, decimal delta)
+    {
+        decimal next = Math.Clamp(line.ReturnQuantity + delta, 0m, line.ReturnableQuantity);
+        if (!line.IsLoose)
+        {
+            next = Math.Round(next, 0, MidpointRounding.AwayFromZero);
+        }
+
+        SetQty(line, next);
+    }
+
+    private void OnQtyInput(ReturnLineEdit line, string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            line.ReturnQtyText = "0";
+            return;
+        }
+
+        if (!decimal.TryParse(raw, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal qty)
+            && !decimal.TryParse(raw, NumberStyles.Number, CultureInfo.CurrentCulture, out qty))
+        {
+            return;
+        }
+
+        SetQty(line, Math.Clamp(qty, 0m, line.ReturnableQuantity));
+    }
+
+    private static void SetQty(ReturnLineEdit line, decimal qty)
+    {
+        line.ReturnQtyText = qty.ToString(
+            line.IsLoose ? "0.##" : "0",
+            CultureInfo.InvariantCulture);
+    }
+
+    private void ClearLine(ReturnLineEdit line) => SetQty(line, 0m);
+
+    private async Task SubmitReturnAsync()
+    {
+        if (_detail is null)
+        {
+            return;
+        }
+
+        _error = null;
+        _success = null;
+
+        List<ReturnLineRequest> items = [];
+        foreach (ReturnLineEdit line in _lines)
+        {
+            decimal qty = line.ReturnQuantity;
+            if (qty <= 0)
+            {
+                continue;
+            }
+
+            if (qty > line.ReturnableQuantity)
+            {
+                _error = $"{line.ProductName}: cannot return more than {line.ReturnableQuantity:0.##}.";
+                return;
+            }
+
+            items.Add(new ReturnLineRequest
+            {
+                ProductId = line.ProductId,
+                BatchId = line.BatchId,
+                Quantity = qty,
+                ReturnCondition = "GOOD"
+            });
+        }
+
+        if (items.Count == 0)
+        {
+            _error = "Enter a return quantity on at least one line.";
+            return;
+        }
+
+        _isBusy = true;
+        try
+        {
+            Result<ReturnItemsResult> result = await InvoiceApi.ReturnAsync(new ReturnItemsRequest
+            {
+                OriginalInvoiceNo = _detail.InvoiceNo,
+                CashierId = SessionService.CashierId,
+                Items = items
+            });
+
+            if (!result.Success || result.Data is null)
+            {
+                _error = result.ErrorMessage ?? "Return failed.";
+                return;
+            }
+
+            _success = $"Return OK — refund Rs {FormatRs(result.Data.TotalRefundPaisa)}";
+            if (CheckoutPaymentMethods.IsCash(_detail.PaymentMethod))
+            {
+                ShiftStatus.ApplyLocalCashDelta(-result.Data.TotalRefundPaisa);
+            }
+
+            await ShiftStatus.RefreshAsync();
+            _detail = null;
+            _lines = [];
+            await LoadRecentSalesAsync();
+        }
+        finally
+        {
+            _isBusy = false;
+        }
+    }
+
+    private static string ShortId(string invoiceNo) =>
+        invoiceNo.Length <= 8 ? invoiceNo : invoiceNo[^8..];
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+
+    private static string PaymentLabel(string method)
+    {
+        if (CheckoutPaymentMethods.IsCash(method))
+        {
+            return "Cash";
+        }
+
+        if (CheckoutPaymentMethods.IsOnline(method)
+            || string.Equals(method, "BANK", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(method, "CREDIT_CARD", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Online";
+        }
+
+        return CheckoutPaymentMethods.DisplayLabel(method);
+    }
+}
+

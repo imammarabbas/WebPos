@@ -1,0 +1,150 @@
+.page-shell {
+    margin: -1.1rem -1.25rem;
+    padding: 1.25rem;
+    min-height: 100vh;
+    background: #f4f5f7;
+    color: #1a1a1a;
+    font-family: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+}
+
+.page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.page-header h1 {
+    margin: 0;
+    font-size: 1.4rem;
+}
+
+.muted {
+    color: #6b7280;
+    margin: 0.25rem 0 0;
+}
+
+.alert-red {
+    padding: 0.75rem 1rem;
+    border-radius: 10px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #b91c1c;
+    font-weight: 600;
+    margin-bottom: 1rem;
+}
+
+.bill-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+    gap: 0.75rem;
+}
+
+.bill-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 0.9rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.bill-top {
+    display: flex;
+    justify-content: space-between;
+    color: #6b7280;
+    font-size: 0.85rem;
+}
+
+.bill-amount {
+    font-size: 1.2rem;
+    font-weight: 800;
+}
+
+.bill-meta {
+    font-size: 0.8rem;
+    color: #6b7280;
+}
+
+.bill-actions {
+    display: flex;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+}
+
+.secondary-btn,
+.pay-btn,
+.link-btn {
+    border-radius: 8px;
+    font-weight: 700;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.secondary-btn {
+    flex: 1;
+    min-height: 2.25rem;
+    border: 1px solid #e5e7eb;
+    background: #fff;
+    color: #1a1a1a;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.4rem 0.6rem;
+}
+
+.pay-btn {
+    flex: 1;
+    min-height: 2.5rem;
+    border: none;
+    background: #111827;
+    color: #fff;
+}
+
+.link-btn {
+    border: none;
+    background: transparent;
+    color: #6b7280;
+}
+
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(17, 24, 39, 0.45);
+    padding: 1rem;
+}
+
+.success-modal {
+    width: min(100%, 24rem);
+    background: #fff;
+    border-radius: 14px;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+}
+
+.txn-ref-input {
+    width: 100%;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+}
+
+.field-error {
+    margin: 0;
+    color: #b91c1c;
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+.checkout-actions {
+    display: flex;
+    gap: 0.5rem;
+}

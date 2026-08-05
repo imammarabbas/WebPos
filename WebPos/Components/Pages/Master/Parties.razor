@@ -1,0 +1,1048 @@
+@page "/master/parties"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using System.Globalization
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.WebUtilities
+@using WebPos.Core.Abstractions
+@using WebPos.Core.Constants
+@using WebPos.Core.Services
+@using OpenShiftDto = Common.Models.OpenShiftDto
+@inject IPartyService PartyService
+@inject IPartyLedgerService LedgerService
+@inject IProcurementService ProcurementService
+@inject IShiftService ShiftService
+@inject NavigationManager Navigation
+@inject IJSRuntime Js
+
+<PageTitle>Payments &amp; Ledgers · Copenhagen Mart</PageTitle>
+
+<div class="mm-page pp-page">
+    <div class="mm-page-header">
+        <div>
+            <h1>Payments &amp; ledgers</h1>
+            <p>Receive / pay, allocate slips, and review party statements</p>
+        </div>
+        <div class="mm-form-actions" style="margin:0;">
+            <button type="button" class="mm-btn" @onclick="OpenManageParties">Manage parties</button>
+            <button type="button" class="mm-btn mm-btn-primary" @onclick="StartCreateParty">+ New party</button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+    @if (!string.IsNullOrEmpty(_success))
+    {
+        <div class="mm-alert mm-alert-ok">@_success</div>
+    }
+
+    <div class="pp-tabs" role="tablist">
+        <button type="button" class="pp-tab @(_tab == TabCustomerPay ? "active" : null)" @onclick="() => SwitchTabAsync(TabCustomerPay)">Customer Payment</button>
+        <button type="button" class="pp-tab @(_tab == TabSupplierPay ? "active" : null)" @onclick="() => SwitchTabAsync(TabSupplierPay)">Supplier Payment</button>
+        <button type="button" class="pp-tab @(_tab == TabCustomerLedger ? "active" : null)" @onclick="() => SwitchTabAsync(TabCustomerLedger)">Customer Ledger</button>
+        <button type="button" class="pp-tab @(_tab == TabSupplierLedger ? "active" : null)" @onclick="() => SwitchTabAsync(TabSupplierLedger)">Supplier Ledger</button>
+    </div>
+
+    @if (IsPaymentTab)
+    {
+        @RenderPaymentTab()
+    }
+    else
+    {
+        @RenderLedgerTab()
+    }
+</div>
+
+@if (_allocateOpen)
+{
+    <div class="mm-modal-backdrop" @onclick="() => _allocateOpen = false">
+        <div class="mm-modal" @onclick:stopPropagation style="width:min(640px,100%);">
+            <h2>Allocate to open slips</h2>
+            <p class="mm-muted">Leave blank for lump-sum / advance. Allocations sync the payment amount.</p>
+            @if (_openSlips.Count == 0)
+            {
+                <p class="mm-muted">No open slips for this party.</p>
+            }
+            else
+            {
+                <div class="mm-table-wrap">
+                    <table class="mm-table">
+                        <thead>
+                            <tr>
+                                <th>Reference</th>
+                                <th>Age</th>
+                                <th>Outstanding</th>
+                                <th>Allocate (Rs)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (OpenSlipRow row in _openSlips)
+                            {
+                                <tr>
+                                    <td>@row.Reference</td>
+                                    <td>@row.AgeDays d</td>
+                                    <td>Rs @FormatRs(row.OutstandingPaisa)</td>
+                                    <td><InputNumber @bind-Value="row.AllocateRs" @bind-Value:after="SyncPayAmountFromAllocations" /></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            <div class="mm-form-actions">
+                <button type="button" class="mm-btn mm-btn-primary" @onclick="() => _allocateOpen = false">Done</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_manageOpen)
+{
+    <div class="mm-modal-backdrop" @onclick="() => _manageOpen = false">
+        <div class="mm-modal" @onclick:stopPropagation style="width:min(720px,100%);">
+            <h2>@(_editingPartyId is null ? "Create party" : "Edit party")</h2>
+            <div class="mm-segmented" style="margin-bottom:0.75rem;">
+                <button type="button" class="mm-seg @(_manageRole == PartyTypes.Customer ? "active" : null)" @onclick="() => SetManageRole(PartyTypes.Customer)">Customer</button>
+                <button type="button" class="mm-seg @(_manageRole == PartyTypes.Supplier ? "active" : null)" @onclick="() => SetManageRole(PartyTypes.Supplier)">Supplier</button>
+            </div>
+            <EditForm Model="_partyForm" OnValidSubmit="SavePartyAsync">
+                <div class="mm-form-grid">
+                    <div class="mm-field full">
+                        <label>Name</label>
+                        <InputText @bind-Value="_partyForm.Name" />
+                    </div>
+                    <div class="mm-field">
+                        <label>Phone</label>
+                        <InputText @bind-Value="_partyForm.PhoneNumber" />
+                    </div>
+                    <div class="mm-field">
+                        <label>Credit limit (Rs)</label>
+                        <InputNumber @bind-Value="_partyForm.CreditLimitRs" />
+                    </div>
+                    <div class="mm-field full">
+                        <label>Address</label>
+                        <InputTextArea @bind-Value="_partyForm.Address" rows="2" />
+                    </div>
+                </div>
+                <div class="mm-form-actions">
+                    <button type="submit" class="mm-btn mm-btn-primary" disabled="@_saving">@(_saving ? "Saving…" : "Save")</button>
+                    <button type="button" class="mm-btn" @onclick="() => _manageOpen = false">Close</button>
+                </div>
+            </EditForm>
+
+            <hr class="mm-divider" />
+            <input class="form-control" placeholder="Filter parties…" @bind="_partyFilter" @bind:event="oninput" style="margin-bottom:0.5rem;" />
+            <div class="mm-table-wrap" style="max-height:220px;overflow:auto;">
+                <table class="mm-table">
+                    <thead>
+                        <tr><th>Name</th><th>Phone</th><th>Balance</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (PartyDto p in FilteredManageParties)
+                        {
+                            <tr>
+                                <td>@p.Name</td>
+                                <td>@p.PhoneNumber</td>
+                                <td>Rs @FormatRs(p.CurrentBalancePaisa)</td>
+                                <td><button type="button" class="mm-btn" @onclick="() => EditParty(p)">Edit</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private const string TabCustomerPay = "customer-pay";
+    private const string TabSupplierPay = "supplier-pay";
+    private const string TabCustomerLedger = "customer-ledger";
+    private const string TabSupplierLedger = "supplier-ledger";
+
+    private string _tab = TabCustomerPay;
+    private string? _error;
+    private string? _success;
+    private bool _saving;
+    private bool _allocateOpen;
+    private bool _manageOpen;
+
+    private PartyFinanceKpisDto? _kpis;
+    private readonly List<PartyDto> _parties = [];
+    private readonly List<RecentPartyPaymentDto> _recent = [];
+    private readonly List<OpenShiftDto> _openShifts = [];
+    private readonly List<OpenSlipRow> _openSlips = [];
+
+    private Guid? _partyId;
+    private string _payKind = "PAYMENT"; // PAYMENT | ADVANCE | ADJUSTMENT
+    private decimal _amountRs;
+    private decimal _discountRs;
+    private string _payDate = DateTime.Today.ToString("yyyy-MM-dd");
+    private string _payMethod = "CASH";
+    private string _selectedShiftId = string.Empty;
+    private string _reference = string.Empty;
+    private string _notes = string.Empty;
+    private string _recentSearch = string.Empty;
+
+    private string _ledgerRange = "30"; // today|7|30|all
+    private string _ledgerTypeFilter = "ALL";
+    private PartyLedgerDashboardDto? _dashboard;
+    private PartyAgeingDto? _ageing;
+    private PartyDto? _selectedParty;
+
+    private string _manageRole = PartyTypes.Customer;
+    private Guid? _editingPartyId;
+    private PartyForm _partyForm = new();
+    private string _partyFilter = string.Empty;
+    private readonly List<PartyDto> _manageParties = [];
+
+    private bool IsPaymentTab => _tab is TabCustomerPay or TabSupplierPay;
+    private bool IsCustomerContext => _tab is TabCustomerPay or TabCustomerLedger;
+    private string ActiveRole => IsCustomerContext ? PartyTypes.Customer : PartyTypes.Supplier;
+
+    private IEnumerable<PartyDto> FilteredManageParties =>
+        string.IsNullOrWhiteSpace(_partyFilter)
+            ? _manageParties
+            : _manageParties.Where(p =>
+                p.Name.Contains(_partyFilter, StringComparison.OrdinalIgnoreCase)
+                || p.PhoneNumber.Contains(_partyFilter, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        ParseQuery();
+        await ReloadShellAsync();
+    }
+
+    private RenderFragment RenderPaymentTab() => __builder =>
+    {
+        <div class="pp-kpi-strip">
+            @if (_kpis is not null && IsCustomerContext)
+            {
+                <div class="mm-kpi"><div class="mm-kpi-label">Total receivable</div><div class="mm-kpi-value">Rs @FormatRs(_kpis.TotalReceivablePaisa)</div></div>
+                <div class="mm-kpi"><div class="mm-kpi-label">Overdue 30+</div><div class="mm-kpi-value">Rs @FormatRs(_kpis.Overdue30PlusPaisa)</div></div>
+                <div class="mm-kpi"><div class="mm-kpi-label">Advance received</div><div class="mm-kpi-value">Rs @FormatRs(_kpis.AdvanceReceivedPaisa)</div></div>
+                <div class="mm-kpi pp-kpi-today"><div class="mm-kpi-label">Today collection</div><div class="mm-kpi-value">Rs @FormatRs(_kpis.TodayCollectionPaisa)</div></div>
+            }
+            else if (_kpis is not null)
+            {
+                <div class="mm-kpi"><div class="mm-kpi-label">Total payable</div><div class="mm-kpi-value">Rs @FormatRs(_kpis.TotalPayablePaisa)</div></div>
+                <div class="mm-kpi"><div class="mm-kpi-label">Due this week</div><div class="mm-kpi-value">Rs @FormatRs(_kpis.DueThisWeekPaisa)</div></div>
+                <div class="mm-kpi"><div class="mm-kpi-label">Advance paid</div><div class="mm-kpi-value">Rs @FormatRs(_kpis.AdvancePaidPaisa)</div></div>
+                <div class="mm-kpi pp-kpi-today"><div class="mm-kpi-label">Today paid</div><div class="mm-kpi-value">Rs @FormatRs(_kpis.TodayPaidPaisa)</div></div>
+            }
+        </div>
+
+        <div class="pp-pay-split">
+            <div class="mm-card">
+                <h2>@(IsCustomerContext ? "Receive payment" : "Pay supplier")</h2>
+                <div class="mm-form-grid">
+                    <div class="mm-field full">
+                        <label>Party</label>
+                        <InputSelect TValue="Guid?" Value="_partyId" ValueChanged="OnPartyChangedAsync" ValueExpression="() => _partyId">
+                            <option value="">Select…</option>
+                            @foreach (PartyDto p in _parties)
+                            {
+                                <option value="@p.Id">@p.Name · Rs @FormatRs(p.CurrentBalancePaisa)</option>
+                            }
+                        </InputSelect>
+                        @if (_selectedParty is not null)
+                        {
+                            <p class="mm-muted" style="margin:0.35rem 0 0;">Live balance: <strong>Rs @FormatRs(_selectedParty.CurrentBalancePaisa)</strong></p>
+                        }
+                    </div>
+
+                    <div class="mm-field full">
+                        <label>Type</label>
+                        <div class="mm-segmented">
+                            <button type="button" class="mm-seg @(_payKind == "PAYMENT" ? "active" : null)" @onclick='() => _payKind = "PAYMENT"'>Payment</button>
+                            <button type="button" class="mm-seg @(_payKind == "ADVANCE" ? "active" : null)" @onclick='() => _payKind = "ADVANCE"'>Advance</button>
+                            <button type="button" class="mm-seg @(_payKind == "ADJUSTMENT" ? "active" : null)" @onclick='() => _payKind = "ADJUSTMENT"'>Adjustment</button>
+                        </div>
+                    </div>
+
+                    <div class="mm-field">
+                        <label>Amount (Rs)</label>
+                        <InputNumber @bind-Value="_amountRs" />
+                    </div>
+                    <div class="mm-field">
+                        <label>Discount (Rs)</label>
+                        <InputNumber @bind-Value="_discountRs" disabled="@(_payKind == "ADJUSTMENT")" />
+                    </div>
+                    <div class="mm-field">
+                        <label>Date</label>
+                        <InputText type="date" @bind-Value="_payDate" />
+                    </div>
+                    <div class="mm-field">
+                        <label>Method</label>
+                        <InputSelect @bind-Value="_payMethod" @bind-Value:after="OnMethodChanged">
+                            <option value="CASH">Cash (Till)</option>
+                            <option value="BANK_TRANSFER">Bank transfer</option>
+                            <option value="EASYPAISA">EasyPaisa</option>
+                            <option value="JAZZCASH">JazzCash</option>
+                        </InputSelect>
+                    </div>
+
+                    @if (_payMethod == "CASH" && _payKind != "ADJUSTMENT")
+                    {
+                        <div class="mm-field full">
+                            <label>Open till / shift</label>
+                            <InputSelect @bind-Value="_selectedShiftId">
+                                <option value="">Select open shift…</option>
+                                @foreach (OpenShiftDto s in _openShifts)
+                                {
+                                    <option value="@s.ShiftId">@FormatShift(s)</option>
+                                }
+                            </InputSelect>
+                            <p class="mm-muted" style="margin:0.35rem 0 0;font-size:0.85rem;">
+                                @(IsCustomerContext
+                                    ? "Cash received adds to the till’s expected cash."
+                                    : "Cash paid subtracts from the till’s expected cash.")
+                            </p>
+                        </div>
+                    }
+
+                    <div class="mm-field">
+                        <label>Reference / receipt #</label>
+                        <InputText @bind-Value="_reference" />
+                    </div>
+                    <div class="mm-field">
+                        <label>Notes</label>
+                        <InputText @bind-Value="_notes" />
+                    </div>
+                </div>
+
+                <div class="mm-form-actions">
+                    <button type="button" class="mm-btn mm-btn-primary" disabled="@_saving" @onclick="RecordAsync">
+                        @(_saving ? "Saving…" : _payKind == "ADJUSTMENT" ? "Record adjustment" : IsCustomerContext ? "Record payment" : "Record payment")
+                    </button>
+                    @if (_payKind == "PAYMENT")
+                    {
+                        <button type="button" class="mm-btn" disabled="@(_partyId is null)" @onclick="OpenAllocate">Allocate</button>
+                    }
+                </div>
+            </div>
+
+            <div class="mm-card">
+                <div class="pp-card-head">
+                    <h2>Recent payments</h2>
+                    <input class="form-control" style="max-width:200px;" placeholder="Search…" @bind="_recentSearch" @bind:event="oninput" @bind:after="LoadRecentAsync" />
+                </div>
+                <div class="mm-table-wrap">
+                    <table class="mm-table">
+                        <thead>
+                            <tr>
+                                <th>When</th>
+                                <th>Party</th>
+                                <th>Type</th>
+                                <th>Method</th>
+                                <th>Amount</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if (_recent.Count == 0)
+                            {
+                                <tr><td colspan="6" class="mm-muted">No payments yet.</td></tr>
+                            }
+                            @foreach (RecentPartyPaymentDto row in _recent)
+                            {
+                                <tr>
+                                    <td>@row.CreatedAt.LocalDateTime.ToString("dd MMM HH:mm")</td>
+                                    <td>@row.PartyName</td>
+                                    <td>@(row.IsAdvance ? "Advance" : "Payment")</td>
+                                    <td>@row.PaymentMethod</td>
+                                    <td>Rs @FormatRs(row.AmountPaisa)</td>
+                                    <td><button type="button" class="mm-btn" @onclick="() => PrintPaymentRow(row)">Print</button></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    };
+
+    private RenderFragment RenderLedgerTab() => __builder =>
+    {
+        <div class="mm-card pp-ledger-toolbar">
+            <div class="mm-form-grid" style="margin:0;">
+                <div class="mm-field">
+                    <label>Party</label>
+                    <InputSelect TValue="Guid?" Value="_partyId" ValueChanged="OnLedgerPartyChangedAsync" ValueExpression="() => _partyId">
+                        <option value="">Select…</option>
+                        @foreach (PartyDto p in _parties)
+                        {
+                            <option value="@p.Id">@p.Name</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div class="mm-field">
+                    <label>Range</label>
+                    <div class="mm-segmented">
+                        <button type="button" class="mm-seg @(_ledgerRange == "today" ? "active" : null)" @onclick='() => SetLedgerRangeAsync("today")'>Today</button>
+                        <button type="button" class="mm-seg @(_ledgerRange == "7" ? "active" : null)" @onclick='() => SetLedgerRangeAsync("7")'>7D</button>
+                        <button type="button" class="mm-seg @(_ledgerRange == "30" ? "active" : null)" @onclick='() => SetLedgerRangeAsync("30")'>30D</button>
+                        <button type="button" class="mm-seg @(_ledgerRange == "all" ? "active" : null)" @onclick='() => SetLedgerRangeAsync("all")'>All</button>
+                    </div>
+                </div>
+                <div class="mm-field">
+                    <label>Type</label>
+                    <InputSelect @bind-Value="_ledgerTypeFilter" @bind-Value:after="LoadLedgerAsync">
+                        <option value="ALL">All</option>
+                        <option value="SALE">Sales</option>
+                        <option value="PURCHASE">Purchases</option>
+                        <option value="PAYMENT">Payments</option>
+                        <option value="RETURN">Returns</option>
+                        <option value="ADJUSTMENT">Adjustments</option>
+                    </InputSelect>
+                </div>
+                <div class="mm-field" style="display:flex;align-items:end;gap:0.5rem;">
+                    @if (_selectedParty is not null)
+                    {
+                        <span class="pp-balance-badge">Balance Rs @FormatRs(_selectedParty.CurrentBalancePaisa)</span>
+                    }
+                    <button type="button" class="mm-btn mm-btn-primary" disabled="@(_partyId is null)" @onclick="QuickPay">Quick Pay</button>
+                    <button type="button" class="mm-btn" disabled="@(_dashboard is null)" @onclick="PrintStatement">Print</button>
+                    <button type="button" class="mm-btn" disabled="@(_selectedParty is null)" @onclick="ShareWhatsApp">WhatsApp</button>
+                </div>
+            </div>
+        </div>
+
+        @if (_dashboard is not null)
+        {
+            <div class="pp-summary">
+                <div class="mm-kpi"><div class="mm-kpi-label">Opening</div><div class="mm-kpi-value">Rs @FormatRs(_dashboard.OpeningBalancePaisa)</div></div>
+                <div class="mm-kpi"><div class="mm-kpi-label">@(IsCustomerContext ? "Sales" : "Purchases")</div><div class="mm-kpi-value">Rs @FormatRs(_dashboard.SalesOrPurchasesPaisa)</div></div>
+                <div class="mm-kpi"><div class="mm-kpi-label">Paid</div><div class="mm-kpi-value">Rs @FormatRs(_dashboard.PaidPaisa)</div></div>
+                <div class="mm-kpi"><div class="mm-kpi-label">Returns</div><div class="mm-kpi-value">Rs @FormatRs(_dashboard.ReturnsPaisa)</div></div>
+                <div class="mm-kpi"><div class="mm-kpi-label">Discounts</div><div class="mm-kpi-value">Rs @FormatRs(_dashboard.DiscountsPaisa)</div></div>
+                <div class="mm-kpi"><div class="mm-kpi-label">Closing</div><div class="mm-kpi-value">Rs @FormatRs(_dashboard.ClosingBalancePaisa)</div></div>
+            </div>
+
+            <div class="mm-card pp-print-area" id="pp-statement">
+                <h2>@(_dashboard.PartyName) · statement</h2>
+                <div class="mm-table-wrap">
+                    <table class="mm-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Particulars</th>
+                                <th>Debit</th>
+                                <th>Credit</th>
+                                <th>Balance</th>
+                                <th>Meta</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (PartyLedgerEntryDto e in FilteredLedgerEntries)
+                            {
+                                <tr>
+                                    <td>@e.CreatedAt.LocalDateTime.ToString("dd MMM yyyy")</td>
+                                    <td>@e.ReferenceType · @e.ReferenceDetails</td>
+                                    <td>@(e.DebitPaisa > 0 ? $"Rs {FormatRs(e.DebitPaisa)}" : "—")</td>
+                                    <td>@(e.CreditPaisa > 0 ? $"Rs {FormatRs(e.CreditPaisa)}" : "—")</td>
+                                    <td>Rs @FormatRs(e.NewBalancePaisa)</td>
+                                    <td class="mm-muted">@e.PaymentMethod</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                @if (_ageing is not null)
+                {
+                    <div class="pp-ageing">
+                        <div><span>0–30</span><strong>Rs @FormatRs(_ageing.Bucket0To30Paisa)</strong></div>
+                        <div><span>31–60</span><strong>Rs @FormatRs(_ageing.Bucket31To60Paisa)</strong></div>
+                        <div><span>61–90</span><strong>Rs @FormatRs(_ageing.Bucket61To90Paisa)</strong></div>
+                        <div><span>90+</span><strong>Rs @FormatRs(_ageing.Bucket90PlusPaisa)</strong></div>
+                    </div>
+                }
+
+                <div class="pp-legend">
+                    <span><i class="pp-dot debit"></i> Debit increases due</span>
+                    <span><i class="pp-dot credit"></i> Credit reduces due</span>
+                </div>
+            </div>
+        }
+        else
+        {
+            <p class="mm-muted">Select a party to view the ledger.</p>
+        }
+    };
+
+    private IEnumerable<PartyLedgerEntryDto> FilteredLedgerEntries
+    {
+        get
+        {
+            if (_dashboard is null)
+            {
+                return [];
+            }
+
+            if (_ledgerTypeFilter == "ALL")
+            {
+                return _dashboard.Entries;
+            }
+
+            if (_ledgerTypeFilter == "RETURN")
+            {
+                return _dashboard.Entries.Where(e =>
+                    e.Type is "CUSTOMER_RETURN" or "SUPPLIER_RETURN");
+            }
+
+            return _dashboard.Entries.Where(e =>
+                string.Equals(e.Type, _ledgerTypeFilter, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    private void ParseQuery()
+    {
+        Uri uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        var query = QueryHelpers.ParseQuery(uri.Query);
+        if (query.TryGetValue("tab", out var tab) && !string.IsNullOrWhiteSpace(tab))
+        {
+            string t = tab.ToString();
+            if (t is TabCustomerPay or TabSupplierPay or TabCustomerLedger or TabSupplierLedger)
+            {
+                _tab = t;
+            }
+        }
+        else if (query.TryGetValue("role", out var role)
+                 && string.Equals(role.ToString(), PartyTypes.Supplier, StringComparison.OrdinalIgnoreCase))
+        {
+            _tab = TabSupplierPay;
+        }
+
+        if (query.TryGetValue("partyId", out var pid)
+            && Guid.TryParse(pid.ToString(), out Guid partyId))
+        {
+            _partyId = partyId;
+        }
+
+        if (query.TryGetValue("range", out var range) && !string.IsNullOrWhiteSpace(range))
+        {
+            _ledgerRange = range.ToString();
+        }
+    }
+
+    private async Task ReloadShellAsync()
+    {
+        _error = null;
+        try
+        {
+            _parties.Clear();
+            _parties.AddRange(await PartyService.GetPartiesAsync(ActiveRole));
+            _kpis = await LedgerService.GetPartyFinanceKpisAsync(ActiveRole);
+            _openShifts.Clear();
+            _openShifts.AddRange(await ShiftService.ListOpenShiftsAsync());
+            SyncSelectedParty();
+            if (IsPaymentTab)
+            {
+                await LoadRecentAsync();
+                if (_partyId is Guid id)
+                {
+                    await LoadOpenSlipsAsync(id);
+                }
+            }
+            else
+            {
+                await LoadLedgerAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private void SyncSelectedParty()
+    {
+        _selectedParty = _partyId is Guid id
+            ? _parties.FirstOrDefault(p => p.Id == id)
+            : null;
+    }
+
+    private async Task SwitchTabAsync(string tab)
+    {
+        _tab = tab;
+        _success = null;
+        _error = null;
+        _allocateOpen = false;
+        await ReloadShellAsync();
+        PushUrl();
+    }
+
+    private void PushUrl()
+    {
+        var q = new Dictionary<string, object?>
+        {
+            ["tab"] = _tab
+        };
+        if (_partyId is Guid id)
+        {
+            q["partyId"] = id;
+        }
+
+        if (!IsPaymentTab)
+        {
+            q["range"] = _ledgerRange;
+        }
+
+        Navigation.NavigateTo(Navigation.GetUriWithQueryParameters(q), replace: true);
+    }
+
+    private async Task OnPartyChangedAsync(Guid? partyId)
+    {
+        _partyId = partyId;
+        SyncSelectedParty();
+        _openSlips.Clear();
+        if (partyId is Guid id)
+        {
+            await LoadOpenSlipsAsync(id);
+        }
+
+        PushUrl();
+    }
+
+    private async Task OnLedgerPartyChangedAsync(Guid? partyId)
+    {
+        _partyId = partyId;
+        SyncSelectedParty();
+        await LoadLedgerAsync();
+        PushUrl();
+    }
+
+    private void OnMethodChanged()
+    {
+        if (_payMethod != "CASH")
+        {
+            _selectedShiftId = string.Empty;
+        }
+    }
+
+    private async Task LoadRecentAsync()
+    {
+        try
+        {
+            _recent.Clear();
+            _recent.AddRange(await LedgerService.ListRecentPaymentsAsync(
+                ActiveRole,
+                search: string.IsNullOrWhiteSpace(_recentSearch) ? null : _recentSearch));
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task LoadOpenSlipsAsync(Guid partyId)
+    {
+        _openSlips.Clear();
+        try
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            foreach (OpenPartySlipDto slip in await LedgerService.ListOpenSlipsAsync(partyId))
+            {
+                _openSlips.Add(new OpenSlipRow
+                {
+                    InvoiceNo = slip.InvoiceNo,
+                    PurchaseOrderId = slip.PurchaseOrderId,
+                    Reference = slip.Reference,
+                    OutstandingPaisa = slip.OutstandingPaisa,
+                    AgeDays = Math.Max(0, (int)(now - slip.CreatedAt).TotalDays)
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task SetLedgerRangeAsync(string range)
+    {
+        _ledgerRange = range;
+        await LoadLedgerAsync();
+        PushUrl();
+    }
+
+    private (DateTimeOffset From, DateTimeOffset To) ResolveLedgerWindow()
+    {
+        DateTimeOffset to = DateTimeOffset.UtcNow;
+        DateTimeOffset from = _ledgerRange switch
+        {
+            "today" => DateTime.UtcNow.Date,
+            "7" => to.AddDays(-7),
+            "30" => to.AddDays(-30),
+            _ => new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero)
+        };
+        return (from, to);
+    }
+
+    private async Task LoadLedgerAsync()
+    {
+        _dashboard = null;
+        _ageing = null;
+        if (_partyId is not Guid partyId)
+        {
+            return;
+        }
+
+        try
+        {
+            (DateTimeOffset from, DateTimeOffset to) = ResolveLedgerWindow();
+            _dashboard = await LedgerService.GetLedgerDashboardAsync(partyId, from, to);
+            _ageing = await LedgerService.GetAgeingAsync(partyId);
+            SyncSelectedParty();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private void SyncPayAmountFromAllocations()
+    {
+        decimal sum = _openSlips.Sum(s => s.AllocateRs);
+        if (sum > 0)
+        {
+            _amountRs = sum;
+        }
+    }
+
+    private async Task OpenAllocate()
+    {
+        if (_partyId is Guid id)
+        {
+            await LoadOpenSlipsAsync(id);
+        }
+
+        _allocateOpen = true;
+    }
+
+    private async Task RecordAsync()
+    {
+        _saving = true;
+        _error = null;
+        _success = null;
+        try
+        {
+            if (_partyId is not Guid partyId)
+            {
+                _error = "Select a party.";
+                return;
+            }
+
+            long amountPaisa = (long)Math.Round(_amountRs * 100m, MidpointRounding.AwayFromZero);
+            long discountPaisa = (long)Math.Round(_discountRs * 100m, MidpointRounding.AwayFromZero);
+            if (amountPaisa <= 0)
+            {
+                _error = "Enter an amount greater than zero.";
+                return;
+            }
+
+            if (_payKind == "ADJUSTMENT")
+            {
+                string notes = string.IsNullOrWhiteSpace(_notes) ? "Adjustment" : _notes.Trim();
+                if (!string.IsNullOrWhiteSpace(_reference))
+                {
+                    notes = $"{_reference.Trim()} — {notes}";
+                }
+
+                await ProcurementService.RecordPartyAdjustmentAsync(new RecordPartyAdjustmentRequest
+                {
+                    PartyId = partyId,
+                    AmountPaisa = amountPaisa,
+                    IncreaseBalance = false,
+                    Notes = notes
+                });
+                _success = "Adjustment recorded.";
+            }
+            else
+            {
+                if (_payMethod == "CASH")
+                {
+                    if (!Guid.TryParse(_selectedShiftId, out _))
+                    {
+                        _error = "Select an open till/shift for cash payments.";
+                        return;
+                    }
+                }
+
+                bool isAdvance = _payKind == "ADVANCE";
+                List<PaymentAllocationRequest> allocations = [];
+                if (!isAdvance)
+                {
+                    foreach (OpenSlipRow row in _openSlips)
+                    {
+                        long allocPaisa = (long)Math.Round(row.AllocateRs * 100m, MidpointRounding.AwayFromZero);
+                        if (allocPaisa <= 0)
+                        {
+                            continue;
+                        }
+
+                        if (IsCustomerContext)
+                        {
+                            allocations.Add(new PaymentAllocationRequest
+                            {
+                                InvoiceNo = row.InvoiceNo,
+                                AmountPaisa = allocPaisa
+                            });
+                        }
+                        else if (row.PurchaseOrderId is Guid poId)
+                        {
+                            allocations.Add(new PaymentAllocationRequest
+                            {
+                                PurchaseOrderId = poId,
+                                AmountPaisa = allocPaisa
+                            });
+                        }
+                    }
+                }
+
+                string baseRef = string.IsNullOrWhiteSpace(_reference)
+                    ? $"PAY-{DateTime.UtcNow:yyyyMMddHHmmss}"
+                    : _reference.Trim();
+                if (isAdvance && !baseRef.StartsWith("ADV-", StringComparison.OrdinalIgnoreCase))
+                {
+                    baseRef = $"ADV-{baseRef}";
+                }
+
+                if (!string.IsNullOrWhiteSpace(_notes))
+                {
+                    baseRef = $"{baseRef} — {_notes.Trim()}";
+                }
+
+                Guid? shiftId = _payMethod == "CASH" && Guid.TryParse(_selectedShiftId, out Guid sid)
+                    ? sid
+                    : null;
+
+                if (IsCustomerContext)
+                {
+                    await ProcurementService.RecordCustomerPaymentAsync(new RecordCustomerPaymentRequest
+                    {
+                        CustomerId = partyId,
+                        AmountPaisa = amountPaisa,
+                        PaymentMethod = _payMethod,
+                        ReferenceNo = baseRef,
+                        ShiftId = shiftId,
+                        Allocations = allocations.Count > 0 ? allocations : null
+                    });
+                }
+                else
+                {
+                    await ProcurementService.RecordSupplierPaymentAsync(new RecordSupplierPaymentRequest
+                    {
+                        SupplierId = partyId,
+                        AmountPaisa = amountPaisa,
+                        PaymentMethod = _payMethod,
+                        ReferenceNo = baseRef,
+                        ShiftId = shiftId,
+                        Allocations = allocations.Count > 0 ? allocations : null
+                    });
+                }
+
+                if (discountPaisa > 0)
+                {
+                    await ProcurementService.RecordPartyAdjustmentAsync(new RecordPartyAdjustmentRequest
+                    {
+                        PartyId = partyId,
+                        AmountPaisa = discountPaisa,
+                        IncreaseBalance = false,
+                        Notes = $"DISCOUNT — {baseRef}"
+                    });
+                }
+
+                _success = isAdvance ? "Advance recorded." : "Payment recorded.";
+            }
+
+            _amountRs = 0;
+            _discountRs = 0;
+            _reference = string.Empty;
+            _notes = string.Empty;
+            foreach (OpenSlipRow row in _openSlips)
+            {
+                row.AllocateRs = 0;
+            }
+
+            await ReloadShellAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.InnerException?.Message ?? ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task QuickPay()
+    {
+        string payTab = IsCustomerContext ? TabCustomerPay : TabSupplierPay;
+        _tab = payTab;
+        _payKind = "PAYMENT";
+        await ReloadShellAsync();
+        PushUrl();
+    }
+
+    private async Task PrintStatement()
+    {
+        await Js.InvokeVoidAsync("eval", "window.print()");
+    }
+
+    private async Task PrintPaymentRow(RecentPartyPaymentDto row)
+    {
+        string msg =
+            $"{row.PartyName}\n{row.CreatedAt.LocalDateTime:dd MMM yyyy HH:mm}\n{row.PaymentMethod} Rs {FormatRs(row.AmountPaisa)}\n{row.ReferenceDetails}";
+        await Js.InvokeVoidAsync("alert", msg);
+    }
+
+    private async Task ShareWhatsApp()
+    {
+        if (_selectedParty is null || _dashboard is null)
+        {
+            return;
+        }
+
+        string phone = new string(_selectedParty.PhoneNumber.Where(char.IsDigit).ToArray());
+        if (phone.StartsWith("0"))
+        {
+            phone = "92" + phone[1..];
+        }
+
+        string text =
+            $"*Statement — {_dashboard.PartyName}*%0A" +
+            $"Opening: Rs {FormatRs(_dashboard.OpeningBalancePaisa)}%0A" +
+            $"Paid: Rs {FormatRs(_dashboard.PaidPaisa)}%0A" +
+            $"Closing: Rs {FormatRs(_dashboard.ClosingBalancePaisa)}%0A" +
+            $"— Copenhagen Mart";
+        string url = string.IsNullOrWhiteSpace(phone)
+            ? $"https://wa.me/?text={text}"
+            : $"https://wa.me/{phone}?text={text}";
+        await Js.InvokeVoidAsync("open", url, "_blank");
+    }
+
+    private async Task OpenManageParties()
+    {
+        _manageOpen = true;
+        _editingPartyId = null;
+        _partyForm = new PartyForm();
+        await LoadManagePartiesAsync();
+    }
+
+    private void StartCreateParty()
+    {
+        _manageOpen = true;
+        _editingPartyId = null;
+        _manageRole = ActiveRole;
+        _partyForm = new PartyForm();
+        _ = LoadManagePartiesAsync();
+    }
+
+    private async Task SetManageRole(string role)
+    {
+        _manageRole = role;
+        _editingPartyId = null;
+        _partyForm = new PartyForm();
+        await LoadManagePartiesAsync();
+    }
+
+    private async Task LoadManagePartiesAsync()
+    {
+        _manageParties.Clear();
+        try
+        {
+            _manageParties.AddRange(await PartyService.GetPartiesAsync(_manageRole));
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private void EditParty(PartyDto p)
+    {
+        _editingPartyId = p.Id;
+        _partyForm = new PartyForm
+        {
+            Name = p.Name,
+            PhoneNumber = p.PhoneNumber,
+            Address = p.Address,
+            CreditLimitRs = p.CreditLimitPaisa / 100m
+        };
+    }
+
+    private async Task SavePartyAsync()
+    {
+        _saving = true;
+        _error = null;
+        try
+        {
+            long creditPaisa = (long)Math.Round(_partyForm.CreditLimitRs * 100m, MidpointRounding.AwayFromZero);
+            if (_editingPartyId is Guid id)
+            {
+                await PartyService.UpdatePartyAsync(id, new UpdatePartyRequest
+                {
+                    Name = _partyForm.Name.Trim(),
+                    PhoneNumber = _partyForm.PhoneNumber.Trim(),
+                    Address = _partyForm.Address.Trim(),
+                    CreditLimitPaisa = creditPaisa
+                });
+                _success = "Party updated.";
+            }
+            else
+            {
+                await PartyService.CreatePartyAsync(new CreatePartyRequest
+                {
+                    Role = _manageRole,
+                    Name = _partyForm.Name.Trim(),
+                    PhoneNumber = _partyForm.PhoneNumber.Trim(),
+                    Address = _partyForm.Address.Trim(),
+                    CreditLimitPaisa = creditPaisa
+                });
+                _success = "Party created.";
+            }
+
+            _editingPartyId = null;
+            _partyForm = new PartyForm();
+            await LoadManagePartiesAsync();
+            await ReloadShellAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.InnerException?.Message ?? ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2", CultureInfo.InvariantCulture);
+
+    private static string FormatShift(OpenShiftDto s) =>
+        $"{s.CashierName} · {s.TerminalName ?? s.TerminalId.ToString()[..8]} · Rs {FormatRs(s.ExpectedCashPaisa)}";
+
+    private sealed class PartyForm
+    {
+        public string Name { get; set; } = string.Empty;
+        public string PhoneNumber { get; set; } = string.Empty;
+        public string Address { get; set; } = string.Empty;
+        public decimal CreditLimitRs { get; set; }
+    }
+
+    private sealed class OpenSlipRow
+    {
+        public string? InvoiceNo { get; set; }
+        public Guid? PurchaseOrderId { get; set; }
+        public string Reference { get; set; } = string.Empty;
+        public long OutstandingPaisa { get; set; }
+        public int AgeDays { get; set; }
+        public decimal AllocateRs { get; set; }
+    }
+}

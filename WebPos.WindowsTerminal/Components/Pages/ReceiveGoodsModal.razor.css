@@ -1,0 +1,215 @@
+.receive-suggest-wrap {
+    position: relative;
+}
+
+.receive-suggest-list {
+    list-style: none;
+    margin: 0.25rem 0 0;
+    padding: 0.25rem;
+    position: absolute;
+    z-index: 20;
+    left: 0;
+    right: 0;
+    max-height: 14rem;
+    overflow: auto;
+    background: #fff;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
+}
+
+.receive-suggest-list li {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    padding: 0.5rem 0.6rem;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.receive-suggest-list li:hover,
+.receive-suggest-list li.active {
+    background: #ecfdf5;
+}
+
+.suggest-name {
+    font-weight: 700;
+    font-size: 0.9rem;
+}
+
+.suggest-meta {
+    font-size: 0.75rem;
+    color: #6b7280;
+    font-weight: 600;
+}
+
+.receive-pending-title {
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    align-items: baseline;
+}
+
+.receive-goods-modal {
+    width: min(100%, 34rem);
+    max-height: 90vh;
+    overflow: auto;
+}
+
+.receive-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.5rem;
+}
+
+.receive-invoice-row {
+    display: flex;
+    gap: 0.4rem;
+}
+
+.receive-invoice-row .txn-ref-input {
+    flex: 1;
+}
+
+.receive-header-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.6rem;
+    align-items: center;
+    font-size: 0.85rem;
+    color: #374151;
+    padding: 0.45rem 0.55rem;
+    background: #f3f4f6;
+    border-radius: 8px;
+}
+
+.receive-pending {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.55rem;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    background: #fafafa;
+}
+
+.receive-line-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    max-height: 12rem;
+    overflow: auto;
+}
+
+.receive-line-list li {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 0.5rem;
+    align-items: center;
+    font-size: 0.85rem;
+    padding: 0.4rem 0.5rem;
+    background: #f9fafb;
+    border-radius: 8px;
+}
+
+.link-btn {
+    background: none;
+    border: 0;
+    color: #0f766e;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 0;
+}
+
+.check-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+}
+
+.field-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #6b7280;
+}
+
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgba(17, 24, 39, 0.45);
+}
+
+.success-modal {
+    width: min(100%, 26rem);
+    background: #fff;
+    border-radius: 14px;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.2);
+}
+
+.txn-ref-input {
+    width: 100%;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+}
+
+.checkout-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.35rem;
+}
+
+.checkout-actions .secondary-btn,
+.checkout-actions .pay-btn {
+    flex: 1;
+}
+
+.secondary-btn,
+.pay-btn {
+    border: 0;
+    border-radius: 8px;
+    padding: 0.65rem 0.9rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.secondary-btn {
+    background: #e5e7eb;
+}
+
+.pay-btn {
+    background: #0f766e;
+    color: #fff;
+}
+
+.pay-btn:disabled,
+.secondary-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.alert-red {
+    background: #fef2f2;
+    color: #b91c1c;
+    padding: 0.5rem 0.7rem;
+    border-radius: 8px;
+}
+
+.muted {
+    color: #6b7280;
+    margin: 0;
+}

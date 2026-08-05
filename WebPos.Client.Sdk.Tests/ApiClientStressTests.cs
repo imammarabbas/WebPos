@@ -116,6 +116,8 @@ public sealed class ApiClientStressTests
                 Name = $"Product-{i}",
                 Sku = $"SKU-{i:D6}",
                 Barcode = $"BC-{i:D8}",
+                ShortCode = $"SC-{i:D4}",
+                IsLoose = i % 5 == 0,
                 Brand = "StressBrand",
                 BaseUnit = "PCS",
                 ConversionMultiplier = 1,

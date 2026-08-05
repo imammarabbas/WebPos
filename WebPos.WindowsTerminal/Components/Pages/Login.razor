@@ -1,16 +1,19 @@
 @page "/"
 @page "/login"
 @using Common.Models
-@inject LoginService LoginService
+@inject LoginApiClient LoginApi
 @inject NavigationManager Navigation
+@inject TerminalOptions TerminalOptions
+@inject SecureEnrollmentCertificateStore CertificateStore
 
-<PageTitle>Cashier Login</PageTitle>
+<PageTitle>Staff Login</PageTitle>
 
 <div class="terminal-shell">
     <section class="login-card">
         <header>
             <span class="brand">WebPos</span>
-            <h1>Cashier Login</h1>
+            <h1>Staff Login</h1>
+            <p class="login-hint">Cashier or Manager PIN</p>
         </header>
 
         @if (!string.IsNullOrWhiteSpace(_errorMessage))
@@ -58,6 +61,18 @@
     private string? _errorMessage;
     private bool _isBusy;
 
+    protected override void OnInitialized()
+    {
+        LoginApi.ClearCashier();
+        _pin = string.Empty;
+        _errorMessage = null;
+
+        if (!CertificateStore.IsEnrolled || !TerminalOptions.IsEnrolled)
+        {
+            Navigation.NavigateTo("/enroll");
+        }
+    }
+
     private void AppendDigit(string digit)
     {
         if (_pin.Length < 12)
@@ -84,7 +99,7 @@
         _isBusy = true;
         try
         {
-            Result<CashierDto> result = await LoginService.LoginAsync(_pin);
+            Result<CashierDto> result = await LoginApi.LoginAsync(_pin);
             _pin = string.Empty;
 
             if (!result.Success)

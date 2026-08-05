@@ -37,4 +37,16 @@ public sealed class ProcurementController(IProcurementService procurementService
             await _procurementService.RecordSupplierPaymentAsync(request, cancellationToken);
         return Ok(result);
     }
+
+    [HttpPost("customer-payment")]
+    [ProducesResponseType(typeof(RecordCustomerPaymentResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<RecordCustomerPaymentResult>> RecordCustomerPayment(
+        [FromBody] RecordCustomerPaymentRequest request,
+        CancellationToken cancellationToken)
+    {
+        RecordCustomerPaymentResult result =
+            await _procurementService.RecordCustomerPaymentAsync(request, cancellationToken);
+        return Ok(result);
+    }
 }

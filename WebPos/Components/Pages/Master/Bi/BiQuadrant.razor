@@ -1,0 +1,66 @@
+@namespace WebPos.Components.Pages.Master.Bi
+@using WebPos.Core.Abstractions
+
+<svg class="bi-quadrant" viewBox="0 0 320 240" role="img" aria-label="Profitability quadrant">
+    <rect x="0" y="0" width="160" height="120" fill="#ecfdf5" />
+    <rect x="160" y="0" width="160" height="120" fill="#fff7ed" />
+    <rect x="0" y="120" width="160" height="120" fill="#eff6ff" />
+    <rect x="160" y="120" width="160" height="120" fill="#f9fafb" />
+    @((MarkupString)_labels)
+    <line x1="160" y1="8" x2="160" y2="232" stroke="#d1d5db" stroke-width="1" />
+    <line x1="8" y1="120" x2="312" y2="120" stroke="#d1d5db" stroke-width="1" />
+    @foreach (var p in _points)
+    {
+        <circle cx="@p.X" cy="@p.Y" r="5" fill="@p.Color" opacity="0.9">
+            <title>@p.Label</title>
+        </circle>
+    }
+</svg>
+
+@code {
+    private static readonly Dictionary<string, string> Colors = new()
+    {
+        [BiQuadrants.Stars] = "#059669",
+        [BiQuadrants.Workhorses] = "#d97706",
+        [BiQuadrants.Opportunities] = "#2563eb",
+        [BiQuadrants.Dogs] = "#9ca3af"
+    };
+
+    private const string _labels =
+        """
+        <text x="12" y="18" class="bi-q-label" fill="#374151" font-size="10" font-weight="700">Opportunities</text>
+        <text x="12" y="30" fill="#9ca3af" font-size="8">Low sales · High profit</text>
+        <text x="172" y="18" fill="#374151" font-size="10" font-weight="700">Stars</text>
+        <text x="172" y="30" fill="#9ca3af" font-size="8">High sales · High profit</text>
+        <text x="12" y="138" fill="#374151" font-size="10" font-weight="700">Dogs</text>
+        <text x="12" y="150" fill="#9ca3af" font-size="8">Low sales · Low profit</text>
+        <text x="172" y="138" fill="#374151" font-size="10" font-weight="700">Workhorses</text>
+        <text x="172" y="150" fill="#9ca3af" font-size="8">High sales · Low profit</text>
+        <text x="160" y="236" text-anchor="middle" fill="#9ca3af" font-size="9">SALES →</text>
+        """;
+
+    [Parameter] public IReadOnlyList<BiProductRow>? Products { get; set; }
+
+    private List<(double X, double Y, string Color, string Label)> _points = [];
+
+    protected override void OnParametersSet()
+    {
+        IReadOnlyList<BiProductRow> products = (Products ?? [])
+            .Where(p => !p.IsDeadStock)
+            .Take(40)
+            .ToList();
+
+        long maxSales = products.Count == 0 ? 1 : Math.Max(1, products.Max(p => p.SalesPaisa));
+        long maxProfit = products.Count == 0 ? 1 : Math.Max(1, products.Max(p => p.ProfitPaisa));
+        long padSales = Math.Max(maxSales, 1);
+        long padProfit = Math.Max(Math.Abs(maxProfit), 1);
+
+        _points = products.Select(p =>
+        {
+            double x = 16 + (p.SalesPaisa / (double)padSales) * 288;
+            double y = 224 - (Math.Max(0, p.ProfitPaisa) / (double)padProfit) * 208;
+            string color = Colors.GetValueOrDefault(p.Quadrant, "#6b7280");
+            return (x, y, color, $"{p.ProductName} · {p.Quadrant}");
+        }).ToList();
+    }
+}

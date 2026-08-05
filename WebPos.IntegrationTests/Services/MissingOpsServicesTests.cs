@@ -203,6 +203,7 @@ public sealed class MissingOpsServicesTests
             // PartyService is constructed after validators in dedicated Party tests;
             // procurement harness uses a lightweight supplier resolver stub below.
             var partyService = new ProcurementSupplierPartyService(context, tenantService);
+            var cashAccountService = new CashAccountService(context, tenantService);
             return new ServiceHarness(
                 context,
                 new ProcurementService(
@@ -210,6 +211,7 @@ public sealed class MissingOpsServicesTests
                     transactionService,
                     partyLedgerService,
                     partyService,
+                    cashAccountService,
                     tenantService),
                 new PurchaseReturnService(
                     context,
@@ -400,22 +402,28 @@ public sealed class MissingOpsServicesTests
         WebPosDbContext context,
         ITenantService tenantService) : IPartyService
     {
-        public Task<PartyDto> CreatePartyAsync(
-            CreatePartyRequest request,
+        public Task<WebPos.Core.Abstractions.PartyDto> CreatePartyAsync(
+            WebPos.Core.Abstractions.CreatePartyRequest request,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
-        public Task<IReadOnlyList<PartyDto>> GetPartiesAsync(
+        public Task<WebPos.Core.Abstractions.PartyDto> UpdatePartyAsync(
+            Guid partyId,
+            WebPos.Core.Abstractions.UpdatePartyRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<WebPos.Core.Abstractions.PartyDto>> GetPartiesAsync(
             string? role,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
-        public Task<PartyDto> GetPartyAsync(
+        public Task<WebPos.Core.Abstractions.PartyDto> GetPartyAsync(
             Guid partyId,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
-        public async Task<PartyDto> GetSupplierAsync(
+        public async Task<WebPos.Core.Abstractions.PartyDto> GetSupplierAsync(
             Guid supplierId,
             CancellationToken cancellationToken = default)
         {
@@ -437,7 +445,7 @@ public sealed class MissingOpsServicesTests
                     "The selected party is not a SUPPLIER.");
             }
 
-            return new PartyDto
+            return new WebPos.Core.Abstractions.PartyDto
             {
                 Id = party.Id,
                 Role = party.PartyType,
@@ -449,7 +457,7 @@ public sealed class MissingOpsServicesTests
             };
         }
 
-        public Task<IReadOnlyList<PartyDto>> GetSuppliersAsync(
+        public Task<IReadOnlyList<WebPos.Core.Abstractions.PartyDto>> GetSuppliersAsync(
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }

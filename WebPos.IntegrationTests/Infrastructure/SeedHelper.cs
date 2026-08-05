@@ -114,6 +114,7 @@ public static class SeedHelper
             Name = productName,
             Sku = $"SKU-{productId:N}"[..20],
             Barcode = $"BC-{productId:N}"[..20],
+            ShortCode = $"{Random.Shared.Next(2000, 9999)}",
             Brand = "TestBrand",
             BaseUnit = "PCS",
             ConversionMultiplier = 1,

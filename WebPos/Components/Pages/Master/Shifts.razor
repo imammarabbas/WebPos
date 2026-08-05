@@ -1,0 +1,125 @@
+@page "/master/shifts"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using Common.Models
+@using WebPos.Core.Services
+@inject IShiftService ShiftService
+
+<PageTitle>Open Shifts · Copenhagen Mart</PageTitle>
+
+<div class="mm-page">
+    <div class="mm-page-header">
+        <div>
+            <h1>Open shifts</h1>
+            <p>Force-close a stuck till so another operator can start fresh</p>
+        </div>
+        <button type="button" class="mm-btn" disabled="@_busy" @onclick="LoadAsync">Refresh</button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+    @if (!string.IsNullOrEmpty(_success))
+    {
+        <div class="mm-alert mm-alert-ok">@_success</div>
+    }
+
+    @if (_loading)
+    {
+        <p class="mm-muted">Loading open shifts…</p>
+    }
+    else if (_shifts.Count == 0)
+    {
+        <p class="mm-muted">No open shifts. Terminals are free for the next PIN login.</p>
+    }
+    else
+    {
+        <table class="mm-table">
+            <thead>
+                <tr>
+                    <th>Operator</th>
+                    <th>Terminal</th>
+                    <th>Opened</th>
+                    <th>Expected drawer</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (OpenShiftDto shift in _shifts)
+                {
+                    <tr>
+                        <td>@shift.CashierName</td>
+                        <td>@(shift.TerminalName ?? shift.TerminalId.ToString("D"))</td>
+                        <td>@shift.OpenedAt.ToLocalTime().ToString("g")</td>
+                        <td>Rs @FormatRs(shift.ExpectedCashPaisa)</td>
+                        <td>
+                            <button type="button"
+                                    class="mm-btn mm-btn-danger"
+                                    disabled="@_busy"
+                                    @onclick="() => ForceCloseAsync(shift)">
+                                Force close
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private readonly List<OpenShiftDto> _shifts = [];
+    private bool _loading = true;
+    private bool _busy;
+    private string? _error;
+    private string? _success;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _error = null;
+        _loading = true;
+        try
+        {
+            IReadOnlyList<OpenShiftDto> open = await ShiftService.ListOpenShiftsAsync();
+            _shifts.Clear();
+            _shifts.AddRange(open);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _shifts.Clear();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task ForceCloseAsync(OpenShiftDto shift)
+    {
+        _error = null;
+        _success = null;
+        _busy = true;
+        try
+        {
+            await ShiftService.ForceCloseShiftAsync(shift.ShiftId);
+            _success = $"Force-closed shift for {shift.CashierName}. Next operator can start a shift.";
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+}

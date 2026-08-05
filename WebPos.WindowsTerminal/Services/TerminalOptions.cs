@@ -1,16 +1,28 @@
 namespace WebPos.WindowsTerminal.Services;
 
-public sealed class TerminalOptions(Guid tenantId, Guid terminalId)
+/// <summary>
+/// Holds tenant/terminal identity from enrollment. Empty until enrolled.
+/// </summary>
+public sealed class TerminalOptions
 {
-    public Guid TenantId { get; } = tenantId != Guid.Empty
-        ? tenantId
-        : throw new ArgumentException(
-            "TenantId must be supplied by a validated enrollment certificate.",
-            nameof(tenantId));
+    public Guid TenantId { get; private set; }
 
-    public Guid TerminalId { get; } = terminalId != Guid.Empty
-        ? terminalId
-        : throw new ArgumentException(
-            "TerminalId must be supplied by a validated enrollment certificate.",
-            nameof(terminalId));
+    public Guid TerminalId { get; private set; }
+
+    public bool IsEnrolled =>
+        TenantId != Guid.Empty && TerminalId != Guid.Empty;
+
+    public void ApplyEnrollment(Guid tenantId, Guid terminalId)
+    {
+        ArgumentOutOfRangeException.ThrowIfEqual(tenantId, Guid.Empty);
+        ArgumentOutOfRangeException.ThrowIfEqual(terminalId, Guid.Empty);
+        TenantId = tenantId;
+        TerminalId = terminalId;
+    }
+
+    public void Clear()
+    {
+        TenantId = Guid.Empty;
+        TerminalId = Guid.Empty;
+    }
 }

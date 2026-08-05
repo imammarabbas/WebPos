@@ -21,6 +21,9 @@ Desktop.ini
 *.pfx
 *.pem
 !docs/**/*.md
+WebPos/appsettings.Pilot.json
+WebPos/appsettings.Development.Local.json
+scripts/.pilot-api.pid
 
 ## Test / coverage
 TestResults/

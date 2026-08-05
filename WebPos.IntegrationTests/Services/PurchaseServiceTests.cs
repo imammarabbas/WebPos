@@ -1,12 +1,14 @@
 using FluentAssertions;
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using WebPos.Core.Abstractions;
 using WebPos.Core.Constants;
 using WebPos.Core.Data;
 using WebPos.Core.Entities;
 using WebPos.Core.Interfaces;
 using WebPos.Core.Models;
+using WebPos.Core.Security;
 using WebPos.Core.Services;
 using WebPos.Core.Validation;
 
@@ -80,6 +82,10 @@ public sealed class PurchaseServiceTests
                 && e.Type == "PURCHASE"
                 && e.PurchaseOrderId == created.PurchaseOrderId);
         partyLedger.TransactionAmountPaisa.Should().Be(1_000_00);
+        partyLedger.NewBalancePaisa.Should().Be(1_000_00);
+
+        Party supplier = await harness.Context.Parties.SingleAsync(p => p.Id == supplierId);
+        supplier.CurrentBalancePaisa.Should().Be(1_000_00);
     }
 
     [Fact]
@@ -190,6 +196,88 @@ public sealed class PurchaseServiceTests
             .WithMessage("*SUPPLIER*");
     }
 
+    [Fact]
+    public async Task UpdateOpenPurchase_ShouldReplaceLines_AndRejectWhenReceived()
+    {
+        await using PurchaseHarness harness = await PurchaseHarness.CreateAsync();
+        (Guid receiverId, Guid supplierId, Guid productId) = await harness.SeedCatalogAsync();
+
+        CreatePurchaseOrderResult created = await harness.PurchaseService.CreatePurchaseOrderAsync(
+            new CreatePurchaseRequest
+            {
+                SupplierId = supplierId,
+                ReceiverId = receiverId,
+                SupplierInvoiceNo = "INV-EDIT-1",
+                PurchaseDate = DateTimeOffset.UtcNow.AddHours(-1),
+                DiscountPaisa = 0,
+                Lines =
+                [
+                    new CreatePurchaseLineRequest
+                    {
+                        ProductId = productId,
+                        Quantity = 2m,
+                        PurchasePricePaisa = 100_00,
+                        RetailPricePaisa = 150_00,
+                        BatchNumber = "B1"
+                    }
+                ]
+            });
+
+        PurchaseOrderDetailDto updated = await harness.PurchaseService.UpdateOpenPurchaseAsync(
+            created.PurchaseOrderId,
+            new UpdateOpenPurchaseRequest
+            {
+                SupplierInvoiceNo = "INV-EDIT-2",
+                SupplierId = supplierId,
+                DiscountPaisa = 50_00,
+                Lines =
+                [
+                    new CreatePurchaseLineRequest
+                    {
+                        ProductId = productId,
+                        Quantity = 5m,
+                        BonusQuantity = 1m,
+                        PurchasePricePaisa = 80_00,
+                        RetailPricePaisa = 120_00,
+                        BatchNumber = "B2",
+                        ExpiryDate = DateOnly.FromDateTime(DateTime.UtcNow.AddMonths(3)),
+                        RackLocation = "R1"
+                    }
+                ]
+            });
+
+        updated.SupplierInvoiceNo.Should().Be("INV-EDIT-2");
+        updated.DiscountPaisa.Should().Be(50_00);
+        updated.NetPayablePaisa.Should().Be(5 * 80_00 - 50_00);
+        updated.Lines.Should().ContainSingle();
+        updated.Lines[0].Quantity.Should().Be(5m);
+        updated.Lines[0].BatchNumber.Should().Be("B2");
+        updated.Lines[0].RackLocation.Should().Be("R1");
+        updated.Lines[0].Id.Should().NotBeEmpty();
+
+        await harness.PurchaseService.ReceiveStockAsync(created.PurchaseOrderId);
+
+        Func<Task> act = () => harness.PurchaseService.UpdateOpenPurchaseAsync(
+            created.PurchaseOrderId,
+            new UpdateOpenPurchaseRequest
+            {
+                SupplierInvoiceNo = "INV-EDIT-3",
+                Lines =
+                [
+                    new CreatePurchaseLineRequest
+                    {
+                        ProductId = productId,
+                        Quantity = 1m,
+                        PurchasePricePaisa = 10_00,
+                        RetailPricePaisa = 20_00
+                    }
+                ]
+            });
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*cannot be edited*");
+    }
+
     private sealed class PurchaseHarness : IAsyncDisposable
     {
         private PurchaseHarness(
@@ -241,14 +329,29 @@ public sealed class PurchaseServiceTests
                 ledgerService,
                 tenantService,
                 partyValidator);
+            IProductAdminService productAdminService = new ProductAdminService(
+                context,
+                tenantService,
+                transactionService);
             IValidator<CreatePurchaseRequest> purchaseValidator =
                 new CreatePurchaseRequestValidator(context, tenantService);
+            HmacPinHasher pinHasher = new(
+                new ConfigurationBuilder()
+                    .AddInMemoryCollection(new Dictionary<string, string?>
+                    {
+                        [HmacPinHasher.ConfigurationKey] =
+                            "MDEyMzQ1Njc4OUFCQ0RFRjAxMjM0NTY3ODlBQkNERUY="
+                    })
+                    .Build());
+            LoginService loginService = new(context, pinHasher);
             IPurchaseService purchaseService = new PurchaseService(
                 context,
                 transactionService,
                 ledgerService,
                 partyService,
+                productAdminService,
                 tenantService,
+                loginService,
                 purchaseValidator);
 
             return new PurchaseHarness(context, purchaseService, tenantId);

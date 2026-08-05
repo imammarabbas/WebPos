@@ -1,0 +1,54 @@
+@namespace WebPos.Components.Pages.Master.Bi
+@using WebPos.Core.Abstractions
+
+<svg class="bi-line" viewBox="0 0 @W @H" role="img" aria-label="Sales and profit trend">
+    @if (_sales.Count > 1)
+    {
+        <polyline fill="none" stroke="#111827" stroke-width="2.25" points="@_salesPoly" />
+        <polyline fill="none" stroke="#10b981" stroke-width="2" stroke-dasharray="5 4" points="@_profitPoly" />
+        @for (int i = 0; i < _sales.Count; i++)
+        {
+            <circle cx="@_sales[i].X" cy="@_sales[i].Y" r="2.5" fill="#111827" />
+        }
+    }
+    else
+    {
+        @((MarkupString)"""<text x="260" y="90" text-anchor="middle" fill="#9ca3af" font-size="12">No trend data</text>""")
+    }
+</svg>
+
+@code {
+    private const double W = 520;
+    private const double H = 180;
+    private const double PadL = 8;
+    private const double PadR = 8;
+    private const double PadT = 12;
+    private const double PadB = 20;
+
+    [Parameter] public IReadOnlyList<BiDailyPoint>? Points { get; set; }
+
+    private List<(double X, double Y)> _sales = [];
+    private List<(double X, double Y)> _profit = [];
+    private string _salesPoly = string.Empty;
+    private string _profitPoly = string.Empty;
+
+    protected override void OnParametersSet()
+    {
+        IReadOnlyList<BiDailyPoint> pts = Points ?? [];
+        if (pts.Count == 0)
+        {
+            _sales = [];
+            _profit = [];
+            return;
+        }
+
+        long max = Math.Max(1, pts.Max(p => Math.Max(p.SalesPaisa, p.ProfitPaisa)));
+        double step = pts.Count <= 1 ? 0 : (W - PadL - PadR) / (pts.Count - 1);
+        double plotH = H - PadT - PadB;
+
+        _sales = pts.Select((p, i) => (PadL + i * step, PadT + plotH - p.SalesPaisa / (double)max * plotH)).ToList();
+        _profit = pts.Select((p, i) => (PadL + i * step, PadT + plotH - p.ProfitPaisa / (double)max * plotH)).ToList();
+        _salesPoly = string.Join(" ", _sales.Select(p => $"{p.X:0.##},{p.Y:0.##}"));
+        _profitPoly = string.Join(" ", _profit.Select(p => $"{p.X:0.##},{p.Y:0.##}"));
+    }
+}

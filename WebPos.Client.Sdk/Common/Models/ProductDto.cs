@@ -12,6 +12,10 @@ public sealed class ProductDto
 
     public required string Barcode { get; init; }
 
+    public required string ShortCode { get; init; }
+
+    public bool IsLoose { get; init; }
+
     public required string Brand { get; init; }
 
     public required string BaseUnit { get; init; }
@@ -19,4 +23,6 @@ public sealed class ProductDto
     public int ConversionMultiplier { get; init; }
 
     public bool ShowOnWebshop { get; init; }
+
+    public decimal MinStockQty { get; init; }
 }

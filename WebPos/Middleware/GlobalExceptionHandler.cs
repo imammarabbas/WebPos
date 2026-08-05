@@ -21,6 +21,8 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
                 (StatusCodes.Status400BadRequest,
                     "Validation Failed",
                     string.Join("; ", validation.Errors.Select(error => error.ErrorMessage))),
+            UnauthorizedAccessException =>
+                (StatusCodes.Status403Forbidden, "Forbidden", exception.Message),
             KeyNotFoundException notFound =>
                 (StatusCodes.Status404NotFound, "Not Found", notFound.Message),
             ShiftAuthorizationException authorization =>

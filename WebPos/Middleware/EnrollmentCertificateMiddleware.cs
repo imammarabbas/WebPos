@@ -73,5 +73,7 @@ public sealed class EnrollmentCertificateMiddleware(RequestDelegate next)
     /// </summary>
     private static bool AllowsAnonymousApiAccess(PathString path) =>
         path.StartsWithSegments("/api/terminal-enrollment")
-        || path.StartsWithSegments("/api/auth/login");
+        || path.StartsWithSegments("/api/auth/login")
+        || path.StartsWithSegments("/api/auth/token")
+        || path.StartsWithSegments("/api/auth/verify-manager-pin");
 }

@@ -1,0 +1,364 @@
+@page "/master/cash"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using System.Globalization
+@using Microsoft.AspNetCore.Authorization
+@using WebPos.Core.Abstractions
+@using WebPos.Core.Constants
+@inject ICashAccountService CashAccounts
+@inject ICashTransferService CashTransfers
+@inject IPartyLedgerService PartyLedger
+@inject NavigationManager Navigation
+
+<PageTitle>Cash Management · Copenhagen Mart</PageTitle>
+
+<div class="mm-page cm-page">
+    <div class="mm-page-header">
+        <div>
+            <h1>Cash management</h1>
+            <p>Daily sales cash stays in tills until you transfer. Card &amp; mobile settle to bank. Supplier / owner cash come from the account you choose.</p>
+        </div>
+        <div class="mm-form-actions" style="margin:0;">
+            <button type="button" class="mm-btn" @onclick='() => PrefillTransfer("till","bank")'>Transfer → Bank</button>
+            <button type="button" class="mm-btn" @onclick='() => PrefillTransfer("till","owner")'>Cash → Owner</button>
+            <button type="button" class="mm-btn mm-btn-primary" @onclick="OpenManageAccounts">+ Account</button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+    @if (!string.IsNullOrEmpty(_success))
+    {
+        <div class="mm-alert mm-alert-ok">@_success</div>
+    }
+
+    @if (_summary is not null)
+    {
+        <div class="cm-kpi-strip">
+            <div class="mm-kpi cm-kpi-total">
+                <div class="mm-kpi-label">Total cash available</div>
+                <div class="mm-kpi-value">Rs @FormatRs(_summary.TotalLiquidityPaisa)</div>
+            </div>
+            <div class="mm-kpi"><div class="mm-kpi-label">In tills</div><div class="mm-kpi-value">Rs @FormatRs(_summary.InTillsPaisa)</div></div>
+            <div class="mm-kpi"><div class="mm-kpi-label">In bank</div><div class="mm-kpi-value">Rs @FormatRs(_summary.InBankPaisa)</div></div>
+            <div class="mm-kpi"><div class="mm-kpi-label">In petty</div><div class="mm-kpi-value">Rs @FormatRs(_summary.InPettyPaisa)</div></div>
+            <div class="mm-kpi"><div class="mm-kpi-label">Mobile / wallets</div><div class="mm-kpi-value">Rs @FormatRs(_summary.InMobilePaisa)</div></div>
+            <div class="mm-kpi"><div class="mm-kpi-label">Owner / safe</div><div class="mm-kpi-value">Rs @FormatRs(_summary.InOwnerPaisa)</div></div>
+            <div class="mm-kpi cm-kpi-due">
+                <div class="mm-kpi-label">Due 7 days (AP)</div>
+                <div class="mm-kpi-value">Rs @FormatRs(_due7dPaisa)</div>
+                <a class="mm-kpi-cta" href="/master/parties?tab=supplier-pay">Pay suppliers →</a>
+            </div>
+        </div>
+
+        <div class="cm-section-head">
+            <h2>Cash position</h2>
+            <span class="mm-muted">@_summary.Accounts.Count accounts · Rs @FormatRs(_summary.TotalLiquidityPaisa) total</span>
+        </div>
+
+        <div class="cm-account-grid">
+            @foreach (CashAccountCardDto card in _summary.Accounts)
+            {
+                bool live = card.HasOpenShift;
+                long display = card.DrawerExpectedCashPaisa ?? card.DerivedGlBalancePaisa;
+                <div class="cm-account-card @(live ? "live" : null)">
+                    <div class="cm-account-top">
+                        <div>
+                            <strong>@card.Account.Name</strong>
+                            <div class="mm-muted">@CashAccountTypes.ToStored(card.Account.Type)@(card.Account.TerminalName is not null ? $" · {card.Account.TerminalName}" : "")</div>
+                        </div>
+                        <span class="cm-badge @(live ? "on" : "off")">@(live ? "LIVE" : card.Account.IsActive ? "ACTIVE" : "OFF")</span>
+                    </div>
+                    <div class="cm-account-balance">Rs @FormatRs(display)</div>
+                    @if (card.Account.Type == CashAccountType.Till)
+                    {
+                        <div class="mm-muted" style="font-size:0.8rem;">Drawer @(card.DrawerExpectedCashPaisa is long d ? FormatRs(d) : "—") · Ledger @FormatRs(card.DerivedGlBalancePaisa)</div>
+                    }
+                    <div class="cm-io">
+                        <span class="in">Today in +@FormatRs(card.TodayInPaisa)</span>
+                        <span class="out">Today out −@FormatRs(card.TodayOutPaisa)</span>
+                    </div>
+                    <button type="button" class="mm-btn" style="width:100%;margin-top:0.5rem;" @onclick="() => PrefillFromCard(card.Account.Id)">Use in transfer</button>
+                </div>
+            }
+        </div>
+    }
+
+    <div class="cm-split">
+        <div class="mm-card">
+            <h2>Cash movement</h2>
+            <div class="mm-form-grid">
+                <div class="mm-field">
+                    <label>From</label>
+                    <InputSelect @bind-Value="_fromAccountId">
+                        <option value="">Select…</option>
+                        @foreach (CashAccountDto a in _accounts)
+                        {
+                            <option value="@a.Id">@a.Name · @a.AccountCode</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div class="mm-field">
+                    <label>To</label>
+                    <InputSelect @bind-Value="_toAccountId">
+                        <option value="">Select…</option>
+                        @foreach (CashAccountDto a in _accounts)
+                        {
+                            <option value="@a.Id">@a.Name · @a.AccountCode</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div class="mm-field">
+                    <label>Amount (Rs)</label>
+                    <InputNumber @bind-Value="_amountRs" />
+                </div>
+                <div class="mm-field full">
+                    <label>Notes</label>
+                    <InputText @bind-Value="_notes" placeholder="e.g. Cash to owner for supplier payment" />
+                </div>
+            </div>
+            <div class="mm-form-actions">
+                <button type="button" class="mm-btn mm-btn-primary" disabled="@_saving" @onclick="TransferAsync">
+                    @(_saving ? "Transferring…" : "+ Transfer")
+                </button>
+            </div>
+
+            <h3 style="margin-top:1.25rem;">Recent transfers</h3>
+            <div class="mm-table-wrap">
+                <table class="mm-table">
+                    <thead>
+                        <tr>
+                            <th>When</th>
+                            <th>From → To</th>
+                            <th>Ref</th>
+                            <th>Notes</th>
+                            <th>Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (_transfers.Count == 0)
+                        {
+                            <tr><td colspan="5" class="mm-muted">No transfers yet.</td></tr>
+                        }
+                        @foreach (CashTransferDto row in _transfers)
+                        {
+                            <tr>
+                                <td>@row.CreatedAt.LocalDateTime.ToString("dd MMM HH:mm")</td>
+                                <td>@row.FromAccountName → @row.ToAccountName</td>
+                                <td>@row.ReferenceNo</td>
+                                <td>@row.Notes</td>
+                                <td>Rs @FormatRs(row.AmountPaisa)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="mm-card cm-help">
+            <h2>How money moves</h2>
+            <ol>
+                <li>Cash sales land in the <strong>terminal till</strong> (drawer + till GL).</li>
+                <li>Transfer till → bank / owner when you take cash out of the drawer.</li>
+                <li>Pay suppliers from <strong>Owner</strong> or <strong>Bank</strong> so the till is not wrongfully reduced.</li>
+                <li>Add multiple EasyPaisa / bank wallets under Manage accounts.</li>
+            </ol>
+            <p class="mm-muted">Supplier settle with preferred account: <a href="/master/parties?tab=supplier-pay">Parties · Supplier Payment</a></p>
+        </div>
+    </div>
+</div>
+
+@if (_manageOpen)
+{
+    <div class="mm-modal-backdrop" @onclick="() => _manageOpen = false">
+        <div class="mm-modal" @onclick:stopPropagation>
+            <h2>Add cash account</h2>
+            <p class="mm-muted">Tills are created automatically per terminal. Add bank, mobile, petty, or owner wallets here.</p>
+            <div class="mm-form-grid">
+                <div class="mm-field full">
+                    <label>Name</label>
+                    <InputText @bind-Value="_newName" />
+                </div>
+                <div class="mm-field">
+                    <label>Type</label>
+                    <InputSelect @bind-Value="_newType">
+                        <option value="@CashAccountType.Bank">Bank</option>
+                        <option value="@CashAccountType.Mobile">Mobile</option>
+                        <option value="@CashAccountType.Petty">Petty</option>
+                        <option value="@CashAccountType.Owner">Owner</option>
+                        <option value="@CashAccountType.Other">Other</option>
+                    </InputSelect>
+                </div>
+                <div class="mm-field">
+                    <label>Account code</label>
+                    <InputText @bind-Value="_newCode" placeholder="e.g. EASYPAISA_2" />
+                </div>
+                <div class="mm-field">
+                    <label>Payment method key</label>
+                    <InputText @bind-Value="_newMethodKey" placeholder="optional EASYPAISA" />
+                </div>
+            </div>
+            <div class="mm-form-actions">
+                <button type="button" class="mm-btn mm-btn-primary" disabled="@_saving" @onclick="CreateAccountAsync">Save</button>
+                <button type="button" class="mm-btn" @onclick="() => _manageOpen = false">Close</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private CashBalancesSummaryDto? _summary;
+    private readonly List<CashAccountDto> _accounts = [];
+    private readonly List<CashTransferDto> _transfers = [];
+    private long _due7dPaisa;
+    private string? _error;
+    private string? _success;
+    private bool _saving;
+    private bool _manageOpen;
+
+    private string _fromAccountId = string.Empty;
+    private string _toAccountId = string.Empty;
+    private decimal _amountRs;
+    private string _notes = string.Empty;
+
+    private string _newName = string.Empty;
+    private CashAccountType _newType = CashAccountType.Mobile;
+    private string _newCode = string.Empty;
+    private string _newMethodKey = string.Empty;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        _error = null;
+        try
+        {
+            _summary = await CashAccounts.GetBalancesSummaryAsync();
+            _accounts.Clear();
+            _accounts.AddRange(await CashAccounts.ListAsync());
+            _transfers.Clear();
+            _transfers.AddRange(await CashTransfers.ListTransfersAsync(limit: 40));
+
+            PartyFinanceKpisDto supplierKpis = await PartyLedger.GetPartyFinanceKpisAsync(PartyTypes.Supplier);
+            _due7dPaisa = supplierKpis.DueThisWeekPaisa;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private void PrefillFromCard(Guid accountId)
+    {
+        _fromAccountId = accountId.ToString();
+    }
+
+    private void PrefillTransfer(string fromKind, string toKind)
+    {
+        CashAccountDto? from = PickAccount(fromKind);
+        CashAccountDto? to = PickAccount(toKind);
+        if (from is not null)
+        {
+            _fromAccountId = from.Id.ToString();
+        }
+
+        if (to is not null)
+        {
+            _toAccountId = to.Id.ToString();
+        }
+    }
+
+    private CashAccountDto? PickAccount(string kind) =>
+        kind switch
+        {
+            "till" => _accounts.FirstOrDefault(a => a.Type == CashAccountType.Till && a.IsActive),
+            "bank" => _accounts.FirstOrDefault(a => a.Type == CashAccountType.Bank && a.IsActive),
+            "owner" => _accounts.FirstOrDefault(a => a.Type == CashAccountType.Owner && a.IsActive),
+            _ => null
+        };
+
+    private async Task TransferAsync()
+    {
+        _saving = true;
+        _error = null;
+        _success = null;
+        try
+        {
+            if (!Guid.TryParse(_fromAccountId, out Guid fromId)
+                || !Guid.TryParse(_toAccountId, out Guid toId))
+            {
+                _error = "Select both From and To accounts.";
+                return;
+            }
+
+            long amountPaisa = (long)Math.Round(_amountRs * 100m, MidpointRounding.AwayFromZero);
+            if (amountPaisa <= 0)
+            {
+                _error = "Enter an amount greater than zero.";
+                return;
+            }
+
+            CashTransferResult result = await CashTransfers.TransferAsync(
+                fromId,
+                toId,
+                amountPaisa,
+                string.IsNullOrWhiteSpace(_notes) ? null : _notes);
+
+            _success = $"Transfer {result.ReferenceNo} posted.";
+            _amountRs = 0;
+            _notes = string.Empty;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.InnerException?.Message ?? ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void OpenManageAccounts()
+    {
+        _manageOpen = true;
+        _newName = string.Empty;
+        _newCode = string.Empty;
+        _newMethodKey = string.Empty;
+        _newType = CashAccountType.Mobile;
+    }
+
+    private async Task CreateAccountAsync()
+    {
+        _saving = true;
+        _error = null;
+        try
+        {
+            await CashAccounts.CreateAsync(new CreateCashAccountRequest
+            {
+                Name = _newName,
+                Type = _newType,
+                AccountCode = _newCode,
+                PaymentMethodKey = string.IsNullOrWhiteSpace(_newMethodKey) ? null : _newMethodKey,
+                SortOrder = 200
+            });
+            _success = "Account created.";
+            _manageOpen = false;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.InnerException?.Message ?? ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static string FormatRs(long paisa) =>
+        (paisa / 100m).ToString("N2", CultureInfo.InvariantCulture);
+}

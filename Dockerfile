@@ -4,14 +4,16 @@ WORKDIR /src
 
 COPY WebPos.slnx ./
 COPY WebPos/WebPos.csproj WebPos/
+COPY WebPos.Core/WebPos.Core.csproj WebPos.Core/
 COPY WebPos.Client.Sdk/WebPos.Client.Sdk.csproj WebPos.Client.Sdk/
 
 RUN dotnet restore WebPos/WebPos.csproj
 
 COPY WebPos/ WebPos/
+COPY WebPos.Core/ WebPos.Core/
 COPY WebPos.Client.Sdk/ WebPos.Client.Sdk/
 
-RUN dotnet publish WebPos/WebPos.csproj -c Release -o /app/publish --no-restore
+RUN dotnet publish WebPos/WebPos.csproj -c Release -o /app/publish
 
 # Runtime stage
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final

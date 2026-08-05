@@ -1,0 +1,37 @@
+@namespace WebPos.Components.Pages.Master.Bi
+
+<svg class="bi-spark" viewBox="0 0 @Width @Height" preserveAspectRatio="none" aria-hidden="true">
+    @if (_points.Count > 1)
+    {
+        <polyline fill="none"
+                  stroke="@Stroke"
+                  stroke-width="1.75"
+                  stroke-linejoin="round"
+                  stroke-linecap="round"
+                  points="@_poly" />
+    }
+</svg>
+
+@code {
+    [Parameter] public IReadOnlyList<long>? Values { get; set; }
+    [Parameter] public string Stroke { get; set; } = "#1f8a4c";
+    [Parameter] public double Width { get; set; } = 120;
+    [Parameter] public double Height { get; set; } = 28;
+
+    private List<(double X, double Y)> _points = [];
+    private string _poly = string.Empty;
+
+    protected override void OnParametersSet()
+    {
+        IReadOnlyList<long> values = Values is { Count: > 0 } ? Values : [0, 0];
+        long min = values.Min();
+        long max = values.Max();
+        double range = Math.Max(1, max - min);
+        double step = values.Count <= 1 ? Width : Width / (values.Count - 1);
+
+        _points = values
+            .Select((v, i) => (i * step, Height - 2 - ((v - min) / range) * (Height - 4)))
+            .ToList();
+        _poly = string.Join(" ", _points.Select(p => $"{p.X:0.##},{p.Y:0.##}"));
+    }
+}

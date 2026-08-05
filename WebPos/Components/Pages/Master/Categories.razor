@@ -1,0 +1,196 @@
+@page "/master/categories"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.WebUtilities
+@using WebPos.Core.Abstractions
+@inject ICategoryService CategoryService
+@inject NavigationManager Navigation
+
+<PageTitle>Categories · Copenhagen Mart</PageTitle>
+
+<div class="mm-page">
+    <div class="mm-page-header">
+        <div>
+            <h1>Categories</h1>
+            <p>Product grouping and target margins</p>
+        </div>
+        <button type="button" class="mm-btn mm-btn-primary" @onclick="StartCreate">+ New category</button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+    @if (!string.IsNullOrEmpty(_success))
+    {
+        <div class="mm-alert mm-alert-ok">@_success</div>
+    }
+
+    <div class="mm-toolbar">
+        <input class="form-control" style="max-width: 280px;" placeholder="Filter categories…" @bind="_filter" @bind:event="oninput" />
+    </div>
+
+    <div class="mm-split">
+        <div class="mm-table-wrap">
+            <table class="mm-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Products</th>
+                        <th>Target margin %</th>
+                        <th>Webshop</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (CategoryDto c in Filtered)
+                    {
+                        <tr class="clickable @(c.Id == _editingId ? "selected" : null)" @onclick="() => StartEdit(c)">
+                            <td>@c.Name</td>
+                            <td>@c.ProductCount</td>
+                            <td>@c.TargetMarginPercentage</td>
+                            <td>@(c.ShowOnWebshop ? "Yes" : "No")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="mm-card">
+            <h2>@(_editingId is null ? "Create category" : "Edit category")</h2>
+            <EditForm Model="_form" OnValidSubmit="SaveAsync">
+                <div class="mm-form-grid">
+                    <div class="mm-field full">
+                        <label for="cat-name">Name</label>
+                        <InputText id="cat-name" @bind-Value="_form.Name" />
+                    </div>
+                    <div class="mm-field">
+                        <label for="cat-margin">Target margin %</label>
+                        <InputNumber id="cat-margin" @bind-Value="_form.TargetMarginPercentage" />
+                    </div>
+                    <div class="mm-check">
+                        <InputCheckbox @bind-Value="_form.ShowOnWebshop" />
+                        <span>Show on webshop</span>
+                    </div>
+                </div>
+                <div class="mm-form-actions">
+                    <button type="submit" class="mm-btn mm-btn-primary" disabled="@_saving">
+                        @(_saving ? "Saving…" : "Save")
+                    </button>
+                    <button type="button" class="mm-btn" @onclick="StartCreate" disabled="@_saving">Cancel</button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+</div>
+
+@code {
+    private readonly List<CategoryDto> _categories = [];
+    private CategoryForm _form = new();
+    private Guid? _editingId;
+    private string _filter = string.Empty;
+    private bool _saving;
+    private string? _error;
+    private string? _success;
+
+    private IEnumerable<CategoryDto> Filtered =>
+        string.IsNullOrWhiteSpace(_filter)
+            ? _categories
+            : _categories.Where(c => c.Name.Contains(_filter, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        Uri uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        var query = QueryHelpers.ParseQuery(uri.Query);
+        if (query.TryGetValue("q", out var q) && !string.IsNullOrWhiteSpace(q))
+        {
+            _filter = q.ToString();
+        }
+
+        await LoadAsync();
+        if (query.ContainsKey("new"))
+        {
+            StartCreate();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _categories.Clear();
+            _categories.AddRange(await CategoryService.ListAsync());
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private void StartCreate()
+    {
+        _editingId = null;
+        _form = new CategoryForm();
+        _error = null;
+        _success = null;
+    }
+
+    private void StartEdit(CategoryDto c)
+    {
+        _editingId = c.Id;
+        _form = new CategoryForm
+        {
+            Name = c.Name,
+            TargetMarginPercentage = c.TargetMarginPercentage,
+            ShowOnWebshop = c.ShowOnWebshop
+        };
+        _error = null;
+        _success = null;
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _error = null;
+        _success = null;
+        try
+        {
+            var request = new UpsertCategoryRequest
+            {
+                Name = _form.Name.Trim(),
+                TargetMarginPercentage = _form.TargetMarginPercentage,
+                ShowOnWebshop = _form.ShowOnWebshop
+            };
+
+            if (_editingId is Guid id)
+            {
+                await CategoryService.UpdateAsync(id, request);
+                _success = "Category updated.";
+            }
+            else
+            {
+                await CategoryService.CreateAsync(request);
+                _success = "Category created.";
+            }
+
+            await LoadAsync();
+            StartCreate();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private sealed class CategoryForm
+    {
+        public string Name { get; set; } = string.Empty;
+        public int TargetMarginPercentage { get; set; }
+        public bool ShowOnWebshop { get; set; }
+    }
+}

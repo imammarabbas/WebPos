@@ -1,9 +1,12 @@
 @page "/start-shift"
 @using Common.Models
-@inject LoginService LoginService
-@inject ShiftService ShiftService
+@using WebPos.Client.Sdk
+@using WebPos.Client.Sdk.Exceptions
+@inject LoginApiClient Login
+@inject ShiftApiClient ShiftApi
 @inject ISessionService SessionService
 @inject TerminalOptions TerminalOptions
+@inject IApiClient ApiClient
 @inject NavigationManager Navigation
 
 <PageTitle>Start Shift</PageTitle>
@@ -13,9 +16,9 @@
         <header>
             <span class="brand">WebPos</span>
             <h1>Start Shift</h1>
-            @if (LoginService.CurrentCashier is not null)
+            @if (Login.CurrentCashier is not null)
             {
-                <p>Cashier: <strong>@LoginService.CurrentCashier.Name</strong></p>
+                <p>Operator: <strong>@Login.CurrentCashier.Name</strong></p>
             }
         </header>
 
@@ -24,31 +27,45 @@
             <div class="alert-red" role="alert">@_errorMessage</div>
         }
 
-        <form @onsubmit="StartShiftAsync" @onsubmit:preventDefault>
-            <label for="openingCash">Opening cash (Rs)</label>
-            <input id="openingCash"
-                   class="cash-input"
-                   type="number"
-                   inputmode="decimal"
-                   min="0"
-                   step="0.01"
-                   autofocus
-                   @bind="_openingCashText"
-                   @bind:event="oninput"
-                   disabled="@_isBusy" />
-
-            <div class="terminal-id">
-                Terminal: @(TerminalOptions.TerminalId == Guid.Empty
-                    ? "Not configured"
-                    : TerminalOptions.TerminalId)
+        @if (_foreignOpen is not null)
+        {
+            <div class="alert-red" role="alert">
+                Till is open for <strong>@_foreignOpen.CashierName</strong>
+                (since @_foreignOpen.OpenedAt.ToLocalTime().ToString("g")).
+                Close that shift on this terminal, or Force Close it from Master → Open shifts.
             </div>
-
-            <button type="submit"
-                    class="start-button"
-                    disabled="@(_isBusy || TerminalOptions.TerminalId == Guid.Empty)">
-                @(_isBusy ? "Authorizing…" : "Start Shift")
+            <button type="button" class="start-button" disabled="@_isBusy" @onclick="GoLogin">
+                Back to PIN login
             </button>
-        </form>
+        }
+        else
+        {
+            <form @onsubmit="StartShiftAsync" @onsubmit:preventDefault>
+                <label for="openingCash">Opening cash (Rs)</label>
+                <input id="openingCash"
+                       class="cash-input"
+                       type="number"
+                       inputmode="decimal"
+                       min="0"
+                       step="0.01"
+                       autofocus
+                       @bind="_openingCashText"
+                       @bind:event="oninput"
+                       disabled="@_isBusy" />
+
+                <div class="terminal-id">
+                    Terminal: @(TerminalOptions.TerminalId == Guid.Empty
+                        ? "Not configured"
+                        : TerminalOptions.TerminalId)
+                </div>
+
+                <button type="submit"
+                        class="start-button"
+                        disabled="@(_isBusy || TerminalOptions.TerminalId == Guid.Empty)">
+                    @(_isBusy ? "Authorizing…" : "Start Shift")
+                </button>
+            </form>
+        }
     </section>
 </div>
 
@@ -56,24 +73,73 @@
     private string _openingCashText = "0.00";
     private string? _errorMessage;
     private bool _isBusy;
+    private OpenShiftDto? _foreignOpen;
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
-        if (LoginService.CurrentCashier is null)
+        if (Login.CurrentCashier is null)
         {
             Navigation.NavigateTo("/login");
+            return;
         }
 
         if (TerminalOptions.TerminalId == Guid.Empty)
         {
-            _errorMessage =
-                "Terminal is not configured. Set the WEBPOS_TERMINAL_ID environment variable.";
+            _errorMessage = "Terminal is not enrolled. Complete enrollment first.";
+            Navigation.NavigateTo("/enroll");
+            return;
         }
+
+        await TryResumeOrDetectConflictAsync();
+    }
+
+    private async Task TryResumeOrDetectConflictAsync()
+    {
+        CashierDto? cashier = Login.CurrentCashier;
+        if (cashier is null)
+        {
+            return;
+        }
+
+        try
+        {
+            OpenShiftDto? open = await ApiClient.GetOpenShiftAsync(TerminalOptions.TerminalId);
+            if (open is null)
+            {
+                return;
+            }
+
+            if (open.CashierId == cashier.CashierId)
+            {
+                SessionService.SetSession(
+                    open.ShiftId,
+                    open.CashierId,
+                    open.TerminalId,
+                    cashier.Name,
+                    open.OpenedAt,
+                    open.OpeningCashPaisa);
+                Navigation.NavigateTo("/sales");
+                return;
+            }
+
+            _foreignOpen = open;
+        }
+        catch (WebPosClientException ex)
+        {
+            _errorMessage = ex.Message;
+        }
+    }
+
+    private void GoLogin()
+    {
+        Login.ClearCashier();
+        SessionService.ClearSession();
+        Navigation.NavigateTo("/login");
     }
 
     private async Task StartShiftAsync()
     {
-        CashierDto? cashier = LoginService.CurrentCashier;
+        CashierDto? cashier = Login.CurrentCashier;
         if (cashier is null)
         {
             Navigation.NavigateTo("/login");
@@ -95,13 +161,27 @@
             long openingCashPaisa =
                 (long)Math.Round(openingCash * 100m, MidpointRounding.AwayFromZero);
 
-            Result<ShiftDto> result = await ShiftService.StartShiftAsync(
+            Result<ShiftDto> result = await ShiftApi.StartShiftAsync(
                 cashier.CashierId,
                 TerminalOptions.TerminalId,
                 openingCashPaisa);
 
             if (!result.Success || result.Data is null)
             {
+                if (result.ErrorMessage?.Contains("409", StringComparison.Ordinal) == true
+                    || result.ErrorMessage?.Contains("Conflict", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    await TryResumeOrDetectConflictAsync();
+                    if (_foreignOpen is not null)
+                    {
+                        return;
+                    }
+
+                    _errorMessage =
+                        "This terminal already has an open shift for another operator. Close it first or Force Close from Master → Open shifts.";
+                    return;
+                }
+
                 _errorMessage = string.IsNullOrWhiteSpace(result.ErrorMessage)
                     ? "The server could not authorize this shift."
                     : result.ErrorMessage;
@@ -117,8 +197,13 @@
                 return;
             }
 
-            // Bind local state only after the server has authorized and persisted the shift.
-            SessionService.SetSession(shift.ShiftId, shift.CashierId, shift.TerminalId);
+            SessionService.SetSession(
+                shift.ShiftId,
+                shift.CashierId,
+                shift.TerminalId,
+                cashier.Name,
+                shift.OpenedAt,
+                openingCashPaisa);
             Navigation.NavigateTo("/sales");
         }
         finally

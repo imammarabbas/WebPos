@@ -1,0 +1,198 @@
+@page "/recent-bills"
+@using Common.Models
+@inject ISessionService SessionService
+@inject InvoiceApiClient InvoiceApi
+@inject NavigationManager Navigation
+@inject LastSaleReceiptStore LastSale
+@inject WhatsAppReceiptService WhatsAppReceipt
+
+<PageTitle>Recent Bills</PageTitle>
+
+<div class="page-shell">
+    <header class="page-header">
+        <div>
+            <h1>Recent bills</h1>
+            <p class="muted">All terminals · recent invoices</p>
+        </div>
+        <a class="link-btn" href="sales">← Back to POS</a>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="alert-red">@_error</div>
+    }
+
+    @if (_isLoading)
+    {
+        <p class="muted">Loading…</p>
+    }
+    else if (_invoices.Count == 0)
+    {
+        <p class="muted">No recent bills yet.</p>
+    }
+    else
+    {
+        <div class="bill-list">
+            @foreach (SalesInvoiceSummaryDto bill in _invoices)
+            {
+                <article class="bill-card">
+                    <div class="bill-top">
+                        <strong>#@ShortId(bill.InvoiceNo)</strong>
+                        <span>@bill.CreatedAt.ToLocalTime().ToString("HH:mm")</span>
+                    </div>
+                    <div class="bill-amount">Rs @FormatRs(bill.TotalAmountPaisa)</div>
+                    <div class="bill-meta">
+                        @bill.ItemCount items · @bill.PaymentMethod
+                        @if (!string.IsNullOrWhiteSpace(bill.CustomerName))
+                        {
+                            <span> · @bill.CustomerName</span>
+                        }
+                    </div>
+                    <div class="bill-actions">
+                        <a class="secondary-btn" href="@($"returns?invoice={Uri.EscapeDataString(bill.InvoiceNo)}")">Return</a>
+                        <button type="button" class="secondary-btn" @onclick="() => SendWhatsAppAsync(bill)">WhatsApp</button>
+                    </div>
+                </article>
+            }
+        </div>
+    }
+
+    @if (_showPhonePrompt)
+    {
+        <div class="modal-backdrop" @onclick="() => _showPhonePrompt = false">
+            <div class="success-modal" @onclick:stopPropagation="true">
+                <h2>WhatsApp phone</h2>
+                <input class="txn-ref-input" type="tel" @bind="_waPhone" @bind:event="oninput" placeholder="03xxxxxxxxx" />
+                @if (!string.IsNullOrWhiteSpace(_waError))
+                {
+                    <p class="field-error">@_waError</p>
+                }
+                <div class="checkout-actions">
+                    <button type="button" class="secondary-btn" @onclick="() => _showPhonePrompt = false">Cancel</button>
+                    <button type="button" class="pay-btn" @onclick="ConfirmWhatsAppAsync">Send</button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private IReadOnlyList<SalesInvoiceSummaryDto> _invoices = [];
+    private bool _isLoading = true;
+    private string? _error;
+    private bool _showPhonePrompt;
+    private string _waPhone = string.Empty;
+    private string? _waError;
+    private SalesInvoiceDetailDto? _pendingDetail;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!SessionService.IsActive)
+        {
+            Navigation.NavigateTo("/start-shift");
+            return;
+        }
+
+        Result<IReadOnlyList<SalesInvoiceSummaryDto>> result =
+            await InvoiceApi.ListRecentAsync(50);
+        _isLoading = false;
+
+        if (!result.Success || result.Data is null)
+        {
+            _error = result.ErrorMessage ?? "Unable to load bills.";
+            return;
+        }
+
+        _invoices = result.Data;
+    }
+
+    private async Task SendWhatsAppAsync(SalesInvoiceSummaryDto bill)
+    {
+        _waError = null;
+        Result<SalesInvoiceDetailDto> detailResult = await InvoiceApi.GetAsync(bill.InvoiceNo);
+        if (!detailResult.Success || detailResult.Data is null)
+        {
+            _error = detailResult.ErrorMessage ?? "Unable to load invoice.";
+            return;
+        }
+
+        _pendingDetail = detailResult.Data;
+        if (!string.IsNullOrWhiteSpace(_pendingDetail.CustomerPhone))
+        {
+            await OpenWhatsAppAsync(_pendingDetail.CustomerPhone, _pendingDetail);
+            return;
+        }
+
+        _waPhone = string.Empty;
+        _showPhonePrompt = true;
+    }
+
+    private async Task ConfirmWhatsAppAsync()
+    {
+        if (_pendingDetail is null)
+        {
+            return;
+        }
+
+        await OpenWhatsAppAsync(_waPhone, _pendingDetail);
+    }
+
+    private async Task OpenWhatsAppAsync(string phone, SalesInvoiceDetailDto detail)
+    {
+        List<CartLine> lines = detail.Lines.Select(line => new CartLine
+        {
+            Product = new SalesProductDto
+            {
+                ProductId = line.ProductId,
+                BatchId = line.BatchId,
+                BatchNumber = line.BatchNumber,
+                Name = line.ProductName,
+                Sku = string.Empty,
+                Barcode = string.Empty,
+                ShortCode = string.Empty,
+                CategoryName = string.Empty,
+                UnitPricePaisa = line.UnitPricePaisa,
+                AvailableStock = line.ReturnableQuantity
+            },
+            Quantity = line.QuantitySold
+        }).ToList();
+
+        CompleteSaleResult sale = new()
+        {
+            InvoiceNo = detail.InvoiceNo,
+            ReceiptNumber = detail.ReceiptNumber,
+            TotalAmountPaisa = detail.TotalAmountPaisa,
+            GrossAmountPaisa = detail.GrossAmountPaisa,
+            DiscountAmountPaisa = detail.DiscountAmountPaisa,
+            TransactionGroupId = Guid.Empty
+        };
+
+        string message = WhatsAppReceipt.BuildReceiptMessage(
+            sale,
+            lines,
+            detail.PaymentMethod);
+
+        string? url = WhatsAppReceipt.BuildWhatsAppUrl(phone, message);
+        if (url is null)
+        {
+            _waError = "Enter a valid mobile number.";
+            _showPhonePrompt = true;
+            return;
+        }
+
+        _showPhonePrompt = false;
+        try
+        {
+            await Browser.Default.OpenAsync(url, BrowserLaunchMode.SystemPreferred);
+        }
+        catch
+        {
+            _error = "Could not open WhatsApp.";
+        }
+    }
+
+    private static string ShortId(string invoiceNo) =>
+        invoiceNo.Length <= 8 ? invoiceNo : invoiceNo[^8..];
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+}

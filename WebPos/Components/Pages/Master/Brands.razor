@@ -1,0 +1,155 @@
+@page "/master/brands"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.WebUtilities
+@using WebPos.Core.Abstractions
+@inject IProductAdminService ProductService
+@inject NavigationManager Navigation
+
+<PageTitle>Brands · Copenhagen Mart</PageTitle>
+
+<div class="mm-page">
+    <div class="mm-page-header">
+        <div>
+            <h1>Brands</h1>
+            <p>Rename brands across the product catalog</p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+    @if (!string.IsNullOrEmpty(_success))
+    {
+        <div class="mm-alert mm-alert-ok">@_success</div>
+    }
+
+    <div class="mm-toolbar">
+        <input class="form-control" style="max-width: 280px;" placeholder="Filter brands…" @bind="_filter" @bind:event="oninput" />
+    </div>
+
+    <div class="mm-split">
+        <div class="mm-table-wrap">
+            <table class="mm-table">
+                <thead>
+                    <tr>
+                        <th>Brand</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (string brand in Filtered)
+                    {
+                        <tr class="clickable @(brand == _fromBrand ? "selected" : null)" @onclick="() => SelectBrand(brand)">
+                            <td>@(string.IsNullOrWhiteSpace(brand) ? "(blank)" : brand)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="mm-card">
+            <h2>Rename brand</h2>
+            <EditForm Model="_form" OnValidSubmit="RenameAsync">
+                <div class="mm-form-grid">
+                    <div class="mm-field full">
+                        <label for="b-from">From</label>
+                        <InputText id="b-from" @bind-Value="_form.FromBrand" />
+                    </div>
+                    <div class="mm-field full">
+                        <label for="b-to">To</label>
+                        <InputText id="b-to" @bind-Value="_form.ToBrand" />
+                    </div>
+                </div>
+                <div class="mm-form-actions">
+                    <button type="submit" class="mm-btn mm-btn-primary" disabled="@_saving">
+                        @(_saving ? "Renaming…" : "Rename")
+                    </button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+</div>
+
+@code {
+    private readonly List<string> _brands = [];
+    private RenameForm _form = new();
+    private string? _fromBrand;
+    private string _filter = string.Empty;
+    private bool _saving;
+    private string? _error;
+    private string? _success;
+
+    private IEnumerable<string> Filtered =>
+        string.IsNullOrWhiteSpace(_filter)
+            ? _brands
+            : _brands.Where(b => b.Contains(_filter, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        Uri uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        var query = QueryHelpers.ParseQuery(uri.Query);
+        if (query.TryGetValue("q", out var q) && !string.IsNullOrWhiteSpace(q))
+        {
+            _filter = q.ToString();
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _brands.Clear();
+            _brands.AddRange(await ProductService.ListBrandsAsync());
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private void SelectBrand(string brand)
+    {
+        _fromBrand = brand;
+        _form = new RenameForm
+        {
+            FromBrand = brand,
+            ToBrand = brand
+        };
+        _error = null;
+        _success = null;
+    }
+
+    private async Task RenameAsync()
+    {
+        _saving = true;
+        _error = null;
+        _success = null;
+        try
+        {
+            await ProductService.RenameBrandAsync(_form.FromBrand.Trim(), _form.ToBrand.Trim());
+            _success = $"Renamed '{_form.FromBrand}' → '{_form.ToBrand}'.";
+            await LoadAsync();
+            _form = new RenameForm();
+            _fromBrand = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private sealed class RenameForm
+    {
+        public string FromBrand { get; set; } = string.Empty;
+        public string ToBrand { get; set; } = string.Empty;
+    }
+}

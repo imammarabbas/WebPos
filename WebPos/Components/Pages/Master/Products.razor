@@ -1,0 +1,329 @@
+@page "/master/products"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.WebUtilities
+@using WebPos.Core.Abstractions
+@inject IProductAdminService ProductService
+@inject ICategoryService CategoryService
+@inject NavigationManager Navigation
+
+<PageTitle>Products · Copenhagen Mart</PageTitle>
+
+<div class="mm-page">
+    <div class="mm-page-header">
+        <div>
+            <h1>Products</h1>
+            <p>Catalog, stock floors, and opening balances</p>
+        </div>
+        <button type="button" class="mm-btn mm-btn-primary" @onclick="StartCreate">+ New product</button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+    @if (!string.IsNullOrEmpty(_success))
+    {
+        <div class="mm-alert mm-alert-ok">@_success</div>
+    }
+
+    <div class="mm-toolbar">
+        <input class="form-control" style="max-width: 280px;" placeholder="Filter products…" @bind="_filter" @bind:event="oninput" />
+        @if (_lowOnly)
+        {
+            <span class="mm-badge mm-badge-warn">Low stock filter on</span>
+            <button type="button" class="mm-btn" @onclick="ClearLowFilter">Clear</button>
+        }
+    </div>
+
+    <div class="mm-split">
+        <div class="mm-table-wrap">
+            <table class="mm-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>SKU</th>
+                        <th>Brand</th>
+                        <th>Stock</th>
+                        <th>Min</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (ProductAdminDto p in FilteredProducts)
+                    {
+                        <tr class="clickable @(p.Id == _editingId ? "selected" : null)" @onclick="() => StartEdit(p)">
+                            <td>
+                                @p.Name
+                                @if (p.IsLoose)
+                                {
+                                    <span class="mm-badge">Loose</span>
+                                }
+                            </td>
+                            <td>@p.Sku</td>
+                            <td>@p.Brand</td>
+                            <td>@p.AvailableStock.ToString("0.##")</td>
+                            <td>@p.MinStockQty.ToString("0.##")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="mm-card">
+            <h2>@(_editingId is null ? "Create product" : "Edit product")</h2>
+            <EditForm Model="_form" OnValidSubmit="SaveAsync">
+                <div class="mm-form-grid">
+                    <div class="mm-field full">
+                        <label for="p-name">Name</label>
+                        <InputText id="p-name" @bind-Value="_form.Name" />
+                    </div>
+                    <div class="mm-field">
+                        <label for="p-sku">SKU</label>
+                        <InputText id="p-sku" @bind-Value="_form.Sku" />
+                    </div>
+                    <div class="mm-field">
+                        <label for="p-barcode">Barcode</label>
+                        <InputText id="p-barcode" @bind-Value="_form.Barcode" />
+                    </div>
+                    <div class="mm-field">
+                        <label for="p-short">Short code</label>
+                        <InputText id="p-short" @bind-Value="_form.ShortCode" />
+                    </div>
+                    <div class="mm-field">
+                        <label for="p-brand">Brand</label>
+                        <InputText id="p-brand" @bind-Value="_form.Brand" />
+                    </div>
+                    <div class="mm-field">
+                        <label for="p-cat">Category</label>
+                        <InputSelect id="p-cat" @bind-Value="_form.CategoryId">
+                            <option value="">— None —</option>
+                            @foreach (CategoryDto c in _categories)
+                            {
+                                <option value="@c.Id">@c.Name</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    <div class="mm-field">
+                        <label for="p-unit">Base unit</label>
+                        <InputText id="p-unit" @bind-Value="_form.BaseUnit" />
+                    </div>
+                    <div class="mm-field">
+                        <label for="p-min">Min stock qty</label>
+                        <InputNumber id="p-min" @bind-Value="_form.MinStockQty" />
+                    </div>
+                    <div class="mm-check full">
+                        <InputCheckbox @bind-Value="_form.IsLoose" />
+                        <span>Loose / weighed item</span>
+                    </div>
+                    @if (_editingId is null)
+                    {
+                        <div class="mm-field">
+                            <label for="p-open-qty">Opening stock</label>
+                            <InputNumber id="p-open-qty" @bind-Value="_form.OpeningStockQty" />
+                        </div>
+                        <div class="mm-field">
+                            <label for="p-open-retail">Opening retail (Rs)</label>
+                            <InputNumber id="p-open-retail" @bind-Value="_form.OpeningRetailRs" />
+                        </div>
+                    }
+                </div>
+                <div class="mm-form-actions">
+                    <button type="submit" class="mm-btn mm-btn-primary" disabled="@_saving">
+                        @(_saving ? "Saving…" : "Save")
+                    </button>
+                    <button type="button" class="mm-btn" @onclick="ResetForm" disabled="@_saving">Cancel</button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+</div>
+
+@code {
+    private readonly List<ProductAdminDto> _products = [];
+    private readonly List<CategoryDto> _categories = [];
+    private ProductForm _form = new();
+    private Guid? _editingId;
+    private string _filter = string.Empty;
+    private bool _lowOnly;
+    private bool _saving;
+    private string? _error;
+    private string? _success;
+
+    private IEnumerable<ProductAdminDto> FilteredProducts
+    {
+        get
+        {
+            IEnumerable<ProductAdminDto> q = _products;
+            if (_lowOnly)
+            {
+                q = q.Where(p => p.AvailableStock <= p.MinStockQty);
+            }
+
+            if (!string.IsNullOrWhiteSpace(_filter))
+            {
+                string f = _filter.Trim();
+                q = q.Where(p =>
+                    p.Name.Contains(f, StringComparison.OrdinalIgnoreCase)
+                    || p.Sku.Contains(f, StringComparison.OrdinalIgnoreCase)
+                    || p.Barcode.Contains(f, StringComparison.OrdinalIgnoreCase)
+                    || p.ShortCode.Contains(f, StringComparison.OrdinalIgnoreCase)
+                    || p.Brand.Contains(f, StringComparison.OrdinalIgnoreCase));
+            }
+
+            return q;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        ApplyQueryFlags();
+        await LoadAsync();
+        if (QueryHasFlag("new"))
+        {
+            StartCreate();
+        }
+    }
+
+    private void ApplyQueryFlags()
+    {
+        Uri uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        Dictionary<string, Microsoft.Extensions.Primitives.StringValues> query =
+            QueryHelpers.ParseQuery(uri.Query);
+
+        if (query.TryGetValue("q", out var q) && !string.IsNullOrWhiteSpace(q))
+        {
+            _filter = q.ToString();
+        }
+
+        _lowOnly = query.ContainsKey("low");
+    }
+
+    private bool QueryHasFlag(string key)
+    {
+        Uri uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        return QueryHelpers.ParseQuery(uri.Query).ContainsKey(key);
+    }
+
+    private async Task LoadAsync()
+    {
+        _error = null;
+        try
+        {
+            _products.Clear();
+            _products.AddRange(await ProductService.ListAsync());
+            _categories.Clear();
+            _categories.AddRange(await CategoryService.ListAsync());
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private void StartCreate()
+    {
+        _editingId = null;
+        _form = new ProductForm();
+        _success = null;
+        _error = null;
+    }
+
+    private void StartEdit(ProductAdminDto p)
+    {
+        _editingId = p.Id;
+        _form = new ProductForm
+        {
+            Name = p.Name,
+            Sku = p.Sku,
+            Barcode = p.Barcode,
+            ShortCode = p.ShortCode,
+            Brand = p.Brand,
+            CategoryId = p.CategoryId?.ToString() ?? string.Empty,
+            BaseUnit = p.BaseUnit,
+            MinStockQty = p.MinStockQty,
+            IsLoose = p.IsLoose
+        };
+        _success = null;
+        _error = null;
+    }
+
+    private void ResetForm() => StartCreate();
+
+    private void ClearLowFilter()
+    {
+        _lowOnly = false;
+        Navigation.NavigateTo("/master/products", replace: true);
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _error = null;
+        _success = null;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_form.Name))
+            {
+                _error = "Product name is required.";
+                return;
+            }
+
+            Guid? categoryId = Guid.TryParse(_form.CategoryId, out Guid cid) ? cid : null;
+            var request = new UpsertProductRequest
+            {
+                Name = _form.Name.Trim(),
+                Sku = _form.Sku.Trim(),
+                Barcode = _form.Barcode.Trim(),
+                ShortCode = _form.ShortCode.Trim(),
+                Brand = _form.Brand.Trim(),
+                CategoryId = categoryId,
+                BaseUnit = string.IsNullOrWhiteSpace(_form.BaseUnit) ? "PCS" : _form.BaseUnit.Trim(),
+                MinStockQty = _form.MinStockQty,
+                IsLoose = _form.IsLoose,
+                OpeningStockQty = _editingId is null ? _form.OpeningStockQty : null,
+                OpeningRetailPricePaisa = _editingId is null && _form.OpeningRetailRs is decimal rs
+                    ? (long)Math.Round(rs * 100m, MidpointRounding.AwayFromZero)
+                    : null
+            };
+
+            if (_editingId is Guid id)
+            {
+                await ProductService.UpdateAsync(id, request);
+                _success = "Product updated.";
+            }
+            else
+            {
+                await ProductService.CreateAsync(request);
+                _success = "Product created.";
+            }
+
+            await LoadAsync();
+            StartCreate();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.InnerException?.Message ?? ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private sealed class ProductForm
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Sku { get; set; } = string.Empty;
+        public string Barcode { get; set; } = string.Empty;
+        public string ShortCode { get; set; } = string.Empty;
+        public string Brand { get; set; } = string.Empty;
+        public string CategoryId { get; set; } = string.Empty;
+        public string BaseUnit { get; set; } = "PCS";
+        public decimal MinStockQty { get; set; } = 10m;
+        public bool IsLoose { get; set; }
+        public decimal? OpeningStockQty { get; set; }
+        public decimal? OpeningRetailRs { get; set; }
+    }
+}

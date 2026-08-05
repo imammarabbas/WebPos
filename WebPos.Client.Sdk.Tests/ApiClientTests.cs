@@ -202,6 +202,9 @@ public sealed class ApiClientTests
                 "name": "Test Product",
                 "sku": "SKU-1",
                 "barcode": "123456",
+                "shortCode": "1001",
+                "categoryName": "Dairy",
+                "isLoose": false,
                 "unitPricePaisa": 15000,
                 "availableStock": 12.5,
                 "expiryDate": "2030-12-31"
@@ -229,6 +232,50 @@ public sealed class ApiClientTests
         products.Should().ContainSingle();
         products[0].UnitPricePaisa.Should().Be(15_000L);
         products[0].AvailableStock.Should().Be(12.5m);
+    }
+
+    [Fact]
+    public async Task SearchInvoicesAsync_ShouldQuerySearchEndpointAndMapProductLabels()
+    {
+        const string responseJson = """
+            [
+              {
+                "invoiceNo": "INV-SEARCH-1",
+                "receiptNumber": "RCP-1",
+                "createdAt": "2026-07-22T10:00:00Z",
+                "totalAmountPaisa": 12850,
+                "grossAmountPaisa": 12850,
+                "discountAmountPaisa": 0,
+                "taxAmountPaisa": 0,
+                "paymentMethod": "CASH",
+                "itemCount": 2,
+                "returnedAmountPaisa": 0,
+                "productLabels": ["1001", "2002"]
+              }
+            ]
+            """;
+
+        _handlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(request =>
+                    request.Method == HttpMethod.Get
+                    && request.RequestUri!.AbsolutePath == "/api/sales/invoices/search"
+                    && request.RequestUri.Query.Contains("invoice=INV-SEARCH")
+                    && request.RequestUri.Query.Contains("product=1001")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(responseJson, Encoding.UTF8, "application/json")
+            });
+
+        IReadOnlyList<SalesInvoiceSummaryDto> invoices =
+            await _apiClient.SearchInvoicesAsync(invoice: "INV-SEARCH", product: "1001");
+
+        SalesInvoiceSummaryDto invoice = invoices.Should().ContainSingle().Subject;
+        invoice.InvoiceNo.Should().Be("INV-SEARCH-1");
+        invoice.ProductLabels.Should().BeEquivalentTo(["1001", "2002"]);
     }
 
     private static string CreateValidSaleResultJson(string invoiceNo) =>

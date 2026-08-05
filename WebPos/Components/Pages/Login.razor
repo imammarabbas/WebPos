@@ -9,7 +9,7 @@
 @using WebPos.Core.Security
 @inject AuthService AuthService
 @inject AuthenticationStateProvider AuthStateProvider
-@inject IHttpContextAccessor HttpContextAccessor
+@inject LoginTicketStore LoginTicketStore
 @inject NavigationManager NavigationManager
 
 <PageTitle>Login</PageTitle>
@@ -96,14 +96,26 @@ private async Task HandleLoginAsync()
             return;
         }
 
-        // کوکی کا جھنجھٹ ختم، صرف Provider پر بھروسہ کریں
+        bool canAccessMaster =
+            string.Equals(user.Role.RoleName, "Owner", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(user.Role.RoleName, "Manager", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(user.Role.RoleName, "Admin", StringComparison.OrdinalIgnoreCase);
+        if (!canAccessMaster)
+        {
+            _errorMessage = "This account cannot access the Master Data portal. Use the POS terminal.";
+            return;
+        }
+
         if (AuthStateProvider is PosAuthStateProvider posAuth)
         {
             await posAuth.MarkUserAsAuthenticated(user);
         }
 
-        // forceLoad: true ضروری ہے تاکہ نئی آتھنٹیکیشن اسٹیٹ کے ساتھ سرور ریفریش ہو
-        NavigationManager.NavigateTo("/", forceLoad: true);
+        // Cookie SignIn must happen on a full browser request (not the Blazor circuit).
+        string ticket = LoginTicketStore.Issue(user);
+        NavigationManager.NavigateTo(
+            $"/account/complete-login?ticket={Uri.EscapeDataString(ticket)}",
+            forceLoad: true);
     }
     finally
     {

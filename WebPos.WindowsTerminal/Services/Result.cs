@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace WebPos.WindowsTerminal.Services;
 
 /// <summary>
@@ -11,6 +13,8 @@ public sealed class Result<T>
 
     public string ErrorMessage { get; init; } = string.Empty;
 
+    public HttpStatusCode? StatusCode { get; init; }
+
     public static Result<T> Ok(T data) => new()
     {
         Success = true,
@@ -18,10 +22,11 @@ public sealed class Result<T>
         ErrorMessage = string.Empty
     };
 
-    public static Result<T> Fail(string errorMessage) => new()
+    public static Result<T> Fail(string errorMessage, HttpStatusCode? statusCode = null) => new()
     {
         Success = false,
         Data = default,
-        ErrorMessage = errorMessage
+        ErrorMessage = errorMessage,
+        StatusCode = statusCode
     };
 }

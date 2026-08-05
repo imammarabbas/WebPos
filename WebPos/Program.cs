@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -10,18 +11,26 @@ using System.Threading.RateLimiting;
 using WebPos.Core.Abstractions;
 using WebPos.Components;
 using WebPos.Configuration;
-using WebPos;
+using WebPos.Core;
 using WebPos.Core.Data;
 using WebPos.Core.Interfaces;
-using WebPos.Core.Entities;
-using WebPos.Core.Models;
 using WebPos.Core.Security;
+using WebPos.Core.Seeding;
 using WebPos.Core.Services;
 using WebPos.Filters;
 using WebPos.Client.Sdk;
 using WebPos.Client.Sdk.Security;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Local override only for Development — must not override Docker Production (Server=postgres).
+if (builder.Environment.IsDevelopment())
+{
+    builder.Configuration.AddJsonFile(
+        "appsettings.Development.Local.json",
+        optional: true,
+        reloadOnChange: true);
+}
 
 // --- Blazor & HTTP ---
 builder.Services.AddRazorComponents()
@@ -42,10 +51,27 @@ builder.Services.AddScoped<ITenantService, HttpContextTenantService>();
 
 // --- Data (Scoped per request/circuit) ---
 builder.Services.AddDbContext<WebPosDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseNpgsql(
+        builder.Configuration.GetConnectionString("DefaultConnection"),
+        npgsql => npgsql.MigrationsAssembly("WebPos")));
+
+// Scoped factory so Blazor layout + page can run concurrent queries without sharing one DbContext.
+builder.Services.AddDbContextFactory<WebPosDbContext>(options =>
+    options.UseNpgsql(
+        builder.Configuration.GetConnectionString("DefaultConnection"),
+        npgsql => npgsql.MigrationsAssembly("WebPos")),
+    lifetime: ServiceLifetime.Scoped);
 
 // --- Authentication & authorization ---
 builder.Services.AddCascadingAuthenticationState();
+
+// Persist DP keys so cookie/antiforgery survive container restarts (Docker volume).
+string dataProtectionPath = builder.Configuration["DataProtection:KeysPath"]
+    ?? Path.Combine(builder.Environment.ContentRootPath, "dp-keys");
+Directory.CreateDirectory(dataProtectionPath);
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionPath))
+    .SetApplicationName("WebPos");
 
 // JWT signing key: from Security:Jwt:Key (env/Key Vault). Ephemeral in dev so
 // no secret is ever generated into local config; tokens die with the process.
@@ -59,11 +85,17 @@ builder.Services.Configure<JwtOptions>(
     builder.Configuration.GetSection(JwtOptions.SectionName));
 builder.Services.AddSingleton(new JwtSigningKey(jwtSigningKey));
 
+builder.Services.AddSingleton<LoginTicketStore>();
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
         options.LoginPath = "/login";
         options.AccessDeniedPath = "/login";
+        options.Cookie.Name = "WebPos.Auth";
+        options.ExpireTimeSpan = TimeSpan.FromHours(8);
+        options.SlidingExpiration = true;
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Lax;
     })
     .AddJwtBearer(options =>
     {
@@ -134,23 +166,54 @@ builder.Services.AddSingleton<ProductCacheService>();
 
 var app = builder.Build();
 
+if (!app.Environment.IsEnvironment("Testing"))
+{
+    using var scope = app.Services.CreateScope();
+    try
+    {
+        var context = scope.ServiceProvider.GetRequiredService<WebPosDbContext>();
+        if (context.Database.IsRelational())
+        {
+            await context.Database.MigrateAsync();
+            app.Logger.LogInformation("Applied EF Core migrations.");
+        }
+
+        var pinHasher = scope.ServiceProvider.GetRequiredService<IPinHasher>();
+        var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>()
+            .CreateLogger("StartupSeeding");
+        await PilotDataSeeder.SeedAsync(context, pinHasher, app.Configuration, logger);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(
+            ex,
+            "Database migrate/seed failed; application will continue startup.");
+    }
+}
+
 ProductCacheService productCache = app.Services.GetRequiredService<ProductCacheService>();
 await productCache.LoadCatalogAsync();
 
 // Configure the HTTP request pipeline.
 app.UseExceptionHandler();
 
-if (!app.Environment.IsEnvironment("Testing"))
+if (!app.Environment.IsEnvironment("Testing")
+    && !app.Environment.IsEnvironment("Pilot"))
 {
     app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 }
 
-if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Testing"))
+if (!app.Environment.IsDevelopment()
+    && !app.Environment.IsEnvironment("Testing")
+    && !app.Environment.IsEnvironment("Pilot"))
 {
     app.UseHsts();
 }
 
-if (!app.Environment.IsEnvironment("Testing"))
+if (!app.Environment.IsDevelopment()
+    && !app.Environment.IsEnvironment("Testing")
+    && !app.Environment.IsEnvironment("Pilot")
+    && !ShouldDisableHttpsRedirection(app))
 {
     app.UseHttpsRedirection();
 }
@@ -160,139 +223,41 @@ app.UseMiddleware<WebPos.Middleware.EnrollmentCertificateMiddleware>();
 app.UseAuthorization();
 app.UseRateLimiter();
 
+// Blazor endpoints require antiforgery. Skip only in Testing (integration TestServer).
 if (!app.Environment.IsEnvironment("Testing"))
 {
     app.UseAntiforgery();
 }
 
 app.MapStaticAssets();
+app.MapAccountEndpoints();
 app.MapControllers();
 app.MapHealthChecks("/health");
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
-using (var scope = app.Services.CreateScope())
-{
-    try
-    {
-        var context = scope.ServiceProvider.GetRequiredService<WebPosDbContext>();
-        var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>()
-            .CreateLogger("StartupSeeding");
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-        Guid masterTenantId = TenantDefaults.MasterTenantId;
-
-        if (!await context.Tenants.AnyAsync(t => t.Id == masterTenantId))
-        {
-            context.Tenants.Add(new Tenant
-            {
-                Id = masterTenantId,
-                Name = "Master Tenant",
-                Slug = "master",
-                IsActive = true,
-                CreatedAt = now
-            });
-            await context.SaveChangesAsync();
-            logger.LogInformation("Seeded master tenant {TenantId}", masterTenantId);
-        }
-
-        if (!await context.Roles.AnyAsync())
-        {
-            context.Roles.AddRange(
-                new Role
-                {
-                    Id = Guid.NewGuid(),
-                    TenantId = masterTenantId,
-                    RoleName = "Admin",
-                    CreatedAt = now
-                },
-                new Role
-                {
-                    Id = Guid.NewGuid(),
-                    TenantId = masterTenantId,
-                    RoleName = "Cashier",
-                    CreatedAt = now
-                });
-            await context.SaveChangesAsync();
-        }
-
-        Role? adminRole = await context.Roles.FirstOrDefaultAsync(
-            r => r.RoleName == "Admin" && r.TenantId == masterTenantId);
-        Role? cashierRole = await context.Roles.FirstOrDefaultAsync(
-            r => r.RoleName == "Cashier" && r.TenantId == masterTenantId);
-
-        if (adminRole is null)
-        {
-            adminRole = new Role
-            {
-                Id = Guid.NewGuid(),
-                TenantId = masterTenantId,
-                RoleName = "Admin",
-                CreatedAt = now
-            };
-            context.Roles.Add(adminRole);
-            await context.SaveChangesAsync();
-        }
-
-        if (!await context.Users.AnyAsync(u => u.Username == "admin"))
-        {
-            context.Users.Add(new User
-            {
-                Id = Guid.NewGuid(),
-                TenantId = masterTenantId,
-                Username = "admin",
-                PasswordHash = CryptoHelper.HashPassword("admin123"),
-                RoleId = adminRole.Id,
-                IsActive = true,
-                CreatedAt = now,
-                UpdatedAt = now
-            });
-        }
-
-        if (cashierRole is not null && !await context.Users.AnyAsync(u => u.Username == "cashier"))
-        {
-            context.Users.Add(new User
-            {
-                Id = Guid.NewGuid(),
-                TenantId = masterTenantId,
-                Username = "cashier",
-                PasswordHash = CryptoHelper.HashPassword("cashier123"),
-                RoleId = cashierRole.Id,
-                IsActive = true,
-                CreatedAt = now,
-                UpdatedAt = now
-            });
-        }
-
-        // Pilot terminal for enrollment (override id via env Pilot__TerminalId if needed).
-        string? pilotTerminalIdRaw = app.Configuration["Pilot:TerminalId"];
-        Guid pilotTerminalId = Guid.TryParse(pilotTerminalIdRaw, out Guid parsed)
-            ? parsed
-            : Guid.Parse("00000000-0000-0000-0000-000000000010");
-
-        if (!await context.Terminals.AnyAsync(t => t.Id == pilotTerminalId))
-        {
-            context.Terminals.Add(new Terminal
-            {
-                Id = pilotTerminalId,
-                TenantId = masterTenantId,
-                TerminalName = "Pilot POS Terminal",
-                MacAddress = "PILOT-TERMINAL-001",
-                IsActive = true,
-                LastSyncTime = now
-            });
-            logger.LogInformation(
-                "Seeded pilot terminal {TerminalId} for enrollment",
-                pilotTerminalId);
-        }
-
-        await context.SaveChangesAsync();
-    }
-    catch (Exception ex)
-    {
-        app.Logger.LogWarning(ex, "Identity seeding failed; application will continue startup.");
-    }
-}
-
 app.Run();
+
+static bool ShouldDisableHttpsRedirection(WebApplication app)
+{
+    if (string.Equals(
+            app.Configuration["DisableHttpsRedirection"],
+            "true",
+            StringComparison.OrdinalIgnoreCase))
+    {
+        return true;
+    }
+
+    string? urls = app.Configuration["ASPNETCORE_URLS"]
+        ?? Environment.GetEnvironmentVariable("ASPNETCORE_URLS");
+    if (string.IsNullOrWhiteSpace(urls))
+    {
+        return false;
+    }
+
+    // Docker / local HTTP-only hosts (e.g. http://+:8080) must not force HTTPS.
+    return urls.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .All(u => u.StartsWith("http://", StringComparison.OrdinalIgnoreCase));
+}
 
 public partial class Program;

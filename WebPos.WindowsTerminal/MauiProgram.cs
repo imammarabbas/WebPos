@@ -25,7 +25,7 @@ public static class MauiProgram
             .AddJsonFile("appsettings.Development.json", optional: true)
             .AddEnvironmentVariables();
 
-        // Override via env: WebPosSdk__BaseAddress=https://your-server:8080/
+        // Override via env: WebPosSdk__BaseAddress=http://localhost:8080/
         builder.Services.AddWebPosSdk(builder.Configuration);
 
         IKeyProvider keyProvider =
@@ -35,10 +35,12 @@ public static class MauiProgram
         var certificateStore =
             new SecureEnrollmentCertificateStore(certificateValidator);
         certificateStore.InitializeAsync().GetAwaiter().GetResult();
-        Common.Models.EnrollmentIdentity enrollmentIdentity =
-            certificateStore.Identity
-            ?? throw new InvalidOperationException(
-                "Validated terminal enrollment identity is unavailable.");
+
+        var terminalOptions = new TerminalOptions();
+        if (certificateStore.Identity is { } identity)
+        {
+            terminalOptions.ApplyEnrollment(identity.TenantId, identity.TerminalId);
+        }
 
         builder.Services.AddSingleton(keyProvider);
         builder.Services.AddSingleton(certificateValidator);
@@ -46,14 +48,20 @@ public static class MauiProgram
         builder.Services.AddSingleton<IEnrollmentCertificateAccessor>(
             certificateStore);
 
-        builder.Services.AddSingleton(
-            new TerminalOptions(
-                enrollmentIdentity.TenantId,
-                enrollmentIdentity.TerminalId));
+        builder.Services.AddSingleton(terminalOptions);
         builder.Services.AddSingleton<ISessionService, SessionService>();
-        builder.Services.AddSingleton<LoginService>();
-        builder.Services.AddSingleton<ShiftService>();
-        builder.Services.AddSingleton<SalesService>();
+        builder.Services.AddSingleton<LoginApiClient>();
+        builder.Services.AddSingleton<ShiftApiClient>();
+        builder.Services.AddSingleton<SalesApiClient>();
+        builder.Services.AddSingleton<CartService>();
+        builder.Services.AddSingleton<ReceiveDraftService>();
+        builder.Services.AddSingleton<CustomerApiClient>();
+        builder.Services.AddSingleton<WhatsAppReceiptService>();
+        builder.Services.AddSingleton<LastSaleReceiptStore>();
+        builder.Services.AddSingleton<CartHoldService>();
+        builder.Services.AddSingleton<ShiftStatusApiClient>();
+        builder.Services.AddSingleton<InvoiceApiClient>();
+        builder.Services.AddSingleton<PurchaseIntakeApiClient>();
 
 #if DEBUG
         builder.Services.AddBlazorWebViewDeveloperTools();

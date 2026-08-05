@@ -1,0 +1,31 @@
+@page "/master/suppliers"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.WebUtilities
+@using WebPos.Core.Constants
+@inject NavigationManager Navigation
+
+<PageTitle>Redirecting…</PageTitle>
+<p class="mm-muted">Moved to Parties…</p>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Uri uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        var query = QueryHelpers.ParseQuery(uri.Query);
+        string target = $"/master/parties?role={PartyTypes.Supplier}";
+        if (query.TryGetValue("q", out var q) && !string.IsNullOrWhiteSpace(q))
+        {
+            target += $"&q={Uri.EscapeDataString(q.ToString())}";
+        }
+
+        if (query.ContainsKey("new"))
+        {
+            target += "&new=1";
+        }
+
+        Navigation.NavigateTo(target, replace: true);
+    }
+}

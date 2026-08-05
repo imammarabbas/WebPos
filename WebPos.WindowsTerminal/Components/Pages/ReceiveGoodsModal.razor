@@ -1,0 +1,822 @@
+@using System.Globalization
+@using Common.Models
+@using WebPos.WindowsTerminal.Services
+@inject ReceiveDraftService Draft
+
+@if (Visible)
+{
+    <div class="modal-backdrop" @onclick="Cancel">
+        <div class="success-modal receive-goods-modal" @onclick:stopPropagation="true">
+            <h2>Receive Goods</h2>
+            <p class="muted">Direct supplier intake · F9</p>
+
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <div class="alert-red">@_error</div>
+            }
+
+            @if (_step == Step.Header)
+            {
+                <p class="field-label">Step 1 · Invoice header</p>
+
+                <label class="field-label">Supplier</label>
+                <select class="txn-ref-input" @bind="_supplierIdText" disabled="@(_busy || _createNewSupplier)">
+                    <option value="">— Select —</option>
+                    @foreach (PartyDto s in _suppliers)
+                    {
+                        <option value="@s.Id">@s.Name</option>
+                    }
+                </select>
+                <label class="check-row">
+                    <input type="checkbox" @bind="_createNewSupplier" disabled="@_busy" />
+                    New supplier (requires Manager PIN)
+                </label>
+                @if (_createNewSupplier)
+                {
+                    <input class="txn-ref-input" placeholder="Supplier name" @bind="_newSupplierName" @bind:event="oninput" disabled="@_busy" />
+                    <input class="txn-ref-input" placeholder="Phone" @bind="_newSupplierPhone" @bind:event="oninput" disabled="@_busy" />
+                }
+
+                <label class="field-label">Purchase / invoice #</label>
+                <div class="receive-invoice-row">
+                    <input class="txn-ref-input" @bind="_invoiceNo" @bind:event="oninput" disabled="@_busy" />
+                    <button type="button" class="secondary-btn" disabled="@_busy" @onclick="GenerateInvoiceNo">Auto</button>
+                </div>
+
+                <label class="field-label">Batch number</label>
+                <input class="txn-ref-input" placeholder="e.g. BATCH-99" @bind="_batchNumber" @bind:event="oninput" disabled="@_busy" />
+
+                <label class="field-label">Invoice date</label>
+                <input class="txn-ref-input" type="date" @bind="_invoiceDate" disabled="@_busy" />
+
+                <div class="checkout-actions">
+                    <button type="button" class="secondary-btn" disabled="@_busy" @onclick="Cancel">Cancel</button>
+                    <button type="button" class="pay-btn" disabled="@_busy" @onclick="LockHeader">Start scanning</button>
+                </div>
+            }
+            else if (_step == Step.Scan)
+            {
+                <div class="receive-header-summary">
+                    <span><strong>@_invoiceNo</strong></span>
+                    <span>· @_batchNumber</span>
+                    <span>· @_invoiceDate.ToString("dd MMM yyyy")</span>
+                    <button type="button" class="link-btn" disabled="@_busy" @onclick="UnlockHeader">Edit header</button>
+                </div>
+
+                <label class="field-label">Scan barcode or type product name</label>
+                <div class="receive-suggest-wrap">
+                    <input class="txn-ref-input"
+                           @ref="_scanInput"
+                           placeholder="e.g. milk, barcode, or short code"
+                           value="@_scanText"
+                           @oninput="OnScanInput"
+                           @onkeydown="OnScanKeyDown"
+                           autocomplete="off"
+                           disabled="@(_busy || _pendingProduct is not null)" />
+
+                    @if (_pendingProduct is null && ShowSuggestions)
+                    {
+                        <ul class="receive-suggest-list" role="listbox">
+                            @for (int i = 0; i < Suggestions.Count; i++)
+                            {
+                                SalesProductDto hit = Suggestions[i];
+                                int index = i;
+                                <li role="option"
+                                    class="@(index == _highlightIndex ? "active" : null)"
+                                    @onclick="() => SelectSuggestion(hit)">
+                                    <span class="suggest-name">@hit.Name</span>
+                                    <span class="suggest-meta">
+                                        Stock @FormatStock(hit.AvailableStock)
+                                        · Retail Rs @FormatRs(hit.UnitPricePaisa)
+                                        @if (!string.IsNullOrWhiteSpace(hit.ShortCode))
+                                        {
+                                            <text> · @hit.ShortCode</text>
+                                        }
+                                    </span>
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+
+                @if (_pendingProduct is not null)
+                {
+                    <div class="receive-pending">
+                        <p class="receive-pending-title">
+                            <strong>@_pendingProduct.Name</strong>
+                            <span class="muted">· stock @FormatStock(_pendingProduct.AvailableStock)</span>
+                        </p>
+                        <div class="receive-grid">
+                            <div>
+                                <label class="field-label">Qty</label>
+                                <input class="txn-ref-input"
+                                       @ref="_qtyInput"
+                                       @bind="_qtyText"
+                                       @bind:event="oninput"
+                                       @onkeydown="OnPendingKeyDown"
+                                       disabled="@_busy" />
+                            </div>
+                            <div>
+                                <label class="field-label">Cost (Rs)</label>
+                                <input class="txn-ref-input"
+                                       @bind="_costText"
+                                       @bind:event="oninput"
+                                       @onkeydown="OnPendingKeyDown"
+                                       disabled="@_busy" />
+                            </div>
+                            <div>
+                                <label class="field-label">Retail (Rs)</label>
+                                <input class="txn-ref-input"
+                                       @bind="_retailText"
+                                       @bind:event="oninput"
+                                       @onkeydown="OnPendingKeyDown"
+                                       disabled="@_busy" />
+                            </div>
+                        </div>
+                        <div class="checkout-actions">
+                            <button type="button" class="secondary-btn" disabled="@_busy" @onclick="ClearPending">Clear</button>
+                            <button type="button" class="pay-btn" disabled="@_busy" @onclick="AddPendingLineAsync">Add · Enter</button>
+                        </div>
+                    </div>
+                }
+
+                @if (_lines.Count > 0)
+                {
+                    <label class="field-label">Intake list (@_lines.Count)</label>
+                    <ul class="receive-line-list">
+                        @foreach (IntakeLine line in _lines)
+                        {
+                            <li>
+                                <span>@line.ProductName · qty @line.Quantity.ToString("0.##")</span>
+                                <span>Rs @FormatRs(line.PurchasePricePaisa) / @FormatRs(line.RetailPricePaisa)</span>
+                                <button type="button" class="link-btn" disabled="@_busy" @onclick="() => RemoveLine(line)">Remove</button>
+                            </li>
+                        }
+                    </ul>
+                }
+
+                <div class="checkout-actions">
+                    <button type="button" class="secondary-btn" disabled="@_busy" @onclick="Cancel">Cancel</button>
+                    <button type="button" class="pay-btn" disabled="@(_busy || _lines.Count == 0)" @onclick="SubmitAsync">
+                        Receive @_lines.Count item(s)
+                    </button>
+                </div>
+            }
+            else if (_step == Step.ManagerPin)
+            {
+                <p>Manager PIN required for this receive.</p>
+                <input class="txn-ref-input"
+                       type="password"
+                       inputmode="numeric"
+                       autocomplete="off"
+                       placeholder="Manager PIN"
+                       @bind="_managerPin"
+                       @bind:event="oninput"
+                       disabled="@_busy" />
+                <div class="checkout-actions">
+                    <button type="button" class="secondary-btn" disabled="@_busy" @onclick="() => _step = Step.Scan">Back</button>
+                    <button type="button" class="pay-btn" disabled="@_busy" @onclick="SubmitWithPinAsync">Confirm</button>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private enum Step { Header, Scan, ManagerPin }
+
+    private sealed class IntakeLine
+    {
+        public required Guid ProductId { get; init; }
+        public required string ProductName { get; init; }
+        public decimal Quantity { get; set; }
+        public long PurchasePricePaisa { get; init; }
+        public long RetailPricePaisa { get; init; }
+        public bool NeedsElevation { get; init; }
+    }
+
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnReceived { get; set; }
+    [Parameter] public IReadOnlyList<SalesProductDto> Products { get; set; } = [];
+    [Parameter] public PurchaseIntakeApiClient IntakeService { get; set; } = default!;
+    [Parameter] public Guid ReceiverId { get; set; }
+
+    private Step _step = Step.Header;
+    private bool _busy;
+    private string? _error;
+    private IReadOnlyList<PartyDto> _suppliers = [];
+    private string _invoiceNo = string.Empty;
+    private string _supplierIdText = string.Empty;
+    private bool _createNewSupplier;
+    private string _newSupplierName = string.Empty;
+    private string _newSupplierPhone = string.Empty;
+    private string _batchNumber = string.Empty;
+    private DateTime _invoiceDate = DateTime.Today;
+    private string _scanText = string.Empty;
+    private SalesProductDto? _pendingProduct;
+    private long _baselineRetailPaisa;
+    private long _baselineCostPaisa;
+    private string _qtyText = "1";
+    private string _costText = string.Empty;
+    private string _retailText = string.Empty;
+    private string _managerPin = string.Empty;
+    private readonly List<IntakeLine> _lines = [];
+    private ElementReference _scanInput;
+    private ElementReference _qtyInput;
+    private bool _focusScan;
+    private bool _focusQty;
+    private int _highlightIndex;
+    private bool _wasVisible;
+    private bool _suppressDraftSave;
+
+    private IReadOnlyList<SalesProductDto> DistinctProducts =>
+        Products
+            .GroupBy(p => p.ProductId)
+            .Select(g =>
+            {
+                SalesProductDto first = g.First();
+                return new SalesProductDto
+                {
+                    ProductId = first.ProductId,
+                    BatchId = first.BatchId,
+                    BatchNumber = first.BatchNumber,
+                    Name = first.Name,
+                    Sku = first.Sku,
+                    Barcode = first.Barcode,
+                    ShortCode = first.ShortCode,
+                    CategoryName = first.CategoryName,
+                    IsLoose = first.IsLoose,
+                    UnitPricePaisa = g.Max(x => x.UnitPricePaisa),
+                    AvailableStock = g.Sum(x => x.AvailableStock),
+                    ExpiryDate = first.ExpiryDate
+                };
+            })
+            .OrderBy(p => p.Name)
+            .ToList();
+
+    private IReadOnlyList<SalesProductDto> Suggestions
+    {
+        get
+        {
+            string q = _scanText.Trim();
+            if (q.Length < 1)
+            {
+                return [];
+            }
+
+            return DistinctProducts
+                .Where(p => MatchesQuery(p, q))
+                .Take(8)
+                .ToList();
+        }
+    }
+
+    private bool ShowSuggestions =>
+        _pendingProduct is null
+        && _scanText.Trim().Length >= 1
+        && Suggestions.Count > 0;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Visible && !_wasVisible)
+        {
+            LoadFromDraft();
+        }
+        else if (!Visible && _wasVisible)
+        {
+            if (!_suppressDraftSave)
+            {
+                SaveToDraft();
+            }
+
+            _suppressDraftSave = false;
+        }
+
+        _wasVisible = Visible;
+
+        if (!Visible)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_invoiceNo))
+        {
+            GenerateInvoiceNo();
+        }
+
+        if (string.IsNullOrWhiteSpace(_batchNumber))
+        {
+            _batchNumber = $"BATCH-{DateTime.Today:yyMMdd}";
+        }
+
+        if (_suppliers.Count > 0)
+        {
+            return;
+        }
+
+        Result<IReadOnlyList<PartyDto>> result = await IntakeService.GetSuppliersAsync();
+        if (result.Success && result.Data is not null)
+        {
+            _suppliers = result.Data;
+        }
+    }
+
+    private void LoadFromDraft()
+    {
+        _invoiceNo = Draft.InvoiceNo;
+        _supplierIdText = Draft.SupplierIdText;
+        _createNewSupplier = Draft.CreateNewSupplier;
+        _newSupplierName = Draft.NewSupplierName;
+        _newSupplierPhone = Draft.NewSupplierPhone;
+        _batchNumber = Draft.BatchNumber;
+        _invoiceDate = Draft.InvoiceDate;
+        _lines.Clear();
+        foreach (ReceiveDraftLine line in Draft.Lines)
+        {
+            _lines.Add(new IntakeLine
+            {
+                ProductId = line.ProductId,
+                ProductName = line.ProductName,
+                Quantity = line.Quantity,
+                PurchasePricePaisa = line.PurchasePricePaisa,
+                RetailPricePaisa = line.RetailPricePaisa,
+                NeedsElevation = line.NeedsElevation
+            });
+        }
+
+        _step = _lines.Count > 0 ? Step.Scan : Step.Header;
+        _error = null;
+        ClearPending();
+    }
+
+    private void SaveToDraft()
+    {
+        Draft.InvoiceNo = _invoiceNo;
+        Draft.SupplierIdText = _supplierIdText;
+        Draft.CreateNewSupplier = _createNewSupplier;
+        Draft.NewSupplierName = _newSupplierName;
+        Draft.NewSupplierPhone = _newSupplierPhone;
+        Draft.BatchNumber = _batchNumber;
+        Draft.InvoiceDate = _invoiceDate;
+        Draft.ReplaceLines(_lines.Select(l => new ReceiveDraftLine
+        {
+            ProductId = l.ProductId,
+            ProductName = l.ProductName,
+            Quantity = l.Quantity,
+            PurchasePricePaisa = l.PurchasePricePaisa,
+            RetailPricePaisa = l.RetailPricePaisa,
+            NeedsElevation = l.NeedsElevation
+        }));
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusScan)
+        {
+            _focusScan = false;
+            try { await _scanInput.FocusAsync(); } catch { /* ignore */ }
+        }
+
+        if (_focusQty)
+        {
+            _focusQty = false;
+            try { await _qtyInput.FocusAsync(); } catch { /* ignore */ }
+        }
+    }
+
+    private void GenerateInvoiceNo() =>
+        _invoiceNo = $"INV-{DateTime.Today:yyyyMMdd}-{DateTime.Now:HHmm}";
+
+    private void LockHeader()
+    {
+        _error = null;
+        if (_createNewSupplier)
+        {
+            if (string.IsNullOrWhiteSpace(_newSupplierName) || string.IsNullOrWhiteSpace(_newSupplierPhone))
+            {
+                _error = "New supplier name and phone are required.";
+                return;
+            }
+        }
+        else if (!Guid.TryParse(_supplierIdText, out Guid supplierId) || supplierId == Guid.Empty)
+        {
+            _error = "Select a supplier.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_invoiceNo))
+        {
+            _error = "Purchase / invoice number is required.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_batchNumber))
+        {
+            _error = "Batch number is required.";
+            return;
+        }
+
+        if (_invoiceDate.Date > DateTime.Today)
+        {
+            _error = "Invoice date cannot be in the future.";
+            return;
+        }
+
+        _step = Step.Scan;
+        _focusScan = true;
+    }
+
+    private void UnlockHeader()
+    {
+        if (_lines.Count > 0)
+        {
+            _error = "Clear intake lines before editing the header.";
+            return;
+        }
+
+        _step = Step.Header;
+        ClearPending();
+    }
+
+    private void OnScanInput(ChangeEventArgs e)
+    {
+        _scanText = e.Value?.ToString() ?? string.Empty;
+        _error = null;
+        _highlightIndex = 0;
+    }
+
+    private async Task OnScanKeyDown(KeyboardEventArgs e)
+    {
+        if (_busy || _pendingProduct is not null)
+        {
+            return;
+        }
+
+        if (e.Key == "ArrowDown" && ShowSuggestions)
+        {
+            _highlightIndex = Math.Min(_highlightIndex + 1, Suggestions.Count - 1);
+            return;
+        }
+
+        if (e.Key == "ArrowUp" && ShowSuggestions)
+        {
+            _highlightIndex = Math.Max(_highlightIndex - 1, 0);
+            return;
+        }
+
+        if (e.Key == "Escape")
+        {
+            _scanText = string.Empty;
+            _highlightIndex = 0;
+            return;
+        }
+
+        if (e.Key != "Enter")
+        {
+            return;
+        }
+
+        await ResolveScanAsync();
+    }
+
+    private async Task OnPendingKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key != "Enter" || _busy)
+        {
+            return;
+        }
+
+        await AddPendingLineAsync();
+    }
+
+    private void SelectSuggestion(SalesProductDto product)
+    {
+        BeginPending(product);
+        _scanText = string.Empty;
+        _highlightIndex = 0;
+        _focusQty = true;
+    }
+
+    private async Task ResolveScanAsync()
+    {
+        _error = null;
+        string code = _scanText.Trim();
+        if (string.IsNullOrEmpty(code))
+        {
+            return;
+        }
+
+        // Exact barcode / short code / SKU always wins over a highlighted name row.
+        SalesProductDto? exact = FindExactCodeMatch(code);
+        if (exact is not null)
+        {
+            SelectSuggestion(exact);
+            return;
+        }
+
+        if (ShowSuggestions && _highlightIndex >= 0 && _highlightIndex < Suggestions.Count)
+        {
+            SelectSuggestion(Suggestions[_highlightIndex]);
+            return;
+        }
+
+        IReadOnlyList<SalesProductDto> nameHits = DistinctProducts
+            .Where(p => MatchesQuery(p, code))
+            .Take(8)
+            .ToList();
+
+        if (nameHits.Count == 1)
+        {
+            SelectSuggestion(nameHits[0]);
+            return;
+        }
+
+        if (nameHits.Count > 1)
+        {
+            _error = $"Multiple matches for “{code}” — pick one from the list.";
+            _highlightIndex = 0;
+            _focusScan = true;
+            return;
+        }
+
+        _error = $"No product matched “{code}”.";
+        _focusScan = true;
+        await Task.CompletedTask;
+    }
+
+    private static bool MatchesQuery(SalesProductDto p, string q) =>
+        p.Name.Contains(q, StringComparison.OrdinalIgnoreCase)
+        || p.Barcode.Contains(q, StringComparison.OrdinalIgnoreCase)
+        || p.ShortCode.Contains(q, StringComparison.OrdinalIgnoreCase)
+        || p.Sku.Contains(q, StringComparison.OrdinalIgnoreCase);
+
+    private SalesProductDto? FindExactCodeMatch(string code) =>
+        DistinctProducts.FirstOrDefault(p =>
+            string.Equals(p.Barcode, code, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(p.ShortCode, code, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(p.Sku, code, StringComparison.OrdinalIgnoreCase));
+
+    private void BeginPending(SalesProductDto product)
+    {
+        _pendingProduct = product;
+        _baselineRetailPaisa = product.UnitPricePaisa;
+        _baselineCostPaisa = product.UnitPricePaisa;
+        _qtyText = "1";
+        _retailText = FormatRs(product.UnitPricePaisa);
+        _costText = FormatRs(product.UnitPricePaisa);
+        _error = null;
+    }
+
+    private void ClearPending()
+    {
+        _pendingProduct = null;
+        _qtyText = "1";
+        _costText = string.Empty;
+        _retailText = string.Empty;
+        _baselineCostPaisa = 0;
+        _baselineRetailPaisa = 0;
+        _highlightIndex = 0;
+        _focusScan = true;
+    }
+
+    private Task AddPendingLineAsync()
+    {
+        _error = null;
+        if (_pendingProduct is null)
+        {
+            _error = "Select a product first.";
+            return Task.CompletedTask;
+        }
+
+        if (!TryParseDecimal(_qtyText, out decimal qty) || qty <= 0)
+        {
+            _error = "Enter a valid quantity.";
+            return Task.CompletedTask;
+        }
+
+        if (!TryParseRs(_costText, out long costPaisa) || costPaisa <= 0)
+        {
+            _error = "Enter a valid cost.";
+            return Task.CompletedTask;
+        }
+
+        if (!TryParseRs(_retailText, out long retailPaisa) || retailPaisa <= 0)
+        {
+            _error = "Enter a valid retail price.";
+            return Task.CompletedTask;
+        }
+
+        bool needsElevation = (_baselineRetailPaisa > 0 && retailPaisa != _baselineRetailPaisa)
+            || (_baselineCostPaisa > 0 && costPaisa != _baselineCostPaisa);
+
+        IntakeLine? existing = _lines.FirstOrDefault(l =>
+            l.ProductId == _pendingProduct.ProductId
+            && l.PurchasePricePaisa == costPaisa
+            && l.RetailPricePaisa == retailPaisa);
+
+        if (existing is not null)
+        {
+            decimal newQty = existing.Quantity + qty;
+            bool elevated = existing.NeedsElevation || needsElevation;
+            _lines.Remove(existing);
+            _lines.Add(new IntakeLine
+            {
+                ProductId = existing.ProductId,
+                ProductName = existing.ProductName,
+                Quantity = newQty,
+                PurchasePricePaisa = existing.PurchasePricePaisa,
+                RetailPricePaisa = existing.RetailPricePaisa,
+                NeedsElevation = elevated
+            });
+        }
+        else
+        {
+            _lines.Add(new IntakeLine
+            {
+                ProductId = _pendingProduct.ProductId,
+                ProductName = _pendingProduct.Name,
+                Quantity = qty,
+                PurchasePricePaisa = costPaisa,
+                RetailPricePaisa = retailPaisa,
+                NeedsElevation = needsElevation
+            });
+        }
+
+        ClearPending();
+        SaveToDraft();
+        return Task.CompletedTask;
+    }
+
+    private void RemoveLine(IntakeLine line)
+    {
+        _lines.Remove(line);
+        SaveToDraft();
+    }
+
+    private async Task SubmitAsync() => await SubmitCoreAsync(managerPin: null);
+
+    private async Task SubmitWithPinAsync() => await SubmitCoreAsync(_managerPin);
+
+    private async Task SubmitCoreAsync(string? managerPin)
+    {
+        _error = null;
+        if (ReceiverId == Guid.Empty)
+        {
+            _error = "No cashier session.";
+            return;
+        }
+
+        if (_lines.Count == 0)
+        {
+            _error = "Scan at least one product.";
+            _step = Step.Scan;
+            return;
+        }
+
+        bool needsElevation = _createNewSupplier || _lines.Any(l => l.NeedsElevation);
+        if (needsElevation && string.IsNullOrWhiteSpace(managerPin))
+        {
+            _step = Step.ManagerPin;
+            return;
+        }
+
+        // Calendar day only — avoid noon-UTC timestamps failing before midday UTC.
+        DateTimeOffset purchaseDate = _invoiceDate.Date == DateTime.Today
+            ? DateTimeOffset.UtcNow
+            : new DateTimeOffset(
+                _invoiceDate.Year,
+                _invoiceDate.Month,
+                _invoiceDate.Day,
+                0,
+                0,
+                0,
+                TimeSpan.Zero);
+
+        List<QuickReceiveLineDto> apiLines = _lines.Select(l => new QuickReceiveLineDto
+        {
+            ProductId = l.ProductId,
+            Quantity = l.Quantity,
+            PurchasePricePaisa = l.PurchasePricePaisa,
+            RetailPricePaisa = l.RetailPricePaisa,
+            BatchNumber = _batchNumber.Trim()
+        }).ToList();
+
+        QuickReceiveRequestDto request;
+        if (_createNewSupplier)
+        {
+            request = new QuickReceiveRequestDto
+            {
+                NewSupplier = new QuickReceiveNewSupplierDto
+                {
+                    Name = _newSupplierName.Trim(),
+                    PhoneNumber = _newSupplierPhone.Trim()
+                },
+                ReceiverId = ReceiverId,
+                SupplierInvoiceNo = _invoiceNo.Trim(),
+                PurchaseDate = purchaseDate,
+                ManagerPin = managerPin,
+                Lines = apiLines
+            };
+        }
+        else
+        {
+            if (!Guid.TryParse(_supplierIdText, out Guid supplierId) || supplierId == Guid.Empty)
+            {
+                _error = "Select a supplier.";
+                _step = Step.Header;
+                return;
+            }
+
+            request = new QuickReceiveRequestDto
+            {
+                SupplierId = supplierId,
+                ReceiverId = ReceiverId,
+                SupplierInvoiceNo = _invoiceNo.Trim(),
+                PurchaseDate = purchaseDate,
+                ManagerPin = managerPin,
+                Lines = apiLines
+            };
+        }
+
+        _busy = true;
+        try
+        {
+            Result<ReceiveStockResultDto> result = await IntakeService.QuickReceiveAsync(request);
+            if (!result.Success || result.Data is null)
+            {
+                if (result.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                {
+                    _step = Step.ManagerPin;
+                    _error = string.IsNullOrWhiteSpace(managerPin)
+                        ? "Manager PIN required for new supplier or cost/retail change."
+                        : "Manager PIN rejected. Try again.";
+                    return;
+                }
+
+                _error = result.ErrorMessage;
+                return;
+            }
+
+            _suppressDraftSave = true;
+            ResetForm(clearDraft: true);
+            await OnReceived.InvokeAsync();
+            await OnClose.InvokeAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task Cancel()
+    {
+        _suppressDraftSave = true;
+        ResetForm(clearDraft: true);
+        await OnClose.InvokeAsync();
+    }
+
+    private void ResetForm(bool clearDraft = true)
+    {
+        _step = Step.Header;
+        _error = null;
+        _invoiceNo = string.Empty;
+        _supplierIdText = string.Empty;
+        _createNewSupplier = false;
+        _newSupplierName = string.Empty;
+        _newSupplierPhone = string.Empty;
+        _batchNumber = string.Empty;
+        _invoiceDate = DateTime.Today;
+        _scanText = string.Empty;
+        _managerPin = string.Empty;
+        _highlightIndex = 0;
+        _lines.Clear();
+        ClearPending();
+        GenerateInvoiceNo();
+        _batchNumber = $"BATCH-{DateTime.Today:yyMMdd}";
+        if (clearDraft)
+        {
+            Draft.Clear();
+        }
+    }
+
+    private static bool TryParseDecimal(string text, out decimal value) =>
+        decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out value)
+        || decimal.TryParse(text, NumberStyles.Number, CultureInfo.CurrentCulture, out value);
+
+    private static bool TryParseRs(string text, out long paisa)
+    {
+        paisa = 0;
+        if (!TryParseDecimal(text, out decimal rupees) || rupees < 0)
+        {
+            return false;
+        }
+
+        paisa = (long)Math.Round(rupees * 100m, MidpointRounding.AwayFromZero);
+        return true;
+    }
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+
+    private static string FormatStock(decimal qty) => qty.ToString("0.##");
+}
