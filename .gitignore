@@ -25,6 +25,14 @@ WebPos/appsettings.Pilot.json
 WebPos/appsettings.Development.Local.json
 scripts/.pilot-api.pid
 
+## Database dumps / exports (never commit — causes merge conflicts across machines)
+*.sql
+*.sql.bak
+*.dump
+*.backup
+backup.sql
+**/backups/
+
 ## Test / coverage
 TestResults/
 coverage/
