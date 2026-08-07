@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using WebPos.Core.Data;
 using WebPos.Core.Entities;
 using WebPos.Core.Models;
@@ -102,6 +104,7 @@ public static class PilotDataSeeder
         await UpsertWebUserAsync(
             context,
             pinHasher,
+            configuration,
             masterTenantId,
             username: "ammar",
             password: ownerPassword,
@@ -115,6 +118,7 @@ public static class PilotDataSeeder
         await UpsertWebUserAsync(
             context,
             pinHasher,
+            configuration,
             masterTenantId,
             username: "admin",
             password: adminPassword,
@@ -165,10 +169,32 @@ public static class PilotDataSeeder
             });
             logger.LogInformation("Seeded pilot terminal {TerminalId}", pilotTerminalId);
         }
-        else if (!string.Equals(terminal.TerminalName, $"{StoreName} POS", StringComparison.Ordinal))
+        else
         {
-            terminal.TerminalName = $"{StoreName} POS";
-            logger.LogInformation("Updated pilot terminal name to {StoreName} POS", StoreName);
+            // After DB restore, terminal may point at a different tenant than pilot admin users.
+            // Master login ignores tenant; enrollment does not — keep them aligned.
+            if (terminal.TenantId != masterTenantId)
+            {
+                logger.LogWarning(
+                    "Rebinding pilot terminal {TerminalId} from tenant {OldTenantId} to master {MasterTenantId}.",
+                    pilotTerminalId,
+                    terminal.TenantId,
+                    masterTenantId);
+                terminal.TenantId = masterTenantId;
+            }
+
+            if (!terminal.IsActive)
+            {
+                terminal.IsActive = true;
+                logger.LogInformation("Reactivated pilot terminal {TerminalId}.", pilotTerminalId);
+            }
+
+            string expectedName = $"{StoreName} POS";
+            if (!string.Equals(terminal.TerminalName, expectedName, StringComparison.Ordinal))
+            {
+                terminal.TerminalName = expectedName;
+                logger.LogInformation("Updated pilot terminal name to {StoreName} POS", StoreName);
+            }
         }
 
         await SeedCatalogAsync(context, masterTenantId, now, logger, cancellationToken);
@@ -244,6 +270,7 @@ public static class PilotDataSeeder
     private static async Task UpsertWebUserAsync(
         WebPosDbContext context,
         IPinHasher pinHasher,
+        IConfiguration configuration,
         Guid tenantId,
         string username,
         string password,
@@ -282,14 +309,19 @@ public static class PilotDataSeeder
 
         user.RoleId = roleId;
         user.IsActive = true;
-        bool passwordChanged = !CryptoHelper.VerifyPassword(password, user.PasswordHash);
+        bool forceReset = ShouldForceResetPilotCredentials(configuration);
+        bool passwordChanged = forceReset
+            || !CryptoHelper.VerifyPassword(password, user.PasswordHash);
         if (passwordChanged)
         {
             user.PasswordHash = passwordHash;
-            logger.LogInformation("Refreshed password hash for user {Username}.", username);
+            logger.LogInformation(
+                "Refreshed password hash for user {Username}{Reason}.",
+                username,
+                forceReset ? " (forced pilot reset)" : string.Empty);
         }
 
-        if (!string.Equals(user.PinHash, pinHash, StringComparison.Ordinal))
+        if (forceReset || !string.Equals(user.PinHash, pinHash, StringComparison.Ordinal))
         {
             user.PinHash = pinHash;
             logger.LogInformation("Refreshed terminal PIN hash for user {Username}.", username);
@@ -297,6 +329,14 @@ public static class PilotDataSeeder
 
         user.UpdatedAt = now;
     }
+
+    private static bool ShouldForceResetPilotCredentials(IConfiguration configuration) =>
+        configuration.GetValue("Pilot:ForceResetPasswords", false)
+        || configuration.GetValue("Security:AllowInsecureDevDefaults", false)
+        || string.Equals(
+            Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
+            "Development",
+            StringComparison.OrdinalIgnoreCase);
 
     private static async Task UpsertCashierUserAsync(
         WebPosDbContext context,

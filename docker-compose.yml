@@ -42,6 +42,8 @@ services:
       Pilot__AbcCashierPin: ${PILOT_ABC_CASHIER_PIN:-1357}
     volumes:
       - webpos_dpkeys:/app/dp-keys
+      # Persist generated enrollment RSA keys across container rebuilds
+      - ./WebPos/dev-secrets:/app/dev-secrets
     depends_on:
       postgres:
         condition: service_healthy

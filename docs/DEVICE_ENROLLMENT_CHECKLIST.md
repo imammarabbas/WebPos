@@ -2,6 +2,16 @@
 
 Complete once per machine after the API is healthy on `http://localhost:8080`.
 
+## After copying the DB to a new PC (Docker)
+
+1. Copy this repo (latest) onto the new machine — an old Terminal build always shows “Admin credentials rejected.”
+2. `docker compose up --build -d`
+3. Rebuild/run `WebPos.WindowsTerminal` from the same repo.
+4. Enroll: `admin` / same password as Master (default `admin123`).
+5. If it still fails, run on that PC:
+   `pwsh -File scripts/Diagnose-TerminalEnrollment.ps1`
+   and read the printed API `detail` (that is the real reason).
+
 ## Prerequisites
 
 - [ ] `powershell -File scripts\Generate-PilotEnv.ps1` (writes terminal public key + BaseAddress)

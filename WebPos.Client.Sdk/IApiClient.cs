@@ -8,6 +8,9 @@ public interface IApiClient
         EnrollTerminalRequest request,
         CancellationToken cancellationToken = default);
 
+    Task<EnrollmentPublicKeyDto> GetEnrollmentPublicKeyAsync(
+        CancellationToken cancellationToken = default);
+
     Task<CashierDto> LoginAsync(
         string pin,
         CancellationToken cancellationToken = default);

@@ -23,6 +23,7 @@ Desktop.ini
 !docs/**/*.md
 WebPos/appsettings.Pilot.json
 WebPos/appsettings.Development.Local.json
+WebPos/dev-secrets/
 scripts/.pilot-api.pid
 
 ## Database dumps / exports (never commit — causes merge conflicts across machines)

@@ -20,6 +20,11 @@ public sealed class EnrollmentCertificateDto
     public DateTimeOffset ExpiresAtUtc { get; init; }
 }
 
+public sealed class EnrollmentPublicKeyDto
+{
+    public string PublicKeyPem { get; init; } = string.Empty;
+}
+
 public sealed record EnrollmentIdentity(
     Guid TenantId,
     Guid TerminalId,

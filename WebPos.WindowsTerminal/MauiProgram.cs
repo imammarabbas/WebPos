@@ -29,7 +29,7 @@ public static class MauiProgram
         builder.Services.AddWebPosSdk(builder.Configuration);
 
         IKeyProvider keyProvider =
-            new ConfigurationKeyProvider(builder.Configuration);
+            new MutableKeyProvider(new ConfigurationKeyProvider(builder.Configuration));
         IEnrollmentCertificateValidator certificateValidator =
             new EnrollmentCertificateValidator(keyProvider);
         var certificateStore =

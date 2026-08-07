@@ -2,10 +2,12 @@
 @using Common.Models
 @using WebPos.Client.Sdk
 @using WebPos.Client.Sdk.Exceptions
+@using WebPos.Client.Sdk.Security
 @inject IApiClient ApiClient
 @inject SecureEnrollmentCertificateStore CertificateStore
 @inject TerminalOptions TerminalOptions
 @inject NavigationManager Navigation
+@inject IKeyProvider KeyProvider
 
 <PageTitle>Terminal Enrollment</PageTitle>
 
@@ -15,6 +17,7 @@
             <span class="brand">WebPos</span>
             <h1>Enroll Terminal</h1>
             <p class="hint">One-time setup. Requires admin credentials and API reachability.</p>
+            <p class="hint">Use the same password as Master portal. Defaults: <strong>admin</strong> / <strong>admin123</strong>.</p>
         </header>
 
         @if (!string.IsNullOrWhiteSpace(_errorMessage))
@@ -96,6 +99,14 @@
         _isBusy = true;
         try
         {
+            // Sync public key from the live API (needed after restore / Docker new keys).
+            EnrollmentPublicKeyDto pub = await ApiClient.GetEnrollmentPublicKeyAsync();
+            if (KeyProvider is MutableKeyProvider mutable
+                && !string.IsNullOrWhiteSpace(pub.PublicKeyPem))
+            {
+                mutable.SetPublicKeyPem(pub.PublicKeyPem);
+            }
+
             EnrollmentCertificateDto cert = await ApiClient.EnrollTerminalAsync(
                 new EnrollTerminalRequest
                 {
@@ -113,14 +124,15 @@
         }
         catch (WebPosClientException ex)
         {
-            _errorMessage = ex.StatusCode == System.Net.HttpStatusCode.Unauthorized
-                ? "Admin credentials rejected."
+            // Always surface API Problem detail — never hide behind a generic banner.
+            _errorMessage = string.IsNullOrWhiteSpace(ex.Message)
+                ? $"Enrollment HTTP {(int)ex.StatusCode}."
                 : ex.Message;
         }
         catch (Exception ex)
         {
             _errorMessage =
-                $"Enrollment failed. Check API URL and enrollment public key. ({ex.Message})";
+                $"Enrollment failed. Check API URL (WebPosSdk:BaseAddress) and that Docker API is running. ({ex.Message})";
         }
         finally
         {

@@ -33,7 +33,7 @@ if (builder.Environment.IsDevelopment())
 }
 
 // Fill missing Security:* values for local / docker-compose zero-config boots.
-ApplyInsecureDevSecurityDefaults(builder);
+WebPos.DevSecurityBootstrap.Apply(builder);
 
 // --- Blazor & HTTP ---
 builder.Services.AddRazorComponents()
@@ -246,63 +246,6 @@ app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
 app.Run();
-
-/// <summary>
-/// When Security keys are blank, inject ephemeral/local-only defaults so a new machine
-/// can <c>docker compose up</c> / <c>dotnet run</c> without Generate-PilotEnv.
-/// Never used for Testing. Enable explicitly with Security:AllowInsecureDevDefaults=true
-/// (set by docker-compose) or automatically in Development.
-/// </summary>
-static void ApplyInsecureDevSecurityDefaults(WebApplicationBuilder builder)
-{
-    bool allow =
-        builder.Environment.IsDevelopment()
-        || string.Equals(
-            builder.Configuration["Security:AllowInsecureDevDefaults"],
-            "true",
-            StringComparison.OrdinalIgnoreCase);
-
-    if (!allow || builder.Environment.IsEnvironment("Testing"))
-    {
-        return;
-    }
-
-    IConfiguration config = builder.Configuration;
-    bool injected = false;
-
-    if (string.IsNullOrWhiteSpace(config["Security:PinHashKey"]))
-    {
-        // 32 stable bytes derived from a fixed local salt (HMAC keys must be ≥32 bytes).
-        byte[] pinKey = SHA256.HashData("WebPos.Dev.PinHashKey.v1"u8.ToArray());
-        config["Security:PinHashKey"] = Convert.ToBase64String(pinKey);
-        injected = true;
-    }
-
-    if (string.IsNullOrWhiteSpace(config["Security:Jwt:Key"]))
-    {
-        config["Security:Jwt:Key"] = "dev_jwt_secret_key_must_be_32_chars_min";
-        injected = true;
-    }
-
-    bool missingPrivate = string.IsNullOrWhiteSpace(config["Security:Enrollment:PrivateKeyPem"]);
-    bool missingPublic = string.IsNullOrWhiteSpace(config["Security:Enrollment:PublicKeyPem"]);
-    if (missingPrivate || missingPublic)
-    {
-        using RSA rsa = RSA.Create(2048);
-        string privatePem = rsa.ExportPkcs8PrivateKeyPem().Replace("\r\n", "\n", StringComparison.Ordinal);
-        string publicPem = rsa.ExportSubjectPublicKeyInfoPem().Replace("\r\n", "\n", StringComparison.Ordinal);
-        config["Security:Enrollment:PrivateKeyPem"] = privatePem;
-        config["Security:Enrollment:PublicKeyPem"] = publicPem;
-        injected = true;
-    }
-
-    if (injected)
-    {
-        Console.WriteLine(
-            "WARNING: Security:* defaults were auto-generated for local/docker use. " +
-            "Do not use these secrets in production. Prefer scripts/Generate-PilotEnv.ps1 for stable pilot keys.");
-    }
-}
 
 static bool ShouldDisableHttpsRedirection(WebApplication app)
 {

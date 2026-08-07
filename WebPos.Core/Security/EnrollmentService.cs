@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using WebPos.Client.Sdk.Security;
 using WebPos.Core.Data;
+using WebPos.Core.Entities;
 using WebPos.Core.Models;
 
 namespace WebPos.Core.Security;
@@ -25,48 +26,90 @@ public sealed class EnrollmentService(
     private readonly IConfiguration _configuration =
         configuration ?? throw new ArgumentNullException(nameof(configuration));
 
-    public async Task<EnrollmentCertificateDto?> EnrollAsync(
+    public async Task<(EnrollmentCertificateDto? Certificate, string? FailureReason)> TryEnrollAsync(
         EnrollTerminalRequest request,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        string username = request.AdminUsername?.Trim() ?? string.Empty;
         if (request.TerminalId == Guid.Empty
-            || string.IsNullOrWhiteSpace(request.AdminUsername)
+            || string.IsNullOrWhiteSpace(username)
             || string.IsNullOrWhiteSpace(request.AdminPassword))
         {
-            return null;
+            return (null, "Terminal id, admin username, and password are required.");
         }
 
         Terminal? terminal = await _context.Terminals
             .IgnoreQueryFilters()
-            .AsNoTracking()
             .SingleOrDefaultAsync(
-                candidate =>
-                    candidate.Id == request.TerminalId
-                    && candidate.IsActive,
+                candidate => candidate.Id == request.TerminalId,
                 cancellationToken);
         if (terminal is null || terminal.TenantId == Guid.Empty)
         {
-            return null;
+            return (null,
+                $"Unknown terminal id '{request.TerminalId}'. " +
+                "Confirm Docker API finished seeding and the Terminal ID matches the database.");
         }
 
-        User? administrator = await _context.Users
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .Include(user => user.Role)
-            .SingleOrDefaultAsync(
-                user =>
-                    user.TenantId == terminal.TenantId
-                    && user.Username == request.AdminUsername
-                    && user.IsActive,
-                cancellationToken);
-        if (administrator is null
-            || !IsMasterPortalRole(administrator.Role.RoleName)
-            || !CryptoHelper.VerifyPassword(
-                request.AdminPassword,
-                administrator.PasswordHash))
+        if (!terminal.IsActive)
         {
-            return null;
+            if (!AllowDevRepair())
+            {
+                return (null, $"Terminal '{request.TerminalId}' is inactive.");
+            }
+
+            terminal.IsActive = true;
+        }
+
+        // Prefer user on this terminal's tenant (Master login ignores tenant and can pick another row).
+        List<User> adminMatches = await _context.Users
+            .IgnoreQueryFilters()
+            .Include(user => user.Role)
+            .Where(user => user.IsActive && user.Username.ToLower() == username.ToLower())
+            .ToListAsync(cancellationToken);
+
+        User? administrator =
+            adminMatches.FirstOrDefault(u => u.TenantId == terminal.TenantId)
+            ?? adminMatches.FirstOrDefault(u => u.TenantId == TenantDefaults.MasterTenantId)
+            ?? adminMatches.FirstOrDefault();
+
+        if (administrator is null)
+        {
+            return (null,
+                $"No active user '{username}'. " +
+                "Rebuild API (`docker compose up --build`) so PilotDataSeeder seeds admin.");
+        }
+
+        if (!CryptoHelper.VerifyPassword(request.AdminPassword, administrator.PasswordHash))
+        {
+            return (null,
+                "Admin password incorrect. Use the exact same password that works on Master portal " +
+                "(pilot default: admin / admin123).");
+        }
+
+        if (!IsMasterPortalRole(administrator.Role?.RoleName))
+        {
+            return (null,
+                $"User '{username}' role is '{administrator.Role?.RoleName ?? "(none)"}' — " +
+                "Owner/Manager required for enrollment.");
+        }
+
+        if (administrator.TenantId != terminal.TenantId)
+        {
+            if (!AllowDevRepair())
+            {
+                return (null,
+                    $"User '{username}' store ({administrator.TenantId}) does not match terminal store " +
+                    $"({terminal.TenantId}).");
+            }
+
+            // Common after restoring backup.sql onto a new machine / Docker volume.
+            terminal.TenantId = administrator.TenantId;
+        }
+
+        if (_context.ChangeTracker.HasChanges())
+        {
+            await _context.SaveChangesAsync(cancellationToken);
         }
 
         DateTimeOffset issuedAt = DateTimeOffset.UtcNow;
@@ -81,7 +124,8 @@ public sealed class EnrollmentService(
         if (rsa.KeySize < MinimumRsaKeySize)
         {
             throw new InvalidOperationException(
-                $"Enrollment signing key must be at least {MinimumRsaKeySize} bits.");
+                $"Enrollment signing key must be at least {MinimumRsaKeySize} bits. " +
+                "Delete WebPos/dev-secrets/ and restart the API, or run scripts/Generate-PilotEnv.ps1.");
         }
 
         Claim[] claims =
@@ -109,14 +153,30 @@ public sealed class EnrollmentService(
         string serializedToken =
             new JwtSecurityTokenHandler().WriteToken(token);
 
-        return new EnrollmentCertificateDto
+        return (new EnrollmentCertificateDto
         {
             Token = serializedToken,
             TenantId = terminal.TenantId,
             TerminalId = terminal.Id,
             ExpiresAtUtc = expiresAt
-        };
+        }, null);
     }
+
+    public async Task<EnrollmentCertificateDto?> EnrollAsync(
+        EnrollTerminalRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        (EnrollmentCertificateDto? certificate, _) =
+            await TryEnrollAsync(request, cancellationToken);
+        return certificate;
+    }
+
+    private bool AllowDevRepair() =>
+        _configuration.GetValue("Security:AllowInsecureDevDefaults", false)
+        || string.Equals(
+            Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
+            "Development",
+            StringComparison.OrdinalIgnoreCase);
 
     private static bool IsMasterPortalRole(string? roleName) =>
         string.Equals(roleName, "Owner", StringComparison.OrdinalIgnoreCase)

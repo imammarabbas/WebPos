@@ -35,6 +35,16 @@ public sealed class ApiClient : IApiClient
             cancellationToken);
     }
 
+    public Task<EnrollmentPublicKeyDto> GetEnrollmentPublicKeyAsync(
+        CancellationToken cancellationToken = default)
+    {
+        return SendAsync<EnrollmentPublicKeyDto>(
+            HttpMethod.Get,
+            "api/terminal-enrollment/public-key",
+            content: null,
+            cancellationToken);
+    }
+
     public Task<CashierDto> LoginAsync(
         string pin,
         CancellationToken cancellationToken = default)
