@@ -71,7 +71,7 @@ public sealed class EnrollmentCertificateValidatorTests
             DateTime.UtcNow.AddMinutes(-1),
             DateTime.UtcNow.AddHours(1),
             new SigningCredentials(
-                new RsaSecurityKey(rsa),
+                new RsaSecurityKey(rsa.ExportParameters(includePrivateParameters: true)),
                 SecurityAlgorithms.RsaSha256));
 
         return new JwtSecurityTokenHandler().WriteToken(token);

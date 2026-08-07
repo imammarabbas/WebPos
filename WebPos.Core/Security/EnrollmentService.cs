@@ -128,6 +128,10 @@ public sealed class EnrollmentService(
                 "Delete WebPos/dev-secrets/ and restart the API, or run scripts/Generate-PilotEnv.ps1.");
         }
 
+        // Export parameters so signing does not depend on the disposable RSA instance
+        // (avoids ObjectDisposedException / RSAOpenSsl under Linux Docker).
+        RsaSecurityKey signingKey = new(rsa.ExportParameters(includePrivateParameters: true));
+
         Claim[] claims =
         [
             new(
@@ -148,7 +152,7 @@ public sealed class EnrollmentService(
             notBefore: issuedAt.UtcDateTime,
             expires: expiresAt.UtcDateTime,
             signingCredentials: new SigningCredentials(
-                new RsaSecurityKey(rsa),
+                signingKey,
                 SecurityAlgorithms.RsaSha256));
         string serializedToken =
             new JwtSecurityTokenHandler().WriteToken(token);
