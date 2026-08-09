@@ -1,6 +1,7 @@
 using FluentValidation;
 using FluentValidation.Results;
 using Microsoft.EntityFrameworkCore;
+using WebPos.Core;
 using WebPos.Core.Abstractions;
 using WebPos.Core.Constants;
 using WebPos.Core.Data;
@@ -187,10 +188,22 @@ public sealed class PurchaseService : IPurchaseService
 
             List<Guid> batchIds = [];
             DateTimeOffset now = DateTimeOffset.UtcNow;
+            List<Guid> productIds = order.Items.Select(i => i.ProductId).Distinct().ToList();
+            Dictionary<Guid, Product> products = await _context.Products
+                .IgnoreQueryFilters()
+                .Where(p => productIds.Contains(p.Id))
+                .ToDictionaryAsync(p => p.Id, ct);
 
             foreach (PurchaseItem item in order.Items.OrderBy(i => i.Id))
             {
-                decimal stockQty = item.QuantityReceived + item.BonusQuantity;
+                int multiplier = 1;
+                if (products.TryGetValue(item.ProductId, out Product? product))
+                {
+                    multiplier = UnitConversion.NormalizeMultiplier(product.ConversionMultiplier);
+                }
+
+                decimal purchaseQty = item.QuantityReceived + item.BonusQuantity;
+                decimal stockQty = UnitConversion.ToStockQty(purchaseQty, multiplier);
                 if (stockQty <= 0)
                 {
                     throw new InvalidOperationException(
@@ -208,8 +221,12 @@ public sealed class PurchaseService : IPurchaseService
                     ProductId = item.ProductId,
                     BatchNumber = batchNumber,
                     ExpiryDate = item.ExpiryDate,
-                    PurchasePricePaisa = item.CostPricePerUnitPaisa,
-                    RetailPricePaisa = item.RetailPricePerUnitPaisa,
+                    PurchasePricePaisa = UnitConversion.ToStockUnitPricePaisa(
+                        item.CostPricePerUnitPaisa,
+                        multiplier),
+                    RetailPricePaisa = UnitConversion.ToStockUnitPricePaisa(
+                        item.RetailPricePerUnitPaisa,
+                        multiplier),
                     InitialQty = stockQty,
                     CurrentQty = stockQty,
                     SupplierId = order.SupplierId,

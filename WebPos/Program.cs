@@ -58,7 +58,7 @@ builder.Services.AddDbContext<WebPosDbContext>(options =>
         builder.Configuration.GetConnectionString("DefaultConnection"),
         npgsql => npgsql.MigrationsAssembly("WebPos")));
 
-// Scoped factory so Blazor layout + page can run concurrent queries without sharing one DbContext.
+// Scoped factory: each CreateDbContext() is a new instance (Blazor-safe concurrent reads).
 builder.Services.AddDbContextFactory<WebPosDbContext>(options =>
     options.UseNpgsql(
         builder.Configuration.GetConnectionString("DefaultConnection"),

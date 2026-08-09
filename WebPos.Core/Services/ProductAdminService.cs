@@ -223,6 +223,7 @@ public sealed class ProductAdminService(
         product.IsLoose = request.IsLoose;
         product.Brand = request.Brand?.Trim() ?? string.Empty;
         product.BaseUnit = string.IsNullOrWhiteSpace(request.BaseUnit) ? "PCS" : request.BaseUnit.Trim();
+        product.PurchaseUnit = request.PurchaseUnit?.Trim() ?? string.Empty;
         product.ConversionMultiplier = request.ConversionMultiplier <= 0 ? 1 : request.ConversionMultiplier;
         product.ShowOnWebshop = request.ShowOnWebshop;
         product.MinStockQty = request.MinStockQty < 0 ? 0 : request.MinStockQty;
@@ -243,6 +244,9 @@ public sealed class ProductAdminService(
             IsLoose = product.IsLoose,
             Brand = product.Brand,
             BaseUnit = product.BaseUnit,
+            PurchaseUnit = string.IsNullOrWhiteSpace(product.PurchaseUnit)
+                ? product.BaseUnit
+                : product.PurchaseUnit,
             ConversionMultiplier = product.ConversionMultiplier,
             ShowOnWebshop = product.ShowOnWebshop,
             MinStockQty = product.MinStockQty,

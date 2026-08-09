@@ -9,7 +9,7 @@
 @inject ICategoryService CategoryService
 @inject NavigationManager Navigation
 
-<PageTitle>Products · Copenhagen Mart</PageTitle>
+<PageTitle>Products · Cone Mart</PageTitle>
 
 <div class="mm-page">
     <div class="mm-page-header">
@@ -106,11 +106,20 @@
                         </InputSelect>
                     </div>
                     <div class="mm-field">
-                        <label for="p-unit">Base unit</label>
-                        <InputText id="p-unit" @bind-Value="_form.BaseUnit" />
+                        <label for="p-sale-unit">Sale unit (stock)</label>
+                        <InputText id="p-sale-unit" @bind-Value="_form.BaseUnit" placeholder="g, PCS, L…" />
                     </div>
                     <div class="mm-field">
-                        <label for="p-min">Min stock qty</label>
+                        <label for="p-buy-unit">Purchase unit</label>
+                        <InputText id="p-buy-unit" @bind-Value="_form.PurchaseUnit" placeholder="kg (optional)" />
+                    </div>
+                    <div class="mm-field">
+                        <label for="p-conv">Sale units per 1 purchase unit</label>
+                        <InputNumber id="p-conv" @bind-Value="_form.ConversionMultiplier" />
+                        <small class="text-muted">e.g. buy kg, sell g → 1000</small>
+                    </div>
+                    <div class="mm-field">
+                        <label for="p-min">Min stock qty (sale units)</label>
                         <InputNumber id="p-min" @bind-Value="_form.MinStockQty" />
                     </div>
                     <div class="mm-check full">
@@ -242,6 +251,8 @@
             Brand = p.Brand,
             CategoryId = p.CategoryId?.ToString() ?? string.Empty,
             BaseUnit = p.BaseUnit,
+            PurchaseUnit = p.PurchaseUnit,
+            ConversionMultiplier = p.ConversionMultiplier <= 0 ? 1 : p.ConversionMultiplier,
             MinStockQty = p.MinStockQty,
             IsLoose = p.IsLoose
         };
@@ -280,6 +291,8 @@
                 Brand = _form.Brand.Trim(),
                 CategoryId = categoryId,
                 BaseUnit = string.IsNullOrWhiteSpace(_form.BaseUnit) ? "PCS" : _form.BaseUnit.Trim(),
+                PurchaseUnit = _form.PurchaseUnit?.Trim() ?? string.Empty,
+                ConversionMultiplier = _form.ConversionMultiplier <= 0 ? 1 : _form.ConversionMultiplier,
                 MinStockQty = _form.MinStockQty,
                 IsLoose = _form.IsLoose,
                 OpeningStockQty = _editingId is null ? _form.OpeningStockQty : null,
@@ -321,6 +334,8 @@
         public string Brand { get; set; } = string.Empty;
         public string CategoryId { get; set; } = string.Empty;
         public string BaseUnit { get; set; } = "PCS";
+        public string PurchaseUnit { get; set; } = string.Empty;
+        public int ConversionMultiplier { get; set; } = 1;
         public decimal MinStockQty { get; set; } = 10m;
         public bool IsLoose { get; set; }
         public decimal? OpeningStockQty { get; set; }

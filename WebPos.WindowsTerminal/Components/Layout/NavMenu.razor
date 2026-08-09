@@ -1,4 +1,4 @@
-ï»¿@implements IDisposable
+@implements IDisposable
 @inject ISessionService SessionService
 @inject LoginApiClient Login
 @inject ShiftStatusApiClient ShiftStatus
@@ -7,7 +7,7 @@
 <div class="sidebar-shell">
     <div class="sidebar-brand">
         <span class="brand-kicker">TERMINAL POS</span>
-        <a class="navbar-brand" href="sales">Copenhagen Mart</a>
+        <a class="navbar-brand" href="sales">Cone Mart</a>
         <span class="role-badge">
             <span class="online-dot @(ShiftStatus.IsApiOnline ? "on" : "off")"></span>
             ROLE: CASHIER
@@ -53,7 +53,7 @@
             </div>
             <div class="stat-row">
                 <span>Shift</span>
-                <strong>@(SessionService.IsActive ? $"OPEN Â· {ShiftLabel}" : "â€”")</strong>
+                <strong>@(SessionService.IsActive ? $"OPEN · {ShiftLabel}" : "—")</strong>
             </div>
             <div class="stat-row">
                 <span>Terminal</span>
@@ -68,7 +68,7 @@
         <div class="cashier-avatar">@CashierInitials</div>
         <div class="cashier-meta">
             <strong>@CashierDisplayName</strong>
-            <span>Cashier Â· Copenhagen</span>
+            <span>Cashier · Copenhagen</span>
         </div>
         <button type="button"
                 class="logout-btn"
@@ -89,7 +89,7 @@
     private string ShiftLabel =>
         SessionService.OpenedAt is DateTimeOffset opened
             ? opened.ToLocalTime().ToString("HH:mm")
-            : "â€”";
+            : "—";
 
     private string CashierInitials
     {

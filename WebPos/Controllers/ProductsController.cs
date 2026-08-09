@@ -97,6 +97,7 @@ public sealed class ProductsController(
                 ShortCode = batch.Product.ShortCode,
                 CategoryName = batch.Product.Category != null ? batch.Product.Category.Name : string.Empty,
                 IsLoose = batch.Product.IsLoose,
+                BaseUnit = batch.Product.BaseUnit,
                 UnitPricePaisa = batch.RetailPricePaisa,
                 AvailableStock = batch.CurrentQty,
                 ExpiryDate = batch.ExpiryDate
@@ -126,6 +127,7 @@ public sealed class ProductsController(
                 p.Barcode,
                 p.ShortCode,
                 p.IsLoose,
+                p.BaseUnit,
                 CategoryName = p.Category != null ? p.Category.Name : string.Empty,
                 AvailableStock = p.Batches.Sum(b => (decimal?)b.CurrentQty) ?? 0m,
                 Latest = p.Batches
@@ -154,6 +156,7 @@ public sealed class ProductsController(
                 ShortCode = p.ShortCode,
                 CategoryName = p.CategoryName,
                 IsLoose = p.IsLoose,
+                BaseUnit = p.BaseUnit,
                 // Prefer last retail; fall back to last cost so intake has a non-zero hint.
                 UnitPricePaisa = p.Latest is null
                     ? 0L
@@ -180,6 +183,7 @@ public sealed class ProductsController(
             IsLoose = p.IsLoose,
             Brand = p.Brand,
             BaseUnit = p.BaseUnit,
+            PurchaseUnit = p.PurchaseUnit,
             ConversionMultiplier = p.ConversionMultiplier,
             ShowOnWebshop = p.ShowOnWebshop,
             MinStockQty = p.MinStockQty

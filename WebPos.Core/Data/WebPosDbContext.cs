@@ -238,6 +238,7 @@ public class WebPosDbContext : DbContext
 
         entity.Property(e => e.Id).HasColumnName("id");
         entity.Property(e => e.Name).HasColumnName("name").HasMaxLength(100).IsRequired();
+        entity.Property(e => e.PosDisplayName).HasColumnName("pos_display_name").HasMaxLength(100).IsRequired().HasDefaultValue(string.Empty);
         entity.Property(e => e.Slug).HasColumnName("slug").HasMaxLength(100).IsRequired();
         entity.Property(e => e.IsActive).HasColumnName("is_active").IsRequired();
         entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
@@ -583,6 +584,7 @@ public class WebPosDbContext : DbContext
         entity.Property(e => e.IsLoose).HasColumnName("is_loose").IsRequired().HasDefaultValue(false);
         entity.Property(e => e.Brand).HasColumnName("brand").HasMaxLength(100);
         entity.Property(e => e.BaseUnit).HasColumnName("base_unit").HasMaxLength(20).IsRequired();
+        entity.Property(e => e.PurchaseUnit).HasColumnName("purchase_unit").HasMaxLength(20).IsRequired().HasDefaultValue(string.Empty);
         entity.Property(e => e.ConversionMultiplier).HasColumnName("conversion_multiplier").IsRequired();
         entity.Property(e => e.ShowOnWebshop).HasColumnName("show_on_webshop").IsRequired();
         entity.Property(e => e.MinStockQty).HasColumnName("min_stock_qty").HasPrecision(18, 3).IsRequired().HasDefaultValue(10m);

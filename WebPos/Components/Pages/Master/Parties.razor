@@ -16,7 +16,7 @@
 @inject NavigationManager Navigation
 @inject IJSRuntime Js
 
-<PageTitle>Payments &amp; Ledgers · Copenhagen Mart</PageTitle>
+<PageTitle>Payments &amp; Ledgers · Cone Mart</PageTitle>
 
 <div class="mm-page pp-page">
     <div class="mm-page-header">
@@ -920,7 +920,7 @@
             $"Opening: Rs {FormatRs(_dashboard.OpeningBalancePaisa)}%0A" +
             $"Paid: Rs {FormatRs(_dashboard.PaidPaisa)}%0A" +
             $"Closing: Rs {FormatRs(_dashboard.ClosingBalancePaisa)}%0A" +
-            $"— Copenhagen Mart";
+            $"— Cone Mart";
         string url = string.IsNullOrWhiteSpace(phone)
             ? $"https://wa.me/?text={text}"
             : $"https://wa.me/{phone}?text={text}";

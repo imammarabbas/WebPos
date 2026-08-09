@@ -18,8 +18,13 @@ public sealed class UpsertProductRequest
 
     public string Brand { get; init; } = string.Empty;
 
+    /// <summary>Sale / stock unit (e.g. g).</summary>
     public string BaseUnit { get; init; } = "PCS";
 
+    /// <summary>Purchase unit (e.g. kg). Empty = same as sale unit.</summary>
+    public string PurchaseUnit { get; init; } = string.Empty;
+
+    /// <summary>Sale units per 1 purchase unit (e.g. 1000 for kg→g).</summary>
     public int ConversionMultiplier { get; init; } = 1;
 
     public bool ShowOnWebshop { get; init; }
@@ -55,6 +60,8 @@ public sealed class ProductAdminDto
     public required string Brand { get; init; }
 
     public required string BaseUnit { get; init; }
+
+    public required string PurchaseUnit { get; init; }
 
     public int ConversionMultiplier { get; init; }
 

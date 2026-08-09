@@ -23,6 +23,9 @@ public sealed class SalesProductDto
 
     public bool IsLoose { get; init; }
 
+    /// <summary>Sale / stock unit label (e.g. g).</summary>
+    public string BaseUnit { get; init; } = string.Empty;
+
     public long UnitPricePaisa { get; init; }
 
     public decimal AvailableStock { get; init; }

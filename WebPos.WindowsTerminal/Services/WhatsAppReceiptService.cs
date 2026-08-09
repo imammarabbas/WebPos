@@ -17,7 +17,7 @@ public sealed class WhatsAppReceiptService
         ArgumentNullException.ThrowIfNull(lines);
 
         StringBuilder body = new();
-        body.AppendLine($"{TerminalBranding.StoreName} — Receipt");
+        body.AppendLine($"{TerminalBranding.PosDisplayName} — Receipt");
         body.AppendLine($"Invoice: {sale.InvoiceNo}");
         body.AppendLine($"Payment: {paymentLabel}");
         if (!string.IsNullOrWhiteSpace(onlineTxnRef))

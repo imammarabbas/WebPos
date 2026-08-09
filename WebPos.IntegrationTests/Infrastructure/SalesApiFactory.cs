@@ -35,7 +35,9 @@ public sealed class SalesApiFactory : WebApplicationFactory<Program>
                     "MDEyMzQ1Njc4OUFCQ0RFRjAxMjM0NTY3ODlBQkNERUY=",
                 [TestEnrollmentAuth.PrivateKeyPemConfigKey] = _enrollmentKeys.PrivateKeyPem,
                 [TestEnrollmentAuth.PublicKeyPemConfigKey] = _enrollmentKeys.PublicKeyPem,
-                ["Security:Jwt:Key"] = "integration-test-jwt-signing-key-material-0123456789"
+                ["Security:Jwt:Key"] = "integration-test-jwt-signing-key-material-0123456789",
+                // Allow enroll to rebind terminal tenant after restore-style mismatches.
+                ["Security:AllowInsecureDevDefaults"] = "true"
             });
         });
 

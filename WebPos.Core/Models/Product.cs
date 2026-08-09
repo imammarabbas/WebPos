@@ -22,8 +22,16 @@ public class Product : BaseEntity
 
     public string Brand { get; set; } = string.Empty;
 
+    /// <summary>Unit used when selling / counting stock (e.g. g, ml, PCS).</summary>
     public string BaseUnit { get; set; } = string.Empty;
 
+    /// <summary>Unit used when receiving purchases (e.g. kg). Empty = same as <see cref="BaseUnit"/>.</summary>
+    public string PurchaseUnit { get; set; } = string.Empty;
+
+    /// <summary>
+    /// How many <see cref="BaseUnit"/> stock units equal 1 <see cref="PurchaseUnit"/>
+    /// (e.g. 1000 when buying kg and selling g).
+    /// </summary>
     public int ConversionMultiplier { get; set; }
 
     public bool ShowOnWebshop { get; set; }

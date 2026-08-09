@@ -27,11 +27,26 @@ public sealed class StoreStatusService(
             s => s.Status == "OPEN",
             cancellationToken);
 
+        var tenant = await context.Tenants
+            .AsNoTracking()
+            .Where(t => t.Id == _tenantService.TenantId)
+            .Select(t => new { t.Name, t.PosDisplayName })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        string storeName = string.IsNullOrWhiteSpace(tenant?.Name)
+            ? Seeding.PilotDataSeeder.StoreName
+            : tenant!.Name;
+        string posName = string.IsNullOrWhiteSpace(tenant?.PosDisplayName)
+            ? storeName
+            : tenant!.PosDisplayName;
+
         return new StoreStatusDto
         {
             TillOpen = openShiftCount > 0,
             ApiOnline = true,
-            OpenShiftCount = openShiftCount
+            OpenShiftCount = openShiftCount,
+            StoreName = storeName,
+            PosDisplayName = posName
         };
     }
 }

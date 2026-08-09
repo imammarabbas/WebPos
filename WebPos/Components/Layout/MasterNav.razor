@@ -1,0 +1,393 @@
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Components.Authorization
+@using WebPos.Core.Abstractions
+@using WebPos.Core.Services
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IMasterOverviewService OverviewService
+@inject IStoreStatusService StoreStatusService
+@inject ICircuitTenantContext CircuitTenantContext
+
+<aside class="mm-nav-duo" aria-label="Master navigation">
+    <nav class="mm-rail" aria-label="Primary">
+        <div class="mm-rail-brand" aria-hidden="true">TP</div>
+
+        @foreach (NavSection section in Sections)
+        {
+            string sectionId = section.Id;
+            bool active = string.Equals(_sectionId, sectionId, StringComparison.Ordinal);
+            <button type="button"
+                    class="mm-rail-item @(active ? "active" : null)"
+                    @onclick="@(() => SelectSectionAsync(sectionId))">
+                <span class="mm-rail-ico" aria-hidden="true">@((MarkupString)section.IconSvg)</span>
+                <span class="mm-rail-label">@section.Title</span>
+            </button>
+        }
+
+        <div class="mm-rail-spacer"></div>
+        <div class="mm-rail-foot" aria-hidden="true">@_initials</div>
+    </nav>
+
+    <div class="mm-subnav">
+        <div class="mm-subnav-title">@ActiveSection.Title</div>
+        <nav class="mm-subnav-links" aria-label="@ActiveSection.Title">
+            @foreach (NavChild child in ActiveSection.Children)
+            {
+                string href = child.Href;
+                bool childActive = IsChildActive(child);
+                <a class="mm-subnav-link @(childActive ? "active" : null)"
+                   href="@href"
+                   @onclick="@(() => NavigateChild(href))"
+                   @onclick:preventDefault>
+                    <span class="mm-nav-ico" aria-hidden="true">@((MarkupString)child.IconSvg)</span>
+                    <span class="mm-subnav-text">@child.Label</span>
+                    @if (child.ShowLowStockBadge && _overview?.LowStockCount > 0)
+                    {
+                        <span class="mm-nav-badge">@_overview.LowStockCount pending</span>
+                    }
+                </a>
+            }
+        </nav>
+
+        <div class="mm-sidebar-bottom">
+            <div class="mm-status-card mm-cash-card">
+                <div class="mm-status-title">Cash Position</div>
+                <div class="mm-cash-value">Rs @FormatRs(_overview?.TodayRevenuePaisa ?? 0)</div>
+                <div class="mm-status-row compact">
+                    <span class="mm-dot @(_storeStatus?.ApiOnline == true ? "online" : "offline")"></span>
+                    <span>@(_storeStatus?.ApiOnline == true ? "Online" : "Offline")</span>
+                    <span class="mm-status-sep">·</span>
+                    <span>Till @(_storeStatus?.TillOpen == true ? "open" : "closed")</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</aside>
+
+@code {
+    private static readonly TimeSpan StatusPollInterval = TimeSpan.FromSeconds(30);
+
+    private static readonly string IconCart =
+        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h8.8a2 2 0 0 0 2-1.5L22 8H7"/></svg>""";
+    private static readonly string IconBox =
+        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg>""";
+    private static readonly string IconPeople =
+        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>""";
+    private static readonly string IconWallet =
+        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M20 7H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><circle cx="16" cy="14" r="1.25"/></svg>""";
+    private static readonly string IconChart =
+        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 17V10"/><path d="M12 17V7"/><path d="M16 17v-4"/></svg>""";
+    private static readonly string IconGear =
+        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>""";
+    private static readonly string IconTag =
+        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><circle cx="7" cy="7" r="1.25"/></svg>""";
+    private static readonly string IconStar =
+        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 2l2.4 7.2H22l-6 4.8 2.3 7L12 16.8 5.7 21l2.3-7-6-4.8h7.6L12 2z"/></svg>""";
+    private static readonly string IconReceipt =
+        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M9 5h6"/><path d="M9 3h6a2 2 0 0 1 2 2v14l-5-2-5 2V5a2 2 0 0 1 2-2z"/></svg>""";
+    private static readonly string IconCard =
+        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>""";
+    private static readonly string IconCash =
+        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>""";
+    private static readonly string IconClock =
+        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>""";
+    private static readonly string IconDash =
+        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>""";
+
+    private static readonly NavSection[] Sections =
+    [
+        new("sell", "Sell", IconCart,
+        [
+            new("Dashboard", "/master", true, IconDash),
+            new("Purchases", "/master/purchases", false, IconCart),
+            new("Shifts", "/master/shifts", false, IconClock)
+        ]),
+        new("catalog", "Catalog", IconBox,
+        [
+            new("Products", "/master/products", false, IconBox, ShowLowStockBadge: true),
+            new("Categories", "/master/categories", false, IconTag),
+            new("Brands", "/master/brands", false, IconStar)
+        ]),
+        new("parties", "Parties", IconPeople,
+        [
+            new("Parties", "/master/parties", false, IconPeople)
+        ]),
+        new("finance", "Finance", IconWallet,
+        [
+            new("Expenses", "/master/expenses", false, IconReceipt),
+            new("Customer Payments", "/master/parties?role=CUSTOMER", false, IconCard),
+            new("Supplier Payments", "/master/parties?role=SUPPLIER", false, IconCard),
+            new("Cash Management", "/master/cash", false, IconCash)
+        ]),
+        new("reports", "Reports", IconChart,
+        [
+            new("Reports", "/master/reports", false, IconChart),
+            new("Analytics", "/master/profitability", false, IconChart)
+        ]),
+        new("admin", "Admin", IconGear,
+        [
+            new("Users & Roles", "/admin/users", false, IconPeople),
+            new("Store Settings", "/master/settings", false, IconGear)
+        ])
+    ];
+
+    private string _initials = "U";
+    private MasterOverviewDto? _overview;
+    private StoreStatusDto? _storeStatus;
+    private PeriodicTimer? _statusTimer;
+    private CancellationTokenSource? _statusCts;
+    private Task? _statusPollTask;
+    private string _sectionId = "sell";
+
+    private NavSection ActiveSection =>
+        Sections.FirstOrDefault(s => s.Id == _sectionId) ?? Sections[0];
+
+    protected override async Task OnInitializedAsync()
+    {
+        SyncSectionFromUri();
+        Navigation.LocationChanged += OnLocationChanged;
+
+        AuthenticationState state = await AuthStateProvider.GetAuthenticationStateAsync();
+        _initials = GetInitials(state.User.Identity?.Name ?? "User");
+        BindCircuitTenant(state.User);
+
+        try
+        {
+            _overview = await OverviewService.GetOverviewAsync();
+            _storeStatus = new StoreStatusDto
+            {
+                TillOpen = _overview.TillOpen,
+                ApiOnline = _overview.ApiOnline,
+                OpenShiftCount = _overview.TillOpen ? 1 : 0,
+                StoreName = string.Empty,
+                PosDisplayName = string.Empty
+            };
+        }
+        catch
+        {
+            _overview = null;
+            _storeStatus = null;
+        }
+
+        StartStatusPolling();
+    }
+
+    private void BindCircuitTenant(ClaimsPrincipal user)
+    {
+        string? tid = user.FindFirst(HttpContextTenantService.JwtTenantClaimType)?.Value
+            ?? user.FindFirst(HttpContextTenantService.TenantClaimType)?.Value;
+        if (Guid.TryParse(tid, out Guid tenantId) && tenantId != Guid.Empty)
+        {
+            CircuitTenantContext.TenantId = tenantId;
+        }
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        SyncSectionFromUri();
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void SyncSectionFromUri()
+    {
+        string path = new Uri(Navigation.Uri).AbsolutePath;
+        string query = new Uri(Navigation.Uri).Query;
+
+        if (path.StartsWith("/admin", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/master/settings", StringComparison.OrdinalIgnoreCase))
+        {
+            _sectionId = "admin";
+            return;
+        }
+
+        if (path.StartsWith("/master/products", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/master/categories", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/master/brands", StringComparison.OrdinalIgnoreCase))
+        {
+            _sectionId = "catalog";
+            return;
+        }
+
+        if (path.StartsWith("/master/parties", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/master/customers", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/master/suppliers", StringComparison.OrdinalIgnoreCase))
+        {
+            _sectionId = query.Contains("role=", StringComparison.OrdinalIgnoreCase)
+                ? "finance"
+                : "parties";
+            return;
+        }
+
+        if (path.StartsWith("/master/cash", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/master/expenses", StringComparison.OrdinalIgnoreCase))
+        {
+            _sectionId = "finance";
+            return;
+        }
+
+        if (path.StartsWith("/master/reports", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/master/profitability", StringComparison.OrdinalIgnoreCase))
+        {
+            _sectionId = "reports";
+            return;
+        }
+
+        _sectionId = "sell";
+    }
+
+    private bool IsChildActive(NavChild child)
+    {
+        Uri current = new(Navigation.Uri);
+        string path = current.AbsolutePath.TrimEnd('/');
+        if (string.IsNullOrEmpty(path))
+        {
+            path = "/";
+        }
+
+        string[] parts = child.Href.Split('?', 2);
+        string targetPath = parts[0].TrimEnd('/');
+        if (string.IsNullOrEmpty(targetPath))
+        {
+            targetPath = "/";
+        }
+
+        string? targetQuery = parts.Length > 1 ? parts[1] : null;
+        string currentQuery = current.Query.TrimStart('?');
+
+        if (child.Exact)
+        {
+            return string.Equals(path, targetPath, StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrEmpty(targetQuery);
+        }
+
+        if (!path.StartsWith(targetPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrEmpty(targetQuery))
+        {
+            // Prefer exact/no-role party list over Finance payment query links.
+            if (string.Equals(targetPath, "/master/parties", StringComparison.OrdinalIgnoreCase)
+                && currentQuery.Contains("role=", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        return currentQuery.Contains(targetQuery, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void NavigateChild(string href) => Navigation.NavigateTo(href);
+
+    private async Task SelectSectionAsync(string sectionId)
+    {
+        NavSection? section = Sections.FirstOrDefault(s => s.Id == sectionId);
+        if (section is null)
+        {
+            return;
+        }
+
+        _sectionId = sectionId;
+        await InvokeAsync(StateHasChanged);
+
+        NavChild first = section.Children[0];
+        if (!IsChildActive(first))
+        {
+            Navigation.NavigateTo(first.Href);
+        }
+    }
+
+    private void StartStatusPolling()
+    {
+        _statusCts = new CancellationTokenSource();
+        _statusTimer = new PeriodicTimer(StatusPollInterval);
+        _statusPollTask = PollStoreStatusAsync(_statusCts.Token);
+    }
+
+    private async Task PollStoreStatusAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (await _statusTimer!.WaitForNextTickAsync(cancellationToken))
+            {
+                try
+                {
+                    _storeStatus = await StoreStatusService.GetStatusAsync(cancellationToken);
+                    await InvokeAsync(StateHasChanged);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch
+                {
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+        if (_statusCts is not null)
+        {
+            await _statusCts.CancelAsync();
+        }
+
+        _statusTimer?.Dispose();
+        if (_statusPollTask is not null)
+        {
+            try
+            {
+                await _statusPollTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        _statusCts?.Dispose();
+    }
+
+    private static string GetInitials(string name)
+    {
+        string[] parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0)
+        {
+            return "U";
+        }
+
+        if (parts.Length == 1)
+        {
+            return parts[0].Length >= 2
+                ? parts[0][..2].ToUpperInvariant()
+                : parts[0].ToUpperInvariant();
+        }
+
+        return $"{char.ToUpperInvariant(parts[0][0])}{char.ToUpperInvariant(parts[^1][0])}";
+    }
+
+    private static string FormatRs(long paisa) =>
+        (paisa / 100m).ToString("N0");
+
+    private sealed record NavChild(
+        string Label,
+        string Href,
+        bool Exact,
+        string IconSvg,
+        bool ShowLowStockBadge = false);
+
+    private sealed record NavSection(
+        string Id,
+        string Title,
+        string IconSvg,
+        NavChild[] Children);
+}

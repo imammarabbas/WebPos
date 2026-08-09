@@ -1,0 +1,103 @@
+@page "/master/settings"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using WebPos.Core.Abstractions
+@inject IStoreBrandingService BrandingService
+@inject NavigationManager Navigation
+
+<PageTitle>Store Settings · @_storeName</PageTitle>
+
+<div class="mm-page">
+    <header class="mm-page-header">
+        <div>
+            <h1>Store settings</h1>
+            <p>Change the Master store name and the name shown on POS terminals / receipts.</p>
+        </div>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="mm-alert mm-alert-danger" role="alert">@_error</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(_ok))
+    {
+        <div class="mm-alert mm-alert-ok" role="status">@_ok</div>
+    }
+
+    <section class="mm-card" style="max-width: 32rem;">
+        <EditForm Model="_form" OnValidSubmit="SaveAsync">
+            <div class="mm-field">
+                <label for="store-name">Store name (Master)</label>
+                <InputText id="store-name" @bind-Value="_form.StoreName" class="form-control" />
+            </div>
+            <div class="mm-field">
+                <label for="pos-name">POS display name</label>
+                <InputText id="pos-name" @bind-Value="_form.PosDisplayName" class="form-control" />
+                <small class="text-muted">Shown on the Windows Terminal header and receipts. Leave blank to match store name.</small>
+            </div>
+            <button class="mm-btn" type="submit" disabled="@_busy">
+                @(_busy ? "Saving…" : "Save")
+            </button>
+        </EditForm>
+    </section>
+</div>
+
+@code {
+    private string _storeName = "Cone Mart";
+    private string? _error;
+    private string? _ok;
+    private bool _busy;
+    private BrandingForm _form = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            StoreBrandingDto branding = await BrandingService.GetAsync();
+            _storeName = branding.StoreName;
+            _form.StoreName = branding.StoreName;
+            _form.PosDisplayName = branding.PosDisplayName;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _error = null;
+        _ok = null;
+        _busy = true;
+        try
+        {
+            StoreBrandingDto updated = await BrandingService.UpdateAsync(new UpdateStoreBrandingRequest
+            {
+                StoreName = _form.StoreName,
+                PosDisplayName = string.IsNullOrWhiteSpace(_form.PosDisplayName)
+                    ? null
+                    : _form.PosDisplayName
+            });
+            _storeName = updated.StoreName;
+            _form.StoreName = updated.StoreName;
+            _form.PosDisplayName = updated.PosDisplayName;
+            _ok = "Store branding saved. Refresh other open Master tabs to see the new name.";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private sealed class BrandingForm
+    {
+        public string StoreName { get; set; } = "Cone Mart";
+        public string PosDisplayName { get; set; } = "Cone Mart";
+    }
+}

@@ -3,6 +3,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using Common.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using WebPos.Client.Sdk.Security;
 using WebPos.Core.Data;
@@ -14,7 +15,8 @@ namespace WebPos.Core.Security;
 public sealed class EnrollmentService(
     WebPosDbContext context,
     IKeyProvider keyProvider,
-    IConfiguration configuration)
+    IConfiguration configuration,
+    ILogger<EnrollmentService> logger)
 {
     private const int MinimumRsaKeySize = 3072;
     private const int DefaultLifetimeDays = 365;
@@ -25,6 +27,8 @@ public sealed class EnrollmentService(
         keyProvider ?? throw new ArgumentNullException(nameof(keyProvider));
     private readonly IConfiguration _configuration =
         configuration ?? throw new ArgumentNullException(nameof(configuration));
+    private readonly ILogger<EnrollmentService> _logger =
+        logger ?? throw new ArgumentNullException(nameof(logger));
 
     public async Task<(EnrollmentCertificateDto? Certificate, string? FailureReason)> TryEnrollAsync(
         EnrollTerminalRequest request,
@@ -59,40 +63,65 @@ public sealed class EnrollmentService(
             }
 
             terminal.IsActive = true;
+            _logger.LogWarning(
+                "Reactivated inactive terminal {TerminalId} for enrollment.",
+                terminal.Id);
         }
 
-        // Prefer user on this terminal's tenant (Master login ignores tenant and can pick another row).
+        // Multiple "admin" rows can exist after a DB restore. Match by password,
+        // then prefer terminal tenant → master tenant → any.
         List<User> adminMatches = await _context.Users
             .IgnoreQueryFilters()
             .Include(user => user.Role)
             .Where(user => user.IsActive && user.Username.ToLower() == username.ToLower())
             .ToListAsync(cancellationToken);
 
-        User? administrator =
-            adminMatches.FirstOrDefault(u => u.TenantId == terminal.TenantId)
-            ?? adminMatches.FirstOrDefault(u => u.TenantId == TenantDefaults.MasterTenantId)
-            ?? adminMatches.FirstOrDefault();
-
-        if (administrator is null)
+        if (adminMatches.Count == 0)
         {
+            _logger.LogWarning(
+                "Admin user '{Username}' not found in terminal tenant {TenantId} or master tenant {MasterTenantId}.",
+                username,
+                terminal.TenantId,
+                TenantDefaults.MasterTenantId);
             return (null,
                 $"No active user '{username}'. " +
                 "Rebuild API (`docker compose up --build`) so PilotDataSeeder seeds admin.");
         }
 
-        if (!CryptoHelper.VerifyPassword(request.AdminPassword, administrator.PasswordHash))
+        List<User> passwordMatches = adminMatches
+            .Where(u => CryptoHelper.VerifyPassword(request.AdminPassword, u.PasswordHash))
+            .ToList();
+
+        if (passwordMatches.Count == 0)
         {
+            _logger.LogWarning(
+                "Password verification failed for admin user '{Username}' ({CandidateCount} candidate row(s)).",
+                username,
+                adminMatches.Count);
             return (null,
                 "Admin password incorrect. Use the exact same password that works on Master portal " +
                 "(pilot default: admin / admin123).");
         }
 
-        if (!IsMasterPortalRole(administrator.Role?.RoleName))
+        List<User> roleMatches = passwordMatches
+            .Where(u => IsMasterPortalRole(u.Role?.RoleName))
+            .ToList();
+
+        if (roleMatches.Count == 0)
         {
+            _logger.LogWarning(
+                "User '{Username}' password matched but none of {Count} row(s) have Owner/Manager role.",
+                username,
+                passwordMatches.Count);
             return (null,
-                $"User '{username}' role is '{administrator.Role?.RoleName ?? "(none)"}' — " +
-                "Owner/Manager required for enrollment.");
+                $"User '{username}' authenticated but is not Owner/Manager — " +
+                "those roles are required for enrollment.");
         }
+
+        User administrator =
+            roleMatches.FirstOrDefault(u => u.TenantId == terminal.TenantId)
+            ?? roleMatches.FirstOrDefault(u => u.TenantId == TenantDefaults.MasterTenantId)
+            ?? roleMatches[0];
 
         if (administrator.TenantId != terminal.TenantId)
         {
@@ -103,7 +132,12 @@ public sealed class EnrollmentService(
                     $"({terminal.TenantId}).");
             }
 
-            // Common after restoring backup.sql onto a new machine / Docker volume.
+            _logger.LogWarning(
+                "Rebinding terminal {TerminalId} from tenant {OldTenantId} to admin user '{Username}' tenant {NewTenantId}.",
+                terminal.Id,
+                terminal.TenantId,
+                username,
+                administrator.TenantId);
             terminal.TenantId = administrator.TenantId;
         }
 

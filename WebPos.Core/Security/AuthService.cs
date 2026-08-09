@@ -23,24 +23,15 @@ public class AuthService
             return null;
         }
 
-        User? user = await _context.Users
+        string normalized = username.Trim();
+        List<User> candidates = await _context.Users
             .IgnoreQueryFilters()
             .AsNoTracking()
             .Include(u => u.Role)
-            .FirstOrDefaultAsync(
-                u => u.Username == username && u.IsActive,
-                cancellationToken);
+            .Where(u => u.IsActive && u.Username.ToLower() == normalized.ToLower())
+            .ToListAsync(cancellationToken);
 
-        if (user is null)
-        {
-            return null;
-        }
-
-        if (!CryptoHelper.VerifyPassword(password, user.PasswordHash))
-        {
-            return null;
-        }
-
-        return user;
+        return candidates.FirstOrDefault(u =>
+            CryptoHelper.VerifyPassword(password, u.PasswordHash));
     }
 }

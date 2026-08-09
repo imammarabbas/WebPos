@@ -1,0 +1,216 @@
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Components.Authorization
+@using WebPos.Core.Abstractions
+@using WebPos.Core.Security
+@using WebPos.Core.Services
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IStoreBrandingService BrandingService
+@inject ICircuitTenantContext CircuitTenantContext
+
+<header class="mm-topbar">
+    <div class="mm-brand">
+        <div class="mm-logo" aria-hidden="true">TP</div>
+        <div class="mm-brand-text">
+            <div class="mm-brand-title">POS Master · @_storeName</div>
+            <div class="mm-brand-sub">MASTER DATA • v2.4.1</div>
+        </div>
+    </div>
+
+    <form class="mm-search" @onsubmit="HandleSearch" @onsubmit:preventDefault>
+        <input type="search"
+               class="mm-search-input"
+               placeholder="Search anything..."
+               @bind="_searchText"
+               @bind:event="oninput"
+               aria-label="Search anything" />
+    </form>
+
+    <div class="mm-top-actions">
+        <div class="mm-new-wrap">
+            <button type="button" class="mm-new-btn" @onclick="ToggleNewMenu" aria-expanded="@_newOpen">
+                + New
+            </button>
+            @if (_newOpen)
+            {
+                <div class="mm-new-menu" @onclick:stopPropagation>
+                    <a href="/master/products?new=1" @onclick="CloseNewMenu">Product</a>
+                    <a href="/master/parties?role=CUSTOMER&new=1" @onclick="CloseNewMenu">Customer</a>
+                    <a href="/master/parties?role=SUPPLIER&new=1" @onclick="CloseNewMenu">Supplier</a>
+                    <a href="/master/purchases?new=1" @onclick="CloseNewMenu">Purchase</a>
+                    <a href="/master/expenses" @onclick="CloseNewMenu">Expense</a>
+                </div>
+            }
+        </div>
+        <div class="mm-profile-wrap">
+            <button type="button"
+                    class="mm-avatar"
+                    title="@_displayName"
+                    aria-expanded="@_profileOpen"
+                    @onclick="ToggleProfileMenu">
+                @_initials
+            </button>
+            @if (_profileOpen)
+            {
+                <div class="mm-profile-menu" @onclick:stopPropagation>
+                    <div class="mm-profile-meta">
+                        <strong>@_displayName</strong>
+                        <span>@_roleName</span>
+                    </div>
+                    <button type="button" class="mm-logout-btn" @onclick="LogoutAsync">Logout</button>
+                </div>
+            }
+        </div>
+    </div>
+</header>
+
+@code {
+    private string _searchText = string.Empty;
+    private bool _newOpen;
+    private bool _profileOpen;
+    private string _displayName = "User";
+    private string _roleName = "User";
+    private string _initials = "U";
+    private string _storeName = "Cone Mart";
+
+    protected override async Task OnInitializedAsync()
+    {
+        AuthenticationState state = await AuthStateProvider.GetAuthenticationStateAsync();
+        ClaimsPrincipal user = state.User;
+        _displayName = user.Identity?.Name ?? "User";
+        _roleName = user.FindFirst(ClaimTypes.Role)?.Value ?? "User";
+        _initials = GetInitials(_displayName);
+
+        string? tid = user.FindFirst(HttpContextTenantService.JwtTenantClaimType)?.Value
+            ?? user.FindFirst(HttpContextTenantService.TenantClaimType)?.Value;
+        if (Guid.TryParse(tid, out Guid tenantId) && tenantId != Guid.Empty)
+        {
+            CircuitTenantContext.TenantId = tenantId;
+        }
+
+        try
+        {
+            _storeName = (await BrandingService.GetAsync()).StoreName;
+        }
+        catch
+        {
+            _storeName = "Cone Mart";
+        }
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+    private void ToggleNewMenu()
+    {
+        _newOpen = !_newOpen;
+        if (_newOpen)
+        {
+            _profileOpen = false;
+        }
+    }
+
+    private void ToggleProfileMenu()
+    {
+        _profileOpen = !_profileOpen;
+        if (_profileOpen)
+        {
+            _newOpen = false;
+        }
+    }
+
+    private void CloseNewMenu() => _newOpen = false;
+
+    private async Task LogoutAsync()
+    {
+        _profileOpen = false;
+        CircuitTenantContext.TenantId = null;
+        if (AuthStateProvider is PosAuthStateProvider posAuth)
+        {
+            await posAuth.MarkUserAsLoggedOut();
+        }
+
+        Navigation.NavigateTo("/account/logout", forceLoad: true);
+    }
+
+    private void HandleSearch()
+    {
+        string q = _searchText.Trim();
+        if (string.IsNullOrEmpty(q))
+        {
+            return;
+        }
+
+        string lower = q.ToLowerInvariant();
+        string encoded = Uri.EscapeDataString(q);
+
+        if (ContainsAny(lower, "customer", "party", "client"))
+        {
+            Navigation.NavigateTo($"/master/parties?role=CUSTOMER&q={encoded}");
+        }
+        else if (ContainsAny(lower, "supplier", "vendor"))
+        {
+            Navigation.NavigateTo($"/master/parties?role=SUPPLIER&q={encoded}");
+        }
+        else if (ContainsAny(lower, "expense", "overhead", "rent"))
+        {
+            Navigation.NavigateTo("/master/expenses");
+        }
+        else if (ContainsAny(lower, "analytics", "profitability"))
+        {
+            Navigation.NavigateTo("/master/profitability");
+        }
+        else if (ContainsAny(lower, "report", "pnl", "p&l"))
+        {
+            Navigation.NavigateTo("/master/reports");
+        }
+        else if (ContainsAny(lower, "cash"))
+        {
+            Navigation.NavigateTo("/master/cash");
+        }
+        else if (ContainsAny(lower, "categor"))
+        {
+            Navigation.NavigateTo($"/master/categories?q={encoded}");
+        }
+        else if (ContainsAny(lower, "brand"))
+        {
+            Navigation.NavigateTo($"/master/brands?q={encoded}");
+        }
+        else if (ContainsAny(lower, "purchase", "invoice", "po "))
+        {
+            Navigation.NavigateTo($"/master/purchases?q={encoded}");
+        }
+        else if (ContainsAny(lower, "product", "sku", "barcode", "item"))
+        {
+            Navigation.NavigateTo($"/master/products?q={encoded}");
+        }
+        else
+        {
+            Navigation.NavigateTo($"/master/products?q={encoded}");
+        }
+
+        _newOpen = false;
+    }
+
+    private static bool ContainsAny(string haystack, params string[] needles) =>
+        needles.Any(n => haystack.Contains(n, StringComparison.Ordinal));
+
+    private static string GetInitials(string name)
+    {
+        string[] parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0)
+        {
+            return "U";
+        }
+
+        if (parts.Length == 1)
+        {
+            return parts[0].Length >= 2
+                ? parts[0][..2].ToUpperInvariant()
+                : parts[0].ToUpperInvariant();
+        }
+
+        return $"{char.ToUpperInvariant(parts[0][0])}{char.ToUpperInvariant(parts[^1][0])}";
+    }
+}

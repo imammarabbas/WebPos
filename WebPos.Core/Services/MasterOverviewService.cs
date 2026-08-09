@@ -26,77 +26,99 @@ public sealed class MasterOverviewService(
             throw new InvalidOperationException("Tenant context is required for overview.");
         }
 
-        await using WebPosDbContext context = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        OverviewSeed overviewSeed;
+        await using (WebPosDbContext context = await _dbFactory.CreateDbContextAsync(cancellationToken))
+        {
+            List<Product> products = await context.Products
+                .AsNoTracking()
+                .Include(p => p.Batches)
+                .Include(p => p.Category)
+                .Where(p => !p.IsDeleted)
+                .ToListAsync(cancellationToken);
 
-        List<Product> products = await context.Products
-            .AsNoTracking()
-            .Include(p => p.Batches)
-            .Include(p => p.Category)
-            .Where(p => !p.IsDeleted)
-            .ToListAsync(cancellationToken);
+            int customerCount = await context.Parties.CountAsync(
+                p => p.PartyType == PartyTypes.Customer, cancellationToken);
+            int supplierCount = await context.Parties.CountAsync(
+                p => p.PartyType == PartyTypes.Supplier, cancellationToken);
 
-        int customerCount = await context.Parties.CountAsync(
-            p => p.PartyType == PartyTypes.Customer, cancellationToken);
-        int supplierCount = await context.Parties.CountAsync(
-            p => p.PartyType == PartyTypes.Supplier, cancellationToken);
+            List<LowStockItemDto> lowStock = products
+                .Select(p => new
+                {
+                    Product = p,
+                    Stock = p.Batches.Sum(b => b.CurrentQty)
+                })
+                .Where(x => x.Stock < x.Product.MinStockQty)
+                .OrderBy(x => x.Stock)
+                .Take(10)
+                .Select(x => new LowStockItemDto
+                {
+                    ProductId = x.Product.Id,
+                    Name = x.Product.Name,
+                    AvailableStock = x.Stock,
+                    MinStockQty = x.Product.MinStockQty
+                })
+                .ToList();
 
-        List<LowStockItemDto> lowStock = products
-            .Select(p => new
-            {
-                Product = p,
-                Stock = p.Batches.Sum(b => b.CurrentQty)
-            })
-            .Where(x => x.Stock < x.Product.MinStockQty)
-            .OrderBy(x => x.Stock)
-            .Take(10)
-            .Select(x => new LowStockItemDto
-            {
-                ProductId = x.Product.Id,
-                Name = x.Product.Name,
-                AvailableStock = x.Stock,
-                MinStockQty = x.Product.MinStockQty
-            })
-            .ToList();
+            int totalProducts = products.Count;
+            List<CategoryStockDto> byCategory = products
+                .GroupBy(p => p.Category?.Name ?? "Uncategorized")
+                .Select(g => new CategoryStockDto
+                {
+                    CategoryName = g.Key,
+                    ProductCount = g.Count(),
+                    Percent = totalProducts == 0 ? 0 : (int)Math.Round(100.0 * g.Count() / totalProducts)
+                })
+                .OrderByDescending(c => c.ProductCount)
+                .ToList();
 
-        int totalProducts = products.Count;
-        List<CategoryStockDto> byCategory = products
-            .GroupBy(p => p.Category?.Name ?? "Uncategorized")
-            .Select(g => new CategoryStockDto
-            {
-                CategoryName = g.Key,
-                ProductCount = g.Count(),
-                Percent = totalProducts == 0 ? 0 : (int)Math.Round(100.0 * g.Count() / totalProducts)
-            })
-            .OrderByDescending(c => c.ProductCount)
-            .ToList();
+            DateTimeOffset dayStart = DateTimeOffset.UtcNow.Date;
+            DateTimeOffset dayEnd = dayStart.AddDays(1);
+            var todaySales = await context.SalesInvoices
+                .AsNoTracking()
+                .Where(i => i.CreatedAt >= dayStart && i.CreatedAt < dayEnd)
+                .Select(i => i.TotalAmountPaisa)
+                .ToListAsync(cancellationToken);
 
-        DateTimeOffset dayStart = DateTimeOffset.UtcNow.Date;
-        DateTimeOffset dayEnd = dayStart.AddDays(1);
-        var todaySales = await context.SalesInvoices
-            .AsNoTracking()
-            .Where(i => i.CreatedAt >= dayStart && i.CreatedAt < dayEnd)
-            .Select(i => i.TotalAmountPaisa)
-            .ToListAsync(cancellationToken);
+            List<ActivityItemDto> activity = await BuildActivityAsync(context, cancellationToken);
+
+            overviewSeed = new OverviewSeed(
+                totalProducts,
+                customerCount,
+                supplierCount,
+                lowStock,
+                byCategory,
+                todaySales.Sum(),
+                todaySales.Count,
+                activity);
+        }
 
         StoreStatusDto storeStatus = await _storeStatusService.GetStatusAsync(cancellationToken);
 
-        List<ActivityItemDto> activity = await BuildActivityAsync(context, cancellationToken);
-
         return new MasterOverviewDto
         {
-            ProductCount = totalProducts,
-            CustomerCount = customerCount,
-            SupplierCount = supplierCount,
-            LowStockCount = lowStock.Count,
-            TodayRevenuePaisa = todaySales.Sum(),
-            TodayOrderCount = todaySales.Count,
+            ProductCount = overviewSeed.ProductCount,
+            CustomerCount = overviewSeed.CustomerCount,
+            SupplierCount = overviewSeed.SupplierCount,
+            LowStockCount = overviewSeed.LowStock.Count,
+            TodayRevenuePaisa = overviewSeed.TodayRevenuePaisa,
+            TodayOrderCount = overviewSeed.TodayOrderCount,
             TillOpen = storeStatus.TillOpen,
             ApiOnline = storeStatus.ApiOnline,
-            LowStockItems = lowStock,
-            InventoryByCategory = byCategory,
-            RecentActivity = activity
+            LowStockItems = overviewSeed.LowStock,
+            InventoryByCategory = overviewSeed.ByCategory,
+            RecentActivity = overviewSeed.Activity
         };
     }
+
+    private sealed record OverviewSeed(
+        int ProductCount,
+        int CustomerCount,
+        int SupplierCount,
+        List<LowStockItemDto> LowStock,
+        List<CategoryStockDto> ByCategory,
+        long TodayRevenuePaisa,
+        int TodayOrderCount,
+        List<ActivityItemDto> Activity);
 
     private static async Task<List<ActivityItemDto>> BuildActivityAsync(
         WebPosDbContext context,

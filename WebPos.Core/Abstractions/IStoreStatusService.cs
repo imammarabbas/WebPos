@@ -7,6 +7,10 @@ public sealed class StoreStatusDto
     public bool ApiOnline { get; init; } = true;
 
     public int OpenShiftCount { get; init; }
+
+    public string StoreName { get; init; } = string.Empty;
+
+    public string PosDisplayName { get; init; } = string.Empty;
 }
 
 public interface IStoreStatusService

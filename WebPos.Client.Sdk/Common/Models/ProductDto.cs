@@ -20,6 +20,8 @@ public sealed class ProductDto
 
     public required string BaseUnit { get; init; }
 
+    public string PurchaseUnit { get; init; } = string.Empty;
+
     public int ConversionMultiplier { get; init; }
 
     public bool ShowOnWebshop { get; init; }

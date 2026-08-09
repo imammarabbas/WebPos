@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using WebPos.Core;
 using WebPos.Core.Data;
 using WebPos.Core.Entities;
 using WebPos.Core.Models;
@@ -9,11 +10,11 @@ using WebPos.Core.Security;
 namespace WebPos.Core.Seeding;
 
 /// <summary>
-/// One-time pilot identity + Copenhagen Mart catalog seed for go-live.
+/// One-time pilot identity + Cone Mart catalog seed for go-live.
 /// </summary>
 public static class PilotDataSeeder
 {
-    public const string StoreName = "Copenhagen Mart";
+    public const string StoreName = "Cone Mart";
 
     public static readonly Guid PilotTerminalId =
         Guid.Parse("00000000-0000-0000-0000-000000000010");
@@ -88,12 +89,31 @@ public static class PilotDataSeeder
             {
                 Id = masterTenantId,
                 Name = StoreName,
-                Slug = "copenhagen-mart",
+                PosDisplayName = StoreName,
+                Slug = "cone-mart",
                 IsActive = true,
                 CreatedAt = now
             });
             await context.SaveChangesAsync(cancellationToken);
             logger.LogInformation("Seeded master tenant {TenantId} ({StoreName})", masterTenantId, StoreName);
+        }
+        else
+        {
+            Tenant master = await context.Tenants
+                .IgnoreQueryFilters()
+                .SingleAsync(t => t.Id == masterTenantId, cancellationToken);
+            if (string.Equals(master.Name, "Copenhagen Mart", StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrWhiteSpace(master.Name))
+            {
+                master.Name = StoreName;
+                logger.LogInformation("Renamed master tenant store name to {StoreName}.", StoreName);
+            }
+
+            if (string.IsNullOrWhiteSpace(master.PosDisplayName)
+                || string.Equals(master.PosDisplayName, "Copenhagen Mart", StringComparison.OrdinalIgnoreCase))
+            {
+                master.PosDisplayName = string.IsNullOrWhiteSpace(master.Name) ? StoreName : master.Name;
+            }
         }
 
         Role ownerRole = await EnsureRoleAsync(context, masterTenantId, "Owner", now, cancellationToken);
@@ -128,6 +148,17 @@ public static class PilotDataSeeder
             logger,
             "Seeded manager user admin. Change Pilot:AdminPassword / Pilot:ManagerPin before production use.",
             cancellationToken);
+
+        if (ShouldForceResetPilotCredentials(configuration))
+        {
+            await DeactivateDuplicateWebUsersAsync(
+                context,
+                masterTenantId,
+                ["admin", "ammar"],
+                now,
+                logger,
+                cancellationToken);
+        }
 
         await UpsertCashierUserAsync(
             context,
@@ -330,6 +361,42 @@ public static class PilotDataSeeder
         user.UpdatedAt = now;
     }
 
+    /// <summary>
+    /// After restore, orphan admin/ammar rows on non-master tenants confuse enrollment.
+    /// Keep the master-tenant pilot users; deactivate the rest when force-resetting.
+    /// </summary>
+    private static async Task DeactivateDuplicateWebUsersAsync(
+        WebPosDbContext context,
+        Guid masterTenantId,
+        IReadOnlyList<string> usernames,
+        DateTimeOffset now,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        List<string> normalized = usernames
+            .Select(u => u.ToLowerInvariant())
+            .Distinct()
+            .ToList();
+
+        List<User> orphans = await context.Users
+            .IgnoreQueryFilters()
+            .Where(u =>
+                u.IsActive
+                && u.TenantId != masterTenantId
+                && normalized.Contains(u.Username.ToLower()))
+            .ToListAsync(cancellationToken);
+
+        foreach (User orphan in orphans)
+        {
+            orphan.IsActive = false;
+            orphan.UpdatedAt = now;
+            logger.LogWarning(
+                "Deactivated duplicate pilot user {Username} on tenant {TenantId} (keeping master tenant).",
+                orphan.Username,
+                orphan.TenantId);
+        }
+    }
+
     private static bool ShouldForceResetPilotCredentials(IConfiguration configuration) =>
         configuration.GetValue("Pilot:ForceResetPasswords", false)
         || configuration.GetValue("Security:AllowInsecureDevDefaults", false)
@@ -407,6 +474,8 @@ public static class PilotDataSeeder
             shortCode: "1001",
             isLoose: false,
             baseUnit: "L",
+            purchaseUnit: null,
+            conversionMultiplier: 1,
             now,
             cancellationToken);
 
@@ -421,6 +490,8 @@ public static class PilotDataSeeder
             shortCode: "1002",
             isLoose: false,
             baseUnit: "L",
+            purchaseUnit: null,
+            conversionMultiplier: 1,
             now,
             cancellationToken);
 
@@ -434,7 +505,9 @@ public static class PilotDataSeeder
             barcode: "LOOSE-2001",
             shortCode: "2001",
             isLoose: true,
-            baseUnit: "kg",
+            baseUnit: "g",
+            purchaseUnit: "kg",
+            conversionMultiplier: 1000,
             now,
             cancellationToken);
 
@@ -449,6 +522,8 @@ public static class PilotDataSeeder
             shortCode: "2002",
             isLoose: true,
             baseUnit: "pcs",
+            purchaseUnit: null,
+            conversionMultiplier: 1,
             now,
             cancellationToken);
 
@@ -484,9 +559,10 @@ public static class PilotDataSeeder
             BananaBatchId,
             BananaProductId,
             batchNumber: "BAN-PILOT-01",
-            retailPricePaisa: 28_000,
-            costPricePaisa: 22_000,
-            qty: 50m,
+            // Prices in sale units (paisa per gram); 280 Rs/kg ≈ 28 paisa/g.
+            retailPricePaisa: 28,
+            costPricePaisa: 22,
+            qty: 50_000m,
             rack: "PRODUCE-1",
             now,
             cancellationToken);
@@ -588,12 +664,17 @@ public static class PilotDataSeeder
         string shortCode,
         bool isLoose,
         string baseUnit,
+        string? purchaseUnit,
+        int conversionMultiplier,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         Product? existing = await context.Products
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(p => p.Id == productId, cancellationToken);
+
+        string buyUnit = purchaseUnit?.Trim() ?? string.Empty;
+        int multiplier = UnitConversion.NormalizeMultiplier(conversionMultiplier);
 
         if (existing is null)
         {
@@ -609,7 +690,8 @@ public static class PilotDataSeeder
                 IsLoose = isLoose,
                 Brand = StoreName,
                 BaseUnit = baseUnit,
-                ConversionMultiplier = 1,
+                PurchaseUnit = buyUnit,
+                ConversionMultiplier = multiplier,
                 ShowOnWebshop = false,
                 CreatedAt = now,
                 UpdatedAt = now
@@ -624,9 +706,21 @@ public static class PilotDataSeeder
             changed = true;
         }
 
-        if (!string.Equals(existing.ShortCode, shortCode, StringComparison.Ordinal))
+        if (!string.Equals(existing.BaseUnit, baseUnit, StringComparison.Ordinal))
         {
-            existing.ShortCode = shortCode;
+            existing.BaseUnit = baseUnit;
+            changed = true;
+        }
+
+        if (!string.Equals(existing.PurchaseUnit, buyUnit, StringComparison.Ordinal))
+        {
+            existing.PurchaseUnit = buyUnit;
+            changed = true;
+        }
+
+        if (existing.ConversionMultiplier != multiplier)
+        {
+            existing.ConversionMultiplier = multiplier;
             changed = true;
         }
 
@@ -697,9 +791,9 @@ public static class PilotDataSeeder
             Id = PilotCustomerId,
             TenantId = tenantId,
             PartyType = "CUSTOMER",
-            Name = "Copenhagen Mart Regular",
+            Name = "Cone Mart Regular",
             PhoneNumber = "03009998877",
-            Address = "Copenhagen Mart",
+            Address = "Cone Mart",
             CreditLimitPaisa = 500_000,
             CurrentBalancePaisa = 0,
             CreatedAt = now,
