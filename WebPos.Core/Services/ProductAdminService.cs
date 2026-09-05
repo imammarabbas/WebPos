@@ -121,6 +121,28 @@ public sealed class ProductAdminService(
                 ?? throw new KeyNotFoundException("Product was not found.");
 
             ApplyRequest(product, request, sku, barcode, DateTimeOffset.UtcNow);
+
+            if (request.CostPricePaisa is not null || request.RetailPricePaisa is not null)
+            {
+                ProductBatch? latestBatch = await _context.ProductBatches
+                    .Where(b => b.ProductId == productId)
+                    .OrderByDescending(b => b.CreatedAt)
+                    .FirstOrDefaultAsync(ct);
+
+                if (latestBatch is not null)
+                {
+                    if (request.CostPricePaisa is long cost)
+                    {
+                        latestBatch.CostPricePaisa = cost < 0 ? 0 : cost;
+                    }
+
+                    if (request.RetailPricePaisa is long retail)
+                    {
+                        latestBatch.RetailPricePaisa = retail < 0 ? 0 : retail;
+                    }
+                }
+            }
+
             await _context.SaveChangesAsync(ct);
             return await GetAsync(productId, ct);
         }, cancellationToken);
@@ -231,8 +253,13 @@ public sealed class ProductAdminService(
         return product;
     }
 
-    private static ProductAdminDto ToDto(Product product) =>
-        new()
+    private static ProductAdminDto ToDto(Product product)
+    {
+        ProductBatch? latest = product.Batches
+            .OrderByDescending(b => b.CreatedAt)
+            .FirstOrDefault();
+
+        return new ProductAdminDto
         {
             Id = product.Id,
             CategoryId = product.CategoryId,
@@ -250,8 +277,11 @@ public sealed class ProductAdminService(
             ConversionMultiplier = product.ConversionMultiplier,
             ShowOnWebshop = product.ShowOnWebshop,
             MinStockQty = product.MinStockQty,
-            AvailableStock = product.Batches.Sum(b => b.CurrentQty)
+            AvailableStock = product.Batches.Sum(b => b.CurrentQty),
+            LatestCostPricePaisa = latest?.CostPricePaisa ?? 0L,
+            LatestRetailPricePaisa = latest?.RetailPricePaisa ?? 0L
         };
+    }
 
     private void EnsureTenant()
     {

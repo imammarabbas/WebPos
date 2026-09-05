@@ -52,6 +52,11 @@ public sealed class SalesApiClient(
         CancellationToken cancellationToken = default) =>
         ExecuteAsync(() => _apiClient.GetProductsForSaleAsync(cancellationToken));
 
+    public Task<Result<SalesProductDto>> GetProductByBarcodeAsync(
+        string barcode,
+        CancellationToken cancellationToken = default) =>
+        ExecuteAsync(() => _apiClient.GetProductByBarcodeAsync(barcode, cancellationToken));
+
     public Task<Result<IReadOnlyList<SalesProductDto>>> GetProductsForReceiveAsync(
         CancellationToken cancellationToken = default) =>
         ExecuteAsync(() => _apiClient.GetProductsForReceiveAsync(cancellationToken));

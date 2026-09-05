@@ -162,6 +162,51 @@ public sealed class SalesControllerTests
     }
 
     [Fact]
+    public async Task GetProductByBarcode_Should_ReturnSellableBatch()
+    {
+        await using SalesApiFactory factory = new();
+        HttpClient client = factory.CreateClient();
+        SaleSeedData seed = await SeedAsync(factory);
+
+        using HttpResponseMessage response = await ApiTestClient.SendAsync(
+            client,
+            factory,
+            HttpMethod.Get,
+            $"/api/products/by-barcode/{Uri.EscapeDataString(seed.Barcode)}",
+            seed.TenantId,
+            seed.TerminalId);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        SalesProductDto? product =
+            await ApiTestClient.ReadJsonAsync<SalesProductDto>(response, JsonOptions);
+
+        product.Should().NotBeNull();
+        product!.ProductId.Should().Be(seed.ProductId);
+        product.BatchId.Should().Be(seed.BatchId);
+        product.Barcode.Should().Be(seed.Barcode);
+        product.UnitPricePaisa.Should().Be(seed.UnitPricePaisa);
+        product.AvailableStock.Should().Be(10m);
+    }
+
+    [Fact]
+    public async Task GetProductByBarcode_Should_Return404_WhenUnknown()
+    {
+        await using SalesApiFactory factory = new();
+        HttpClient client = factory.CreateClient();
+        SaleSeedData seed = await SeedAsync(factory);
+
+        using HttpResponseMessage response = await ApiTestClient.SendAsync(
+            client,
+            factory,
+            HttpMethod.Get,
+            "/api/products/by-barcode/UNKNOWN-BARCODE-XYZ",
+            seed.TenantId,
+            seed.TerminalId);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
     public async Task ListInvoices_Should_ReturnCompletedSaleForShift()
     {
         await using SalesApiFactory factory = new();
@@ -197,7 +242,7 @@ public sealed class SalesControllerTests
         invoice.PaymentMethod.Should().Be("CASH");
         invoice.ItemCount.Should().Be(1);
         invoice.ReturnedAmountPaisa.Should().Be(0L);
-        invoice.ProductLabels.Should().Contain("1001");
+        invoice.ProductLabels.Should().Contain(seed.ShortCode);
     }
 
     [Fact]
@@ -308,7 +353,7 @@ public sealed class SalesControllerTests
 
         SalesInvoiceSummaryDto invoice = invoices.Should().ContainSingle(
             item => item.InvoiceNo == request.InvoiceNo).Subject;
-        invoice.ProductLabels.Should().Contain("1001");
+        invoice.ProductLabels.Should().Contain(seed.ShortCode);
         invoice.ItemCount.Should().Be(1);
     }
 
@@ -334,7 +379,7 @@ public sealed class SalesControllerTests
             client,
             factory,
             HttpMethod.Get,
-            "/api/sales/invoices/search?product=1001&limit=20",
+            $"/api/sales/invoices/search?product={Uri.EscapeDataString(seed.ShortCode)}&limit=20",
             seed.TenantId,
             seed.TerminalId);
 

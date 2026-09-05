@@ -41,6 +41,10 @@ public interface IApiClient
     Task<IReadOnlyList<SalesProductDto>> GetProductsForSaleAsync(
         CancellationToken cancellationToken = default);
 
+    Task<SalesProductDto> GetProductByBarcodeAsync(
+        string barcode,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<SalesProductDto>> GetProductsForReceiveAsync(
         CancellationToken cancellationToken = default);
 

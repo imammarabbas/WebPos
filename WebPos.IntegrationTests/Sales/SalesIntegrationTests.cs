@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using WebPos.Core.Abstractions;
+using WebPos.Core.Constants;
 using WebPos.Core.Models;
 using WebPos.IntegrationTests.Infrastructure;
 
@@ -227,8 +228,13 @@ public sealed class SalesIntegrationTests
         totalDebits.Should().Be(totalCredits);
 
         // Returned portion nets out: remaining net exposure equals sale - refund.
-        long cashDebit = groupEntries.Where(e => e.AccountCode == "CASH").Sum(e => e.DebitPaisa);
-        long cashCredit = groupEntries.Where(e => e.AccountCode == "CASH").Sum(e => e.CreditPaisa);
+        // Cash sales post to till-specific accounts (CASH:TILL:{terminalId}), not legacy CASH.
+        long cashDebit = groupEntries
+            .Where(e => LedgerAccounts.IsCashAccount(e.AccountCode))
+            .Sum(e => e.DebitPaisa);
+        long cashCredit = groupEntries
+            .Where(e => LedgerAccounts.IsCashAccount(e.AccountCode))
+            .Sum(e => e.CreditPaisa);
         (cashDebit - cashCredit).Should().Be(saleAmountPaisa - refundAmountPaisa);
 
         CashierShift? shift = await assertScope.DbContext.CashierShifts

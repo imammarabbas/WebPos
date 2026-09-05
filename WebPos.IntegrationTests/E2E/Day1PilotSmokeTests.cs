@@ -148,7 +148,8 @@ public sealed class Day1PilotSmokeTests
             .IgnoreQueryFilters()
             .Where(e =>
                 e.TenantId == seed.TenantId
-                && e.AccountCode == LedgerAccounts.Cash)
+                && (e.AccountCode == LedgerAccounts.Cash
+                    || e.AccountCode.StartsWith("CASH:TILL:")))
             .SumAsync(e => e.DebitPaisa - e.CreditPaisa);
         cashNet.Should().BeGreaterThanOrEqualTo(expectedTotal);
 

@@ -70,6 +70,136 @@ public sealed class ProductsController(
         return NoContent();
     }
 
+    /// <summary>
+    /// On-demand barcode lookup for terminals: prefer a sellable batch, else latest batch.
+    /// </summary>
+    [HttpGet("by-barcode/{barcode}")]
+    [ProducesResponseType(typeof(SalesProductDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<SalesProductDto>> GetProductByBarcode(
+        string barcode,
+        CancellationToken cancellationToken)
+    {
+        string normalized = Uri.UnescapeDataString(barcode ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return BadRequest("Barcode is required.");
+        }
+
+        DateOnly today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        var product = await _context.Products
+            .AsNoTracking()
+            .Where(p => !p.IsDeleted && p.Barcode == normalized)
+            .Select(p => new
+            {
+                p.Id,
+                p.Name,
+                p.Sku,
+                p.Barcode,
+                p.ShortCode,
+                p.IsLoose,
+                p.BaseUnit,
+                CategoryName = p.Category != null ? p.Category.Name : string.Empty,
+                Sellable = p.Batches
+                    .Where(b =>
+                        b.CurrentQty > 0
+                        && b.RetailPricePaisa > 0
+                        && (b.ExpiryDate == null || b.ExpiryDate >= today))
+                    .OrderBy(b => b.ExpiryDate)
+                    .ThenBy(b => b.CreatedAt)
+                    .Select(b => new
+                    {
+                        b.Id,
+                        b.BatchNumber,
+                        b.RetailPricePaisa,
+                        b.CurrentQty,
+                        b.ExpiryDate
+                    })
+                    .FirstOrDefault(),
+                Latest = p.Batches
+                    .OrderByDescending(b => b.CreatedAt)
+                    .Select(b => new
+                    {
+                        b.Id,
+                        b.BatchNumber,
+                        b.RetailPricePaisa,
+                        b.CostPricePaisa,
+                        b.CurrentQty,
+                        b.ExpiryDate
+                    })
+                    .FirstOrDefault()
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (product is null)
+        {
+            return NotFound();
+        }
+
+        if (product.Sellable is not null)
+        {
+            return Ok(new SalesProductDto
+            {
+                ProductId = product.Id,
+                BatchId = product.Sellable.Id,
+                BatchNumber = product.Sellable.BatchNumber,
+                Name = product.Name,
+                Sku = product.Sku,
+                Barcode = product.Barcode,
+                ShortCode = product.ShortCode,
+                CategoryName = product.CategoryName,
+                IsLoose = product.IsLoose,
+                BaseUnit = product.BaseUnit,
+                UnitPricePaisa = product.Sellable.RetailPricePaisa,
+                AvailableStock = product.Sellable.CurrentQty,
+                ExpiryDate = product.Sellable.ExpiryDate
+            });
+        }
+
+        if (product.Latest is null)
+        {
+            return Ok(new SalesProductDto
+            {
+                ProductId = product.Id,
+                BatchId = Guid.Empty,
+                BatchNumber = string.Empty,
+                Name = product.Name,
+                Sku = product.Sku,
+                Barcode = product.Barcode,
+                ShortCode = product.ShortCode,
+                CategoryName = product.CategoryName,
+                IsLoose = product.IsLoose,
+                BaseUnit = product.BaseUnit,
+                UnitPricePaisa = 0,
+                AvailableStock = 0,
+                ExpiryDate = null
+            });
+        }
+
+        long unitPrice = product.Latest.RetailPricePaisa > 0
+            ? product.Latest.RetailPricePaisa
+            : product.Latest.CostPricePaisa;
+
+        return Ok(new SalesProductDto
+        {
+            ProductId = product.Id,
+            BatchId = product.Latest.Id,
+            BatchNumber = product.Latest.BatchNumber,
+            Name = product.Name,
+            Sku = product.Sku,
+            Barcode = product.Barcode,
+            ShortCode = product.ShortCode,
+            CategoryName = product.CategoryName,
+            IsLoose = product.IsLoose,
+            BaseUnit = product.BaseUnit,
+            UnitPricePaisa = unitPrice,
+            AvailableStock = product.Latest.CurrentQty,
+            ExpiryDate = product.Latest.ExpiryDate
+        });
+    }
+
     [HttpGet("for-sale")]
     [ProducesResponseType(typeof(IReadOnlyList<SalesProductDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status426UpgradeRequired)]

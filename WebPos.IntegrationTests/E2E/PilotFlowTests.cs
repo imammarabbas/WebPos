@@ -99,14 +99,16 @@ public sealed class PilotFlowTests
             .IgnoreQueryFilters()
             .Where(e =>
                 e.TenantId == seed.TenantId
-                && e.AccountCode == LedgerAccounts.Cash)
+                && (e.AccountCode == LedgerAccounts.Cash
+                    || e.AccountCode.StartsWith("CASH:TILL:")))
             .SumAsync(e => e.DebitPaisa);
 
         long cashCredits = await db.GeneralLedgerEntries
             .IgnoreQueryFilters()
             .Where(e =>
                 e.TenantId == seed.TenantId
-                && e.AccountCode == LedgerAccounts.Cash)
+                && (e.AccountCode == LedgerAccounts.Cash
+                    || e.AccountCode.StartsWith("CASH:TILL:")))
             .SumAsync(e => e.CreditPaisa);
 
         (cashDebits - cashCredits).Should().BeGreaterThanOrEqualTo(30_000);

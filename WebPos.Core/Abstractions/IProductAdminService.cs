@@ -37,6 +37,16 @@ public sealed class UpsertProductRequest
     public long? OpeningRetailPricePaisa { get; init; }
 
     public long? OpeningCostPricePaisa { get; init; }
+
+    /// <summary>
+    /// On update: corrects the latest batch cost (catalog price edit, no GL posting).
+    /// </summary>
+    public long? CostPricePaisa { get; init; }
+
+    /// <summary>
+    /// On update: corrects the latest batch retail (catalog price edit, no GL posting).
+    /// </summary>
+    public long? RetailPricePaisa { get; init; }
 }
 
 public sealed class ProductAdminDto
@@ -70,6 +80,12 @@ public sealed class ProductAdminDto
     public decimal MinStockQty { get; init; }
 
     public decimal AvailableStock { get; init; }
+
+    /// <summary>Latest batch cost in paisa (0 if no batches).</summary>
+    public long LatestCostPricePaisa { get; init; }
+
+    /// <summary>Latest batch retail in paisa (0 if no batches).</summary>
+    public long LatestRetailPricePaisa { get; init; }
 }
 
 public interface IProductAdminService

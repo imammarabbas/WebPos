@@ -30,6 +30,16 @@ public static class SeedHelper
         Guid batchId = Guid.NewGuid();
         string batchNumber = $"BATCH-{batchId:N}"[..20];
         string productName = "Integration Test Product";
+        string barcode = $"BC-{productId:N}"[..20];
+        // Prefer stable "1001" for SalesControllerTests; fall back when already taken
+        // (shared-DB suite seeds would otherwise hit IX_products_tenant_id_short_code).
+        string shortCode = "1001";
+        if (await context.Products.AnyAsync(
+                p => p.TenantId == tenantId && p.ShortCode == shortCode && !p.IsDeleted,
+                cancellationToken))
+        {
+            shortCode = $"{Random.Shared.Next(2000, 9999)}";
+        }
 
         if (!await context.Tenants.AnyAsync(t => t.Id == tenantId, cancellationToken))
         {
@@ -113,8 +123,8 @@ public static class SeedHelper
             TenantId = tenantId,
             Name = productName,
             Sku = $"SKU-{productId:N}"[..20],
-            Barcode = $"BC-{productId:N}"[..20],
-            ShortCode = $"{Random.Shared.Next(2000, 9999)}",
+            Barcode = barcode,
+            ShortCode = shortCode,
             Brand = "TestBrand",
             BaseUnit = "PCS",
             ConversionMultiplier = 1,
@@ -149,6 +159,8 @@ public static class SeedHelper
             SupplierId: supplierId,
             ProductId: productId,
             ProductName: productName,
+            Barcode: barcode,
+            ShortCode: shortCode,
             BatchId: batchId,
             BatchNumber: batchNumber,
             InitialQty: InitialBatchQty,
@@ -164,6 +176,8 @@ public sealed record SaleSeedData(
     Guid SupplierId,
     Guid ProductId,
     string ProductName,
+    string Barcode,
+    string ShortCode,
     Guid BatchId,
     string BatchNumber,
     decimal InitialQty,

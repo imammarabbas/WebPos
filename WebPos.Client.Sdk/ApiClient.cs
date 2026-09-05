@@ -174,6 +174,19 @@ public sealed class ApiClient : IApiClient
             content: null,
             cancellationToken);
 
+    public Task<SalesProductDto> GetProductByBarcodeAsync(
+        string barcode,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(barcode);
+        string encoded = Uri.EscapeDataString(barcode.Trim());
+        return SendAsync<SalesProductDto>(
+            HttpMethod.Get,
+            $"api/products/by-barcode/{encoded}",
+            content: null,
+            cancellationToken);
+    }
+
     public Task<IReadOnlyList<SalesProductDto>> GetProductsForReceiveAsync(
         CancellationToken cancellationToken = default) =>
         SendAsync<IReadOnlyList<SalesProductDto>>(

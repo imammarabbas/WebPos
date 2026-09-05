@@ -235,6 +235,45 @@ public sealed class ApiClientTests
     }
 
     [Fact]
+    public async Task GetProductByBarcodeAsync_ShouldRequestEncodedBarcodePath()
+    {
+        const string responseJson = """
+            {
+              "productId": "11111111-1111-1111-1111-111111111111",
+              "batchId": "22222222-2222-2222-2222-222222222222",
+              "batchNumber": "BATCH-1",
+              "name": "Test Product",
+              "sku": "SKU-1",
+              "barcode": "12 3456",
+              "shortCode": "1001",
+              "categoryName": "Dairy",
+              "isLoose": false,
+              "unitPricePaisa": 15000,
+              "availableStock": 12.5,
+              "expiryDate": "2030-12-31"
+            }
+            """;
+
+        _handlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(request =>
+                    request.Method == HttpMethod.Get
+                    && request.RequestUri == new Uri("http://localhost/api/products/by-barcode/12%203456")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(responseJson, Encoding.UTF8, "application/json")
+            });
+
+        SalesProductDto product = await _apiClient.GetProductByBarcodeAsync("12 3456");
+
+        product.Barcode.Should().Be("12 3456");
+        product.UnitPricePaisa.Should().Be(15_000L);
+    }
+
+    [Fact]
     public async Task SearchInvoicesAsync_ShouldQuerySearchEndpointAndMapProductLabels()
     {
         const string responseJson = """

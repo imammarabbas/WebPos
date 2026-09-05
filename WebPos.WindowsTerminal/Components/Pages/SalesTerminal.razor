@@ -1,6 +1,7 @@
 @page "/sales"
 @using System.Globalization
 @using Common.Models
+@using Microsoft.Extensions.Logging
 @using WebPos.WindowsTerminal
 @using WebPos.WindowsTerminal.Services
 @implements IDisposable
@@ -15,6 +16,7 @@
 @inject LastSaleReceiptStore LastSaleReceiptStore
 @inject CartHoldService CartHoldService
 @inject NavigationManager Navigation
+@inject ILogger<SalesTerminal> Logger
 
 <PageTitle>Cone Mart POS</PageTitle>
 
@@ -511,7 +513,7 @@
 
     private ElementReference _scanInput;
     private ElementReference _customerSearchInput;
-    private IReadOnlyList<SalesProductDto> _products = [];
+    private List<SalesProductDto> _products = [];
     private IReadOnlyList<SalesProductDto> _receiveProducts = [];
     private IReadOnlyList<PartyDto> _customers = [];
     private IReadOnlyList<SalesInvoiceSummaryDto> _recentBills = [];
@@ -666,7 +668,7 @@
 
         if (result.Success && result.Data is not null)
         {
-            _products = result.Data;
+            _products = result.Data.ToList();
             return;
         }
 
@@ -894,18 +896,73 @@
     private async Task AddFromScanAsync()
     {
         _errorMessage = null;
-        SalesProductDto? product = ResolveProductFromScan(_scanText);
+        string scan = _scanText.Trim();
+        SalesProductDto? product = ResolveProductFromScan(scan);
+
+        if (product is null && !string.IsNullOrEmpty(scan))
+        {
+            Result<SalesProductDto> lookup = await SalesApi.GetProductByBarcodeAsync(scan);
+            if (lookup.Success && lookup.Data is not null)
+            {
+                UpsertProductInCache(lookup.Data);
+                product = lookup.Data;
+            }
+            else
+            {
+                Logger.LogWarning(
+                    "Barcode lookup failed for '{Barcode}': {Error}",
+                    scan,
+                    lookup.ErrorMessage);
+            }
+        }
+
         if (product is null)
         {
-            _errorMessage = string.IsNullOrWhiteSpace(_scanText)
-                ? "Enter a short code or scan a barcode."
-                : $"Product not found for '{_scanText.Trim()}'.";
+            if (string.IsNullOrWhiteSpace(scan))
+            {
+                _errorMessage = "Enter a short code or scan a barcode.";
+            }
+            else
+            {
+                _errorMessage = $"Product not found for '{scan}'.";
+                PlayNotFoundBeep();
+            }
+
             return;
         }
 
         AddProductToCart(product);
         _scanText = string.Empty;
         await _scanInput.FocusAsync();
+    }
+
+    private void UpsertProductInCache(SalesProductDto product)
+    {
+        int index = _products.FindIndex(p => p.BatchId == product.BatchId && product.BatchId != Guid.Empty);
+        if (index < 0 && product.BatchId == Guid.Empty)
+        {
+            index = _products.FindIndex(p => p.ProductId == product.ProductId && p.BatchId == Guid.Empty);
+        }
+
+        if (index >= 0)
+        {
+            _products[index] = product;
+            return;
+        }
+
+        _products.Add(product);
+    }
+
+    private static void PlayNotFoundBeep()
+    {
+        try
+        {
+            Console.Beep(880, 160);
+        }
+        catch (Exception)
+        {
+            // Audio may be unavailable on some hosts; text error is enough.
+        }
     }
 
     private void ChangeQty(CartLine line, decimal delta)

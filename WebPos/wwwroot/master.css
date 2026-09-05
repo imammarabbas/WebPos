@@ -369,6 +369,30 @@
     margin: 1.25rem 0;
 }
 
+.mm-margin-widget {
+    display: flex;
+    gap: 1.25rem;
+    align-items: center;
+    padding: 0.65rem 0.85rem;
+    border: 1px solid var(--mm-border);
+    border-radius: 0.5rem;
+    background: #f8fafc;
+}
+
+.mm-margin-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.mm-margin-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--mm-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
 .mm-form-actions {
     display: flex;
     gap: 0.5rem;
