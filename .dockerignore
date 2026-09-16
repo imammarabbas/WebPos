@@ -6,6 +6,8 @@
 **/*.user
 .env
 .env.local
+artifacts/
+**/dev-secrets/
 WebPos/appsettings.Pilot.json
 WebPos/appsettings.Development.Local.json
 WebPos/appsettings.Development.json

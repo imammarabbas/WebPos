@@ -3,7 +3,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: webpos_db
     ports:
       - "5432:5432"
@@ -28,25 +28,31 @@ services:
       DisableHttpsRedirection: "true"
       Security__AllowInsecureDevDefaults: "true"
       DataProtection__KeysPath: /app/dp-keys
-      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=webpos_db;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres}"
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=webpos_db;Username=postgres;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
       Security__PinHashKey: ${SECURITY_PIN_HASH_KEY:-}
-      Security__Jwt__Key: ${SECURITY_JWT_KEY:-dev_jwt_secret_key_must_be_32_chars_min}
+      Security__Jwt__Key: ${SECURITY_JWT_KEY:?Set SECURITY_JWT_KEY in .env (min 32 chars)}
       Security__Enrollment__PrivateKeyPem: ${SECURITY_ENROLLMENT_PRIVATE_KEY_PEM:-}
       Security__Enrollment__PublicKeyPem: ${SECURITY_ENROLLMENT_PUBLIC_KEY_PEM:-}
       Pilot__TerminalId: ${PILOT_TERMINAL_ID:-00000000-0000-0000-0000-000000000010}
-      Pilot__OwnerPassword: ${PILOT_OWNER_PASSWORD:-ammar123}
-      Pilot__AdminPassword: ${PILOT_ADMIN_PASSWORD:-admin123}
-      Pilot__OwnerPin: ${PILOT_OWNER_PIN:-9753}
-      Pilot__ManagerPin: ${PILOT_MANAGER_PIN:-8642}
-      Pilot__CashierPin: ${PILOT_CASHIER_PIN:-2468}
-      Pilot__AbcCashierPin: ${PILOT_ABC_CASHIER_PIN:-1357}
+      Pilot__OwnerPassword: ${PILOT_OWNER_PASSWORD:?Set PILOT_OWNER_PASSWORD in .env}
+      Pilot__AdminPassword: ${PILOT_ADMIN_PASSWORD:?Set PILOT_ADMIN_PASSWORD in .env}
+      Pilot__OwnerPin: ${PILOT_OWNER_PIN:?Set PILOT_OWNER_PIN in .env}
+      Pilot__ManagerPin: ${PILOT_MANAGER_PIN:?Set PILOT_MANAGER_PIN in .env}
+      Pilot__CashierPin: ${PILOT_CASHIER_PIN:?Set PILOT_CASHIER_PIN in .env}
+      Pilot__AbcCashierPin: ${PILOT_ABC_CASHIER_PIN:?Set PILOT_ABC_CASHIER_PIN in .env}
     volumes:
       - webpos_dpkeys:/app/dp-keys
-      # Persist generated enrollment RSA keys across container rebuilds
+      # Persist generated enrollment RSA keys across container rebuilds (gitignored)
       - ./WebPos/dev-secrets:/app/dev-secrets
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
 
 volumes:
   webpos_pgdata:

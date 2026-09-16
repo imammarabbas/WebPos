@@ -26,6 +26,14 @@ WebPos/appsettings.Development.Local.json
 WebPos/dev-secrets/
 scripts/.pilot-api.pid
 
+## Build artifacts / logs / local databases
+artifacts/
+*.log
+logs/
+*.db
+*.sqlite
+*.sqlite3
+
 ## Database dumps / exports (never commit — causes merge conflicts across machines)
 *.sql
 *.sql.bak
