@@ -1,0 +1,183 @@
+@page "/master/account-ledger"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using WebPos.Core.Abstractions
+@inject ICashAccountService CashAccounts
+@inject NavigationManager Navigation
+
+<PageTitle>Account Ledger · Cone Mart</PageTitle>
+
+<div class="mm-page">
+    <div class="mm-page-header">
+        <div>
+            <h1>@(_accountName ?? "Account ledger")</h1>
+            <p>@_accountCode — money in, money out, running balance</p>
+        </div>
+        <a class="mm-btn" href="/master/accounts">← Accounts</a>
+    </div>
+
+    <div class="cm-ledger-presets mm-form-actions">
+        <button type="button" class="mm-btn @(_preset == "today" ? "mm-btn-primary" : null)" @onclick='() => SetPreset("today")'>Today</button>
+        <button type="button" class="mm-btn @(_preset == "7" ? "mm-btn-primary" : null)" @onclick='() => SetPreset("7")'>7D</button>
+        <button type="button" class="mm-btn @(_preset == "30" ? "mm-btn-primary" : null)" @onclick='() => SetPreset("30")'>30D</button>
+        <button type="button" class="mm-btn @(_preset == "custom" ? "mm-btn-primary" : null)" @onclick='() => SetPreset("custom")'>Custom</button>
+    </div>
+
+    @if (_preset == "custom")
+    {
+        <div class="mm-form-grid" style="margin:0.75rem 0;">
+            <div class="mm-field"><label>From</label><InputText type="date" @bind-Value="_fromDate" /></div>
+            <div class="mm-field"><label>To</label><InputText type="date" @bind-Value="_toDate" /></div>
+            <div class="mm-field" style="align-self:end;"><button type="button" class="mm-btn mm-btn-primary" @onclick="LoadAsync">Apply</button></div>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+
+    @if (_ledger is not null)
+    {
+        <div class="cm-kpi-strip" style="margin-bottom:1rem;">
+            <div class="mm-kpi"><div class="mm-kpi-label">Opening</div><div class="mm-kpi-value">Rs @FormatRs(_ledger.OpeningBalancePaisa)</div></div>
+            <div class="mm-kpi"><div class="mm-kpi-label">Total in</div><div class="mm-kpi-value">Rs @FormatRs(_totalIn)</div></div>
+            <div class="mm-kpi"><div class="mm-kpi-label">Total out</div><div class="mm-kpi-value">Rs @FormatRs(_totalOut)</div></div>
+            <div class="mm-kpi"><div class="mm-kpi-label">Closing</div><div class="mm-kpi-value">Rs @FormatRs(_ledger.ClosingBalancePaisa)</div></div>
+        </div>
+    }
+
+    <div class="mm-table-wrap">
+        <table class="mm-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Transaction</th>
+                    <th>Reference</th>
+                    <th>In</th>
+                    <th>Out</th>
+                    <th>Balance</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (_loading)
+                {
+                    <tr><td colspan="6" class="mm-muted">Loading…</td></tr>
+                }
+                else if (_ledger?.Entries.Count == 0)
+                {
+                    <tr><td colspan="6" class="mm-muted">No entries in range.</td></tr>
+                }
+                else if (_ledger is not null)
+                {
+                    @foreach (CashAccountLedgerEntryDto row in _ledger.Entries)
+                    {
+                        <tr>
+                            <td>@row.CreatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td>@row.TransactionType</td>
+                            <td>@row.ReferenceNo @row.ReferenceDetails</td>
+                            <td>@(row.DebitPaisa > 0 ? FormatRs(row.DebitPaisa) : "—")</td>
+                            <td>@(row.CreditPaisa > 0 ? FormatRs(row.CreditPaisa) : "—")</td>
+                            <td>Rs @FormatRs(row.RunningBalancePaisa)</td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "code")]
+    public string? AccountCode { get; set; }
+
+    [SupplyParameterFromQuery(Name = "name")]
+    public string? AccountName { get; set; }
+
+    private string? _accountCode;
+    private string? _accountName;
+    private CashAccountLedgerDto? _ledger;
+    private long _totalIn;
+    private long _totalOut;
+    private string _preset = "30";
+    private string _fromDate = DateTime.Today.AddDays(-30).ToString("yyyy-MM-dd");
+    private string _toDate = DateTime.Today.ToString("yyyy-MM-dd");
+    private bool _loading;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _accountCode = AccountCode;
+        _accountName = AccountName;
+        if (string.IsNullOrWhiteSpace(_accountCode))
+        {
+            Navigation.NavigateTo("/master/accounts");
+            return;
+        }
+
+        ApplyPreset("30");
+        await LoadAsync();
+    }
+
+    private async Task SetPreset(string preset)
+    {
+        _preset = preset;
+        ApplyPreset(preset);
+        if (preset != "custom")
+        {
+            await LoadAsync();
+        }
+    }
+
+    private void ApplyPreset(string preset)
+    {
+        DateTime today = DateTime.Today;
+        switch (preset)
+        {
+            case "today":
+                _fromDate = today.ToString("yyyy-MM-dd");
+                _toDate = today.ToString("yyyy-MM-dd");
+                break;
+            case "7":
+                _fromDate = today.AddDays(-7).ToString("yyyy-MM-dd");
+                _toDate = today.ToString("yyyy-MM-dd");
+                break;
+            default:
+                _fromDate = today.AddDays(-30).ToString("yyyy-MM-dd");
+                _toDate = today.ToString("yyyy-MM-dd");
+                break;
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_accountCode))
+        {
+            return;
+        }
+
+        _loading = true;
+        _error = null;
+        try
+        {
+            DateTimeOffset from = new(DateTime.Parse(_fromDate).Date, TimeSpan.Zero);
+            DateTimeOffset to = new(DateTime.Parse(_toDate).Date.AddDays(1).AddTicks(-1), TimeSpan.Zero);
+            _ledger = await CashAccounts.GetLedgerByAccountCodeAsync(_accountCode, from, to);
+            _totalIn = _ledger.Entries.Sum(e => e.DebitPaisa);
+            _totalOut = _ledger.Entries.Sum(e => e.CreditPaisa);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            _ledger = null;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+}

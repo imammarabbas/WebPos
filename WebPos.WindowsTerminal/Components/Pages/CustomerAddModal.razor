@@ -1,0 +1,135 @@
+@using Common.Models
+@using WebPos.WindowsTerminal.Services
+@inject CustomerApiClient CustomerApi
+
+@if (Visible)
+{
+    <div class="modal-backdrop" @onclick="Close">
+        <div class="sf-modal sf-customer-modal" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="sf-modal-head">
+                <h2>Add Customer · F3</h2>
+                <button type="button" class="link-btn" @onclick="Close">Close</button>
+            </div>
+            <label class="field-label" for="newCustName">Name</label>
+            <input id="newCustName"
+                   class="scan-input"
+                   @ref="_nameInput"
+                   @bind="_name"
+                   @bind:event="oninput"
+                   @onkeydown="OnKeyDown"
+                   disabled="@_busy"
+                   autocomplete="off" />
+            <label class="field-label" for="newCustPhone">Phone</label>
+            <input id="newCustPhone"
+                   class="scan-input"
+                   type="tel"
+                   @bind="_phone"
+                   @bind:event="oninput"
+                   @onkeydown="OnKeyDown"
+                   disabled="@_busy"
+                   autocomplete="off" />
+            <label class="field-label" for="newCustAddr">Address (optional)</label>
+            <input id="newCustAddr"
+                   class="scan-input"
+                   @bind="_address"
+                   @bind:event="oninput"
+                   disabled="@_busy"
+                   autocomplete="off" />
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <p class="field-error" role="alert">@_error</p>
+            }
+            <div class="checkout-actions">
+                <button type="button" class="secondary-btn" disabled="@_busy" @onclick="Close">Cancel</button>
+                <button type="button" class="pay-btn" disabled="@_busy" @onclick="SaveAsync">Save</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<PartyDto> OnCreated { get; set; }
+
+    private ElementReference _nameInput;
+    private string _name = string.Empty;
+    private string _phone = string.Empty;
+    private string _address = string.Empty;
+    private string? _error;
+    private bool _busy;
+    private bool _wasVisible;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Visible && !_wasVisible)
+        {
+            _name = string.Empty;
+            _phone = string.Empty;
+            _address = string.Empty;
+            _error = null;
+        }
+
+        _wasVisible = Visible;
+        await Task.CompletedTask;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Visible)
+        {
+            try { await _nameInput.FocusAsync(); } catch { /* ignore */ }
+        }
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            await Close();
+            return;
+        }
+
+        if (e.Key == "Enter" && !_busy)
+        {
+            await SaveAsync();
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _error = null;
+        if (string.IsNullOrWhiteSpace(_name))
+        {
+            _error = "Name is required.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_phone))
+        {
+            _error = "Phone is required.";
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            Result<PartyDto> result = await CustomerApi.CreateCustomerAsync(_name, _phone, _address);
+            if (!result.Success || result.Data is null)
+            {
+                _error = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                    ? "Could not create customer."
+                    : result.ErrorMessage;
+                return;
+            }
+
+            await OnCreated.InvokeAsync(result.Data);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task Close() => await OnClose.InvokeAsync();
+}

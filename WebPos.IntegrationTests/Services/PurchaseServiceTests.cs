@@ -60,9 +60,14 @@ public sealed class PurchaseServiceTests
         order.PaymentStatus.Should().Be("CREDIT");
         order.TenantId.Should().Be(harness.TenantId);
 
+        Product product = await harness.Context.Products
+            .SingleAsync(p => p.Id == productId);
+        product.StockQty.Should().Be(11m);
+        product.CostPricePaisa.Should().Be(100_00);
+
         ProductBatch batch = await harness.Context.ProductBatches
             .SingleAsync(b => b.Id == received.BatchIds[0]);
-        batch.CurrentQty.Should().Be(11m);
+        batch.CurrentQty.Should().Be(0m);
         batch.PurchasePricePaisa.Should().Be(100_00);
         batch.CostPricePaisa.Should().Be(100_00);
         batch.ExpiryDate.Should().NotBeNull();
@@ -149,6 +154,64 @@ public sealed class PurchaseServiceTests
 
         await act.Should().ThrowAsync<ValidationException>()
             .WithMessage("*PurchaseDate*");
+    }
+
+    [Fact]
+    public async Task CreatePurchaseOrderAsync_ShouldAcceptBulkParent()
+    {
+        await using PurchaseHarness harness = await PurchaseHarness.CreateAsync();
+        (Guid receiverId, Guid supplierId, Guid parentId, _) = await harness.SeedBulkCatalogAsync();
+
+        CreatePurchaseOrderResult created = await harness.PurchaseService.CreatePurchaseOrderAsync(
+            new CreatePurchaseRequest
+            {
+                SupplierId = supplierId,
+                ReceiverId = receiverId,
+                SupplierInvoiceNo = "INV-BULK",
+                PurchaseDate = DateTimeOffset.UtcNow,
+                Lines =
+                [
+                    new CreatePurchaseLineRequest
+                    {
+                        ProductId = parentId,
+                        Quantity = 5m,
+                        PurchasePricePaisa = 80_00,
+                        RetailPricePaisa = 0
+                    }
+                ]
+            });
+
+        created.PurchaseOrderId.Should().NotBeEmpty();
+        created.IsReceived.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CreatePurchaseOrderAsync_ShouldRejectChildAlias()
+    {
+        await using PurchaseHarness harness = await PurchaseHarness.CreateAsync();
+        (Guid receiverId, Guid supplierId, _, Guid childId) = await harness.SeedBulkCatalogAsync();
+
+        Func<Task> act = () => harness.PurchaseService.CreatePurchaseOrderAsync(
+            new CreatePurchaseRequest
+            {
+                SupplierId = supplierId,
+                ReceiverId = receiverId,
+                SupplierInvoiceNo = "INV-CHILD",
+                PurchaseDate = DateTimeOffset.UtcNow,
+                Lines =
+                [
+                    new CreatePurchaseLineRequest
+                    {
+                        ProductId = childId,
+                        Quantity = 10m,
+                        PurchasePricePaisa = 20_00,
+                        RetailPricePaisa = 50_00
+                    }
+                ]
+            });
+
+        await act.Should().ThrowAsync<ValidationException>()
+            .WithMessage("*child pack*");
     }
 
     [Fact]
@@ -316,25 +379,28 @@ public sealed class PurchaseServiceTests
             });
             await context.SaveChangesAsync();
 
-            var transactionService = new TransactionService(context);
+            IDbContextFactory<WebPosDbContext> dbFactory =
+                new TestDbContextFactory(options, tenantService);
+            var ambient = new AmbientDbContextAccessor();
+            var transactionService = new TransactionService(dbFactory);
             IPartyLedgerService ledgerService = new PartyLedgerService(
-                context,
+                dbFactory,
                 transactionService,
                 tenantService);
             IValidator<CreatePartyRequest> partyValidator =
-                new CreatePartyRequestValidator(context, tenantService);
+                new CreatePartyRequestValidator(dbFactory, tenantService);
             IPartyService partyService = new PartyService(
-                context,
+                dbFactory,
+                ambient,
                 transactionService,
                 ledgerService,
                 tenantService,
                 partyValidator);
             IProductAdminService productAdminService = new ProductAdminService(
-                context,
-                tenantService,
-                transactionService);
+                dbFactory,
+                tenantService);
             IValidator<CreatePurchaseRequest> purchaseValidator =
-                new CreatePurchaseRequestValidator(context, tenantService);
+                new CreatePurchaseRequestValidator(dbFactory, tenantService);
             HmacPinHasher pinHasher = new(
                 new ConfigurationBuilder()
                     .AddInMemoryCollection(new Dictionary<string, string?>
@@ -343,9 +409,10 @@ public sealed class PurchaseServiceTests
                             "MDEyMzQ1Njc4OUFCQ0RFRjAxMjM0NTY3ODlBQkNERUY="
                     })
                     .Build());
-            LoginService loginService = new(context, pinHasher);
+            LoginService loginService = new(dbFactory, pinHasher);
             IPurchaseService purchaseService = new PurchaseService(
-                context,
+                dbFactory,
+                ambient,
                 transactionService,
                 ledgerService,
                 partyService,
@@ -413,7 +480,54 @@ public sealed class PurchaseServiceTests
             return (receiverId, supplierId, productId);
         }
 
+        public async Task<(Guid ReceiverId, Guid SupplierId, Guid ParentId, Guid ChildId)> SeedBulkCatalogAsync()
+        {
+            (Guid receiverId, Guid supplierId, _) = await SeedCatalogAsync();
+            Guid parentId = Guid.NewGuid();
+            Guid childId = Guid.NewGuid();
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+
+            Context.Products.Add(new Product
+            {
+                Id = parentId,
+                TenantId = TenantId,
+                Name = "White Chana",
+                Sku = $"SKU-{parentId:N}"[..20],
+                Barcode = $"BAR-{parentId:N}"[..20],
+                Brand = "WebPos",
+                BaseUnit = "kg",
+                ConversionMultiplier = 1,
+                IsBulk = true,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            Context.Products.Add(new Product
+            {
+                Id = childId,
+                TenantId = TenantId,
+                Name = "White Chana 50g",
+                Sku = $"SKU-{childId:N}"[..20],
+                Barcode = $"BAR-{childId:N}"[..20],
+                Brand = "WebPos",
+                BaseUnit = "PCS",
+                ConversionMultiplier = 1,
+                ParentProductId = parentId,
+                DeductionMultiplier = 0.05m,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            await Context.SaveChangesAsync();
+            return (receiverId, supplierId, parentId, childId);
+        }
+
         public ValueTask DisposeAsync() => Context.DisposeAsync();
+    }
+
+    private sealed class TestDbContextFactory(
+        DbContextOptions<WebPosDbContext> options,
+        ITenantService tenant) : IDbContextFactory<WebPosDbContext>
+    {
+        public WebPosDbContext CreateDbContext() => new(options, tenant);
     }
 
     private sealed class TestTenantService(Guid tenantId) : ITenantService

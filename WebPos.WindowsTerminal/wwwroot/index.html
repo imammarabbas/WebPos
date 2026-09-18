@@ -7,6 +7,9 @@
     <base href="/" />
     <link rel="stylesheet" href="lib/bootstrap/dist/css/bootstrap.min.css" />
     <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="pos-menu.css" />
+    <link rel="stylesheet" href="pos-subwindow.css" />
+    <link rel="stylesheet" href="po-master.css" />
     <link rel="stylesheet" href="WebPos.WindowsTerminal.styles.css" />
     <link rel="icon" href="data:,">
 </head>
@@ -24,6 +27,67 @@
     </div>
 
     <script src="_framework/blazor.webview.js" autostart="false"></script>
+    <script>
+        window.webPosPreventKeys = function (el, keys) {
+            if (!el) {
+                return;
+            }
+            // Allow re-bind when Blazor replaces the input node.
+            if (el.__webPosPreventKeys) {
+                return;
+            }
+            el.__webPosPreventKeys = true;
+            var set = new Set(keys || []);
+            el.addEventListener('keydown', function (e) {
+                if (set.has(e.key)) {
+                    e.preventDefault();
+                }
+            }, true);
+        };
+
+        window.webPosSelectInput = function (el) {
+            if (!el) {
+                return;
+            }
+            el.focus();
+            if (typeof el.select === 'function') {
+                el.select();
+            }
+        };
+
+        window.webPosFocusById = function (id) {
+            if (!id) {
+                return false;
+            }
+            var el = document.getElementById(id);
+            if (!el || el.disabled) {
+                return false;
+            }
+            el.focus();
+            if (typeof el.select === 'function') {
+                el.select();
+            }
+            return document.activeElement === el;
+        };
+
+        window.webPosPrintReceipt = function (text) {
+            var html = '<!DOCTYPE html><html><head><title>Receipt</title>'
+                + '<style>body{font-family:Consolas,monospace;font-size:12pt;padding:12px;white-space:pre-wrap;}</style>'
+                + '</head><body></body></html>';
+            var w = window.open('', '_blank', 'width=420,height=640');
+            if (!w) {
+                throw new Error('Popup blocked');
+            }
+            w.document.open();
+            w.document.write(html);
+            w.document.close();
+            w.document.body.textContent = text || '';
+            setTimeout(function () {
+                w.focus();
+                w.print();
+            }, 200);
+        };
+    </script>
 
 </body>
 

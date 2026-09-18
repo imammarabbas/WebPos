@@ -113,10 +113,10 @@ public sealed class PilotFlowTests
 
         (cashDebits - cashCredits).Should().BeGreaterThanOrEqualTo(30_000);
 
-        ProductBatch batch = await db.ProductBatches
+        Product product = await db.Products
             .IgnoreQueryFilters()
-            .SingleAsync(b => b.Id == seed.BatchId);
-        batch.CurrentQty.Should().Be(seed.InitialQty - 2m);
+            .SingleAsync(p => p.Id == seed.ProductId);
+        product.StockQty.Should().Be(seed.InitialQty - 2m);
 
         CashierShift closedShift = await db.CashierShifts
             .IgnoreQueryFilters()

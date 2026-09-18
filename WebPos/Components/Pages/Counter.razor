@@ -4,7 +4,7 @@
 @using WebPos.Core.Abstractions
 @using WebPos.Core.Data
 @using WebPos.Core.Models
-@inject WebPosDbContext Context
+@inject IDbContextFactory<WebPosDbContext> DbFactory
 @inject ISalesService SalesService
 
 <PageTitle>POS Counter</PageTitle>
@@ -236,13 +236,15 @@
 
     private async Task LoadInventoryAndCustomersAsync()
     {
-        _customers = await Context.Parties
+        await using WebPosDbContext context = await DbFactory.CreateDbContextAsync();
+
+        _customers = await context.Parties
             .AsNoTracking()
             .Where(p => p.PartyType.ToUpper() == "CUSTOMER")
             .OrderBy(p => p.Name)
             .ToListAsync();
 
-        _availableBatches = await Context.ProductBatches
+        _availableBatches = await context.ProductBatches
             .AsNoTracking()
             .Include(b => b.Product)
             .Where(b => b.CurrentQty > 0)
@@ -253,7 +255,9 @@
 
     private async Task EnsureOperationalContextAsync()
     {
-        CashierShift? openShift = await Context.CashierShifts
+        await using WebPosDbContext context = await DbFactory.CreateDbContextAsync();
+
+        CashierShift? openShift = await context.CashierShifts
             .Where(s => s.Status == "OPEN" && s.ClosedAt == null)
             .OrderByDescending(s => s.OpenedAt)
             .FirstOrDefaultAsync();
@@ -261,14 +265,14 @@
         if (openShift is not null)
         {
             _activeShift = openShift;
-            _activeCashier = await Context.Users.FindAsync(openShift.CashierId);
-            _activeTerminal = await Context.Terminals.FindAsync(openShift.TerminalId);
+            _activeCashier = await context.Users.FindAsync(openShift.CashierId);
+            _activeTerminal = await context.Terminals.FindAsync(openShift.TerminalId);
             return;
         }
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
 
-        Role? cashierRole = await Context.Roles
+        Role? cashierRole = await context.Roles
             .FirstOrDefaultAsync(r => r.RoleName == DefaultRoleName);
 
         if (cashierRole is null)
@@ -279,10 +283,10 @@
                 RoleName = DefaultRoleName,
                 CreatedAt = now
             };
-            Context.Roles.Add(cashierRole);
+            context.Roles.Add(cashierRole);
         }
 
-        User? cashier = await Context.Users
+        User? cashier = await context.Users
             .FirstOrDefaultAsync(u => u.Username == DefaultCashierUsername);
 
         if (cashier is null)
@@ -297,10 +301,10 @@
                 CreatedAt = now,
                 UpdatedAt = now
             };
-            Context.Users.Add(cashier);
+            context.Users.Add(cashier);
         }
 
-        Terminal? terminal = await Context.Terminals
+        Terminal? terminal = await context.Terminals
             .FirstOrDefaultAsync(t => t.TerminalName == DefaultTerminalName);
 
         if (terminal is null)
@@ -313,7 +317,7 @@
                 IsActive = true,
                 LastSyncTime = now
             };
-            Context.Terminals.Add(terminal);
+            context.Terminals.Add(terminal);
         }
 
         openShift = new CashierShift
@@ -329,9 +333,9 @@
             DiscrepancyPaisa = 0,
             Status = "OPEN"
         };
-        Context.CashierShifts.Add(openShift);
+        context.CashierShifts.Add(openShift);
 
-        await Context.SaveChangesAsync();
+        await context.SaveChangesAsync();
 
         _activeShift = openShift;
         _activeCashier = cashier;

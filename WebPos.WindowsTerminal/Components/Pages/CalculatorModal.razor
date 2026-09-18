@@ -1,0 +1,135 @@
+@if (Visible)
+{
+    <div class="modal-backdrop" @onclick="Close">
+        <div class="sf-modal sf-calc-modal" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="sf-modal-head">
+                <h2>Calculator · F1</h2>
+                <button type="button" class="link-btn" @onclick="Close">Close</button>
+            </div>
+            <div class="sf-calc-display" aria-live="polite">@_display</div>
+            <div class="sf-calc-grid">
+                @foreach (string key in Keys)
+                {
+                    <button type="button" class="sf-calc-key @(key is "C" or "=" ? "accent" : null)"
+                            @onclick="() => Press(key)">
+                        @key
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private static readonly string[] Keys =
+    [
+        "7", "8", "9", "/",
+        "4", "5", "6", "*",
+        "1", "2", "3", "-",
+        "0", ".", "C", "+",
+        "="
+    ];
+
+    private string _display = "0";
+    private decimal _acc;
+    private string? _op;
+    private bool _fresh = true;
+    private bool _wasVisible;
+
+    protected override void OnParametersSet()
+    {
+        if (Visible && !_wasVisible)
+        {
+            Reset();
+        }
+
+        _wasVisible = Visible;
+    }
+
+    private void Press(string key)
+    {
+        if (key == "C")
+        {
+            Reset();
+            return;
+        }
+
+        if (key is "+" or "-" or "*" or "/")
+        {
+            ApplyPending();
+            _op = key;
+            _fresh = true;
+            return;
+        }
+
+        if (key == "=")
+        {
+            ApplyPending();
+            _op = null;
+            _fresh = true;
+            return;
+        }
+
+        if (_fresh)
+        {
+            _display = key == "." ? "0." : key;
+            _fresh = false;
+            return;
+        }
+
+        if (key == "." && _display.Contains('.'))
+        {
+            return;
+        }
+
+        if (_display == "0" && key != ".")
+        {
+            _display = key;
+            return;
+        }
+
+        _display += key;
+    }
+
+    private void ApplyPending()
+    {
+        if (!decimal.TryParse(_display, System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture, out decimal current))
+        {
+            return;
+        }
+
+        if (_op is null)
+        {
+            _acc = current;
+            _display = Format(current);
+            return;
+        }
+
+        _acc = _op switch
+        {
+            "+" => _acc + current,
+            "-" => _acc - current,
+            "*" => _acc * current,
+            "/" => current == 0 ? _acc : _acc / current,
+            _ => current
+        };
+        _display = Format(_acc);
+    }
+
+    private void Reset()
+    {
+        _display = "0";
+        _acc = 0;
+        _op = null;
+        _fresh = true;
+    }
+
+    private static string Format(decimal value) =>
+        value.ToString("0.########", System.Globalization.CultureInfo.InvariantCulture);
+
+    private async Task Close() => await OnClose.InvokeAsync();
+}

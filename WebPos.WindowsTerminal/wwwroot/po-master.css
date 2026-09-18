@@ -1,0 +1,509 @@
+/* Purchase Orders Master — page-scoped visual language (list + detail).
+   Keep Master shell/nav unchanged; only style content under .po-page / .pov-page. */
+
+.po-page,
+.pov-page {
+    --po-blue: #1e5bb8;
+    --po-blue-deep: #163f82;
+    --po-blue-soft: #e8f0fb;
+    --po-blue-header: #d6e4f7;
+    --po-text: #1a2b4a;
+    --po-muted: #6b7a90;
+    --po-border: #d5dde8;
+    --po-bg: #eef2f7;
+    --po-card: #ffffff;
+    --po-ok-bg: #e6f6ec;
+    --po-ok: #1a7a45;
+    --po-warn-bg: #fff4e5;
+    --po-warn: #b86a00;
+    --po-radius: 10px;
+    --po-shadow: 0 2px 8px rgba(22, 63, 130, 0.08);
+    /* Shell stays full-bleed so the top bar never shrinks between routes.
+       List/data content uses available width; form/detail uses .po-detail. */
+    width: 100%;
+    max-width: none;
+}
+
+.po-page .po-page-header,
+.pov-page .po-page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.85rem;
+    padding: 0.85rem 1rem;
+    background: var(--po-card);
+    border-radius: var(--po-radius);
+    box-shadow: var(--po-shadow);
+    border: 1px solid var(--po-border);
+}
+
+.po-page-header-left,
+.pov-page-header-left {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+}
+
+.po-icon-tile {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    background: var(--po-blue);
+    color: #fff;
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+}
+
+.po-icon-tile svg {
+    width: 24px;
+    height: 24px;
+}
+
+.po-page-header h1,
+.pov-page-header h1 {
+    margin: 0;
+    font-size: 1.45rem;
+    font-weight: 700;
+    color: var(--po-blue-deep);
+    letter-spacing: -0.01em;
+}
+
+.po-page-header p,
+.pov-page-header p {
+    margin: 0.2rem 0 0;
+    color: var(--po-muted);
+    font-size: 0.9rem;
+}
+
+.po-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    border-radius: 8px;
+    border: 1px solid var(--po-border);
+    background: #fff;
+    color: var(--po-blue-deep);
+    font-size: 0.875rem;
+    font-weight: 600;
+    padding: 0.45rem 0.85rem;
+    text-decoration: none;
+    cursor: pointer;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+.po-btn:hover {
+    background: var(--po-blue-soft);
+}
+
+.po-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.po-btn-primary {
+    background: var(--po-blue);
+    border-color: var(--po-blue);
+    color: #fff;
+}
+
+.po-btn-primary:hover {
+    background: var(--po-blue-deep);
+    border-color: var(--po-blue-deep);
+    color: #fff;
+}
+
+.po-btn-outline {
+    background: #fff;
+    border-color: #9db7dd;
+    color: var(--po-blue);
+}
+
+.po-btn-sm {
+    padding: 0.28rem 0.55rem;
+    font-size: 0.8rem;
+    border-radius: 7px;
+}
+
+.po-card {
+    background: var(--po-card);
+    border: 1px solid var(--po-border);
+    border-radius: var(--po-radius);
+    padding: 0.85rem 1rem;
+    box-shadow: var(--po-shadow);
+}
+
+.po-card + .po-card {
+    margin-top: 0.85rem;
+}
+
+.po-card h2 {
+    margin: 0 0 0.85rem;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--po-text);
+}
+
+.po-filter-row {
+    display: grid;
+    grid-template-columns: minmax(200px, 1.6fr) repeat(2, minmax(130px, 0.85fr)) minmax(120px, 0.7fr) auto;
+    gap: 0.75rem;
+    align-items: end;
+}
+
+@media (max-width: 960px) {
+    .po-filter-row {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+.po-field label {
+    display: block;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--po-muted);
+    margin-bottom: 0.3rem;
+}
+
+.po-field .form-control,
+.po-page .form-control,
+.pov-page .form-control,
+.po-page select.form-control,
+.pov-page select.form-control {
+    border: 1px solid var(--po-border);
+    border-radius: 8px;
+    min-height: 2.35rem;
+    font-size: 0.9rem;
+    color: var(--po-text);
+    background: #fff;
+}
+
+.po-field .form-control:focus,
+.po-page .form-control:focus,
+.pov-page .form-control:focus {
+    border-color: var(--po-blue);
+    box-shadow: 0 0 0 3px rgba(30, 91, 184, 0.15);
+    outline: none;
+}
+
+.po-filter-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.po-table-wrap {
+    border: 1px solid var(--po-border);
+    border-radius: var(--po-radius);
+    overflow: auto;
+    background: #fff;
+}
+
+.po-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+    color: var(--po-text);
+}
+
+.po-table th,
+.po-table td {
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid #e8edf4;
+    vertical-align: middle;
+}
+
+.po-table th {
+    background: var(--po-blue-header);
+    color: var(--po-blue-deep);
+    font-weight: 700;
+    font-size: 0.8rem;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.po-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.po-table tbody tr:hover {
+    background: #f7fafd;
+}
+
+.po-table .po-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.po-table a {
+    color: var(--po-blue);
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.po-table a:hover {
+    text-decoration: underline;
+}
+
+.po-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.65rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.3;
+}
+
+.po-badge-received {
+    background: var(--po-ok-bg);
+    color: var(--po-ok);
+}
+
+.po-badge-open {
+    background: var(--po-warn-bg);
+    color: var(--po-warn);
+}
+
+.po-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.po-pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 0.85rem;
+    flex-wrap: wrap;
+}
+
+.po-pager-meta {
+    font-size: 0.85rem;
+    color: var(--po-muted);
+}
+
+.po-pager-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.po-page-btn {
+    min-width: 2rem;
+    height: 2rem;
+    border-radius: 7px;
+    border: 1px solid var(--po-border);
+    background: #fff;
+    color: var(--po-blue-deep);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.po-page-btn.active {
+    background: var(--po-blue);
+    border-color: var(--po-blue);
+    color: #fff;
+}
+
+.po-page-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+/* Detail */
+.pov-info-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.85rem 1.25rem;
+}
+
+@media (max-width: 800px) {
+    .pov-info-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+.pov-info-item label {
+    display: block;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--po-muted);
+    margin-bottom: 0.25rem;
+}
+
+.pov-info-item .pov-value {
+    font-size: 0.98rem;
+    font-weight: 600;
+    color: var(--po-text);
+}
+
+.pov-summary-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.pov-summary-kpi {
+    background: var(--po-blue-soft);
+    border-radius: 8px;
+    padding: 0.85rem 1rem;
+    border: 1px solid #c5d7ef;
+}
+
+.pov-summary-kpi span {
+    display: block;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--po-muted);
+}
+
+.pov-summary-kpi strong {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 1.25rem;
+    color: var(--po-blue-deep);
+    font-variant-numeric: tabular-nums;
+}
+
+.pov-totals {
+    max-width: 320px;
+    margin-left: auto;
+}
+
+.pov-totals-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.35rem 0;
+    font-size: 0.95rem;
+    color: var(--po-text);
+}
+
+.pov-totals-row.grand {
+    margin-top: 0.35rem;
+    padding-top: 0.65rem;
+    border-top: 2px solid var(--po-blue);
+    font-size: 1.15rem;
+    font-weight: 750;
+    color: var(--po-blue-deep);
+}
+
+.pov-footer-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+    padding-top: 0.25rem;
+}
+
+.po-page .mm-form-grid,
+.pov-page .mm-form-grid {
+    gap: 0.85rem;
+}
+
+.po-page .mm-line-row {
+    border-color: var(--po-border);
+}
+
+/* Terminal modal shell for Purchase Orders */
+.po-modal-backdrop {
+    --po-blue: #1e5bb8;
+    --po-blue-deep: #163f82;
+    --po-blue-soft: #e8f0fb;
+    --po-blue-header: #d6e4f7;
+    --po-text: #1a2b4a;
+    --po-muted: #6b7a90;
+    --po-border: #d5dde8;
+    --po-bg: #eef2f7;
+    --po-card: #ffffff;
+    --po-ok-bg: #e6f6ec;
+    --po-ok: #1a7a45;
+    --po-warn-bg: #fff4e5;
+    --po-warn: #b86a00;
+    --po-radius: 10px;
+    --po-shadow: 0 2px 8px rgba(22, 63, 130, 0.08);
+}
+
+.po-modal-panel {
+    width: min(1600px, 98vw);
+    max-height: min(94vh, 900px);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.85rem 1rem 0.9rem;
+    background: var(--po-bg);
+    border-radius: 12px;
+    box-shadow: 0 16px 48px rgba(15, 23, 42, 0.28);
+    overflow: hidden;
+}
+
+.po-modal-panel .po-page-header {
+    margin-bottom: 0;
+    flex-shrink: 0;
+}
+
+.po-modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow: auto;
+}
+
+.po-modal-panel .po-table-wrap {
+    flex: 1 1 auto;
+    min-height: 12rem;
+}
+
+.po-btn-icon {
+    width: 2.15rem;
+    height: 2.15rem;
+    padding: 0;
+    font-size: 1.1rem;
+    line-height: 1;
+}
+
+.po-alert {
+    padding: 0.55rem 0.75rem;
+    border-radius: 8px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #b91c1c;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+.po-empty {
+    text-align: center;
+    color: var(--po-muted);
+    padding: 2rem 1rem;
+    margin: 0;
+}
+
+.po-page .cpo-ok,
+.po-ok {
+    padding: 0.55rem 0.75rem;
+    border-radius: 8px;
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    color: #047857;
+    font-weight: 650;
+    margin-bottom: 0.75rem;
+}
+
+.page-shell.po-page {
+    background: #eef2f7;
+}

@@ -1,0 +1,41 @@
+.login-card {
+    max-width: 28rem;
+}
+
+.login-card h2 {
+    margin-bottom: 0.25rem;
+}
+
+.login-lead {
+    margin: 0 0 1.1rem;
+    color: #6b7280;
+    font-size: 0.9rem;
+}
+
+.login-card ::deep .mm-field {
+    margin-bottom: 0.9rem;
+}
+
+.login-card ::deep .mm-field input {
+    padding: 0.65rem 0.75rem;
+    font-size: 0.95rem;
+}
+
+.login-submit {
+    width: 100%;
+    margin-top: 0.15rem;
+    padding: 0.7rem 0.85rem;
+    font-size: 0.95rem;
+    border-radius: 0.65rem;
+}
+
+.login-hint {
+    margin: 0.95rem 0 0;
+    color: #6b7280;
+    font-size: 0.82rem;
+}
+
+::deep .mm-subnav-link.is-locked {
+    opacity: 0.55;
+    cursor: default;
+}

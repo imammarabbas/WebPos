@@ -36,11 +36,37 @@ public sealed class AuthController(
         [FromBody] LoginRequest request,
         CancellationToken cancellationToken)
     {
-        CashierDto? cashier = await _loginService.LoginAsync(request.Pin, cancellationToken);
+        CashierDto? cashier = await _loginService.LoginAsync(
+            request.Pin,
+            request.Role,
+            cancellationToken);
         if (cashier is null)
         {
             return Problem(
                 detail: "Invalid cashier PIN.",
+                statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        return Ok(cashier);
+    }
+
+    [HttpPost("login-password")]
+    [EnableRateLimiting("pin-login")]
+    [ProducesResponseType(typeof(CashierDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<ActionResult<CashierDto>> LoginWithPassword(
+        [FromBody] StaffPasswordLoginRequest request,
+        CancellationToken cancellationToken)
+    {
+        CashierDto? cashier = await _loginService.LoginWithPasswordAsync(
+            request.Username,
+            request.Password,
+            cancellationToken);
+        if (cashier is null)
+        {
+            return Problem(
+                detail: "Invalid username or password.",
                 statusCode: StatusCodes.Status401Unauthorized);
         }
 

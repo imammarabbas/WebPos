@@ -1,0 +1,428 @@
+/* Terminal product catalog — matches POS mockup light-blue scheme */
+
+.pc-page {
+    --pc-bg: #eef2f7;
+    --pc-card: #ffffff;
+    --pc-panel: #e8f0fb;
+    --pc-border: #d5dde8;
+    --pc-border-soft: #d5dde8;
+    --pc-text: #1a2b4a;
+    --pc-muted: #6b7a90;
+    --pc-blue: #1e5bb8;
+    --pc-blue-soft: #e8f0fb;
+    --pc-blue-hover: #163f82;
+    --pc-green: #1a7a45;
+    --pc-radius: 10px;
+    background: var(--pc-bg) !important;
+    color: var(--pc-text);
+}
+
+.pc-page .page-header h1 {
+    font-size: 1.55rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.pc-page .page-header .muted {
+    color: var(--pc-muted);
+    font-size: 0.92rem;
+}
+
+.pc-page .link-btn {
+    color: var(--pc-blue);
+    font-weight: 600;
+}
+
+.pc-card {
+    background: var(--pc-card);
+    border: 1px solid var(--pc-border-soft);
+    border-radius: 12px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    padding: 1.1rem 1.15rem;
+    margin-bottom: 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+
+.pc-card-panel {
+    background: var(--pc-panel);
+    border-color: #bfdbfe;
+}
+
+.pc-section-title {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--pc-text);
+}
+
+.pc-kind-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.pc-kind {
+    min-height: 2.35rem;
+    padding: 0.4rem 0.95rem;
+    border-radius: var(--pc-radius);
+    border: 1px solid var(--pc-border);
+    background: #fff;
+    color: var(--pc-text);
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.pc-kind:hover {
+    border-color: #93c5fd;
+    background: #f8fbff;
+}
+
+.pc-kind.active {
+    background: #1e3a5f;
+    border-color: #1e3a5f;
+    color: #fff;
+}
+
+.pc-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    flex: 1;
+    min-width: 0;
+}
+
+.pc-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #334155;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.pc-req {
+    color: #dc2626;
+    font-weight: 700;
+}
+
+.pc-scanner-pill {
+    display: inline-block;
+    background: #111827;
+    color: #fff;
+    border-radius: 999px;
+    padding: 0.12rem 0.55rem;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+
+.pc-input,
+.pc-page .scan-input {
+    width: 100%;
+    min-height: 2.55rem;
+    padding: 0.55rem 0.85rem;
+    border: 1px solid var(--pc-border);
+    border-radius: var(--pc-radius);
+    background: #fff;
+    color: var(--pc-text);
+    font-size: 0.95rem;
+}
+
+.pc-input:focus,
+.pc-page .scan-input:focus {
+    outline: none;
+    border-color: var(--pc-blue);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.pc-barcode {
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    border-color: #86efac;
+    background: #f0fdf4;
+}
+
+.pc-barcode:focus {
+    border-color: var(--pc-green);
+    box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.28);
+    background: #ecfdf5;
+}
+
+.pc-input::placeholder,
+.pc-page .scan-input::placeholder {
+    color: #9ca3af;
+    font-weight: 400;
+}
+
+.pc-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: flex-end;
+}
+
+.pc-row-stretch {
+    align-items: stretch;
+}
+
+.pc-input-action {
+    display: flex;
+    gap: 0.5rem;
+    align-items: stretch;
+    width: 100%;
+}
+
+.pc-input-action .pc-input,
+.pc-input-action .scan-input {
+    flex: 1;
+}
+
+.pc-gen {
+    flex-shrink: 0;
+    min-height: 2.55rem;
+    padding: 0.5rem 1.05rem;
+    border: none;
+    border-radius: var(--pc-radius);
+    background: #111827;
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.9rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.pc-gen:hover:not(:disabled) {
+    background: #000;
+}
+
+.pc-gen:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.pc-gen-sm {
+    flex-shrink: 0;
+    min-width: 2.55rem;
+    min-height: 2.55rem;
+    padding: 0.35rem 0.55rem;
+    border: 1px solid var(--pc-border);
+    border-radius: var(--pc-radius);
+    background: #f3f4f6;
+    color: #111827;
+    font-weight: 700;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+
+.pc-gen-sm:hover:not(:disabled) {
+    background: #e5e7eb;
+    border-color: #9ca3af;
+}
+
+.pc-gen-sm:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.pc-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.pc-chip {
+    min-height: 2.1rem;
+    padding: 0.3rem 0.85rem;
+    border-radius: 999px;
+    border: 1px solid var(--pc-border);
+    background: #fff;
+    color: var(--pc-text);
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.pc-chip:hover {
+    border-color: #93c5fd;
+}
+
+.pc-chip.active {
+    background: var(--pc-blue);
+    border-color: var(--pc-blue);
+    color: #fff;
+}
+
+.pc-hint {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--pc-muted);
+}
+
+.pc-check {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: #334155;
+}
+
+.pc-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    margin-top: 0.35rem;
+    padding-top: 0.35rem;
+}
+
+.pc-btn-cancel {
+    min-height: 2.45rem;
+    padding: 0.45rem 1rem;
+    border-radius: var(--pc-radius);
+    border: 1px solid var(--pc-border);
+    background: #fff;
+    color: var(--pc-text);
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.pc-btn-save {
+    min-height: 2.45rem;
+    padding: 0.45rem 1.15rem;
+    border-radius: var(--pc-radius);
+    border: none;
+    background: var(--pc-blue);
+    color: #fff;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.pc-btn-save:hover:not(:disabled) {
+    background: var(--pc-blue-hover);
+}
+
+.pc-btn-save:disabled,
+.pc-btn-cancel:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+/* Catalog list */
+.pc-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    align-items: center;
+    margin-bottom: 0.85rem;
+}
+
+.pc-search {
+    flex: 1;
+    min-width: 14rem;
+    min-height: 2.45rem;
+    padding: 0.5rem 0.85rem;
+    border: 1px solid var(--pc-border);
+    border-radius: var(--pc-radius);
+    background: #fff;
+}
+
+.pc-search:focus {
+    outline: none;
+    border-color: var(--pc-blue);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.pc-table-wrap {
+    background: var(--pc-card);
+    border: 1px solid var(--pc-border-soft);
+    border-radius: 12px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    overflow: auto;
+}
+
+.pc-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.pc-table th,
+.pc-table td {
+    padding: 0.65rem 0.75rem;
+    border-bottom: 1px solid #eef2f7;
+    text-align: left;
+}
+
+.pc-table thead th {
+    background: var(--pc-blue-soft);
+    color: #1e3a5f;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.pc-table tbody tr:hover {
+    background: #f8fbff;
+}
+
+.pc-pager {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 0.85rem;
+}
+
+.pc-btn-ghost {
+    min-height: 2.25rem;
+    padding: 0.35rem 0.85rem;
+    border-radius: var(--pc-radius);
+    border: 1px solid var(--pc-border);
+    background: #fff;
+    color: var(--pc-text);
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+}
+
+.pc-btn-ghost:hover:not(:disabled) {
+    border-color: #93c5fd;
+    background: var(--pc-blue-soft);
+    color: var(--pc-blue);
+}
+
+.pc-btn-ghost:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.pc-btn-primary-link {
+    min-height: 2.35rem;
+    padding: 0.4rem 0.95rem;
+    border-radius: var(--pc-radius);
+    border: none;
+    background: var(--pc-blue);
+    color: #fff !important;
+    font-weight: 700;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+}
+
+.pc-btn-primary-link:hover {
+    background: var(--pc-blue-hover);
+    color: #fff !important;
+}
+
+@media (max-width: 720px) {
+    .pc-row > .pc-field {
+        flex: 1 1 100%;
+    }
+}

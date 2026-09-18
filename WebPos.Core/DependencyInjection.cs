@@ -16,10 +16,12 @@ public static class DependencyInjection
     {
         ArgumentNullException.ThrowIfNull(services);
 
+        services.AddScoped<IAmbientDbContextAccessor, AmbientDbContextAccessor>();
         services.AddScoped<ITransactionService, TransactionService>();
         services.AddScoped<IPartyLedgerService, PartyLedgerService>();
         services.AddScoped<IPartyService, PartyService>();
         services.AddScoped<IProductAdminService, ProductAdminService>();
+        services.AddScoped<ProductRapidEntryState>();
         services.AddScoped<ICategoryService, CategoryService>();
         services.AddScoped<IMasterOverviewService, MasterOverviewService>();
         services.AddScoped<IStoreStatusService, StoreStatusService>();
@@ -35,6 +37,8 @@ public static class DependencyInjection
         services.AddScoped<ICashAccountService, CashAccountService>();
         services.AddScoped<ICashTransferService, CashTransferService>();
         services.AddScoped<IReportingService, ReportingService>();
+        services.AddScoped<IStockPositionService, StockPositionService>();
+        services.AddScoped<IBusinessPositionService, BusinessPositionService>();
         services.AddScoped<ISyncService, SyncService>();
         services.AddScoped<ICircuitTenantContext, CircuitTenantContext>();
 

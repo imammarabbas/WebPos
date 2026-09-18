@@ -229,6 +229,9 @@ public sealed class BiDashboardTests
             ConversionMultiplier = 1,
             ShowOnWebshop = false,
             MinStockQty = 1m,
+            StockQty = 5m,
+            CostPricePaisa = 5_000L,
+            RetailPricePaisa = 8_000L,
             CreatedAt = now,
             UpdatedAt = now
         });

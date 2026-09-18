@@ -1,0 +1,1135 @@
+@using System.Globalization
+@using System.Text.RegularExpressions
+@using Common.Models
+@using Microsoft.Maui.Storage
+@using WebPos.WindowsTerminal.Services
+@inject ProductAdminApiClient ProductApi
+@inject NavigationManager Navigation
+@inject IJSRuntime Js
+@implements IDisposable
+
+@if (Visible)
+{
+    <div class="modal-backdrop ro-backdrop po-modal-backdrop" @onclick="Minimize">
+        <div class="ro-panel cpo-panel po-modal-panel" role="dialog" aria-modal="true" aria-labelledby="cpo-title" tabindex="0" @onkeydown="OnDialogKeyDown" @onclick:stopPropagation="true">
+            <div class="po-page-header" style="margin-bottom:0;">
+                <div class="po-page-header-left">
+                    <div class="po-icon-tile" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M4 7h16v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7Z" />
+                            <path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                            <path d="M12 11v6M9 14h6" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h1 id="cpo-title">@(IsEditing ? "Edit Purchase Order" : "Purchase Order")</h1>
+                        <p>Scan or search products · edit qty and price in the grid</p>
+                    </div>
+                </div>
+                <div class="po-actions">
+                    <button type="button" class="po-btn po-btn-icon" disabled="@_busy" @onclick="Minimize" title="Minimize">−</button>
+                    <button type="button" class="po-btn po-btn-icon" disabled="@_busy" @onclick="Close" title="Close">✕</button>
+                </div>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <div class="po-alert" role="alert">@_error</div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_success))
+            {
+                <div class="cpo-ok" role="status">@_success</div>
+            }
+
+            <div class="cpo-form">
+                <div class="cpo-meta po-card" style="margin:0;box-shadow:none;">
+                    <label class="cpo-field">
+                        <span>Supplier</span>
+                        <select @bind="_supplierIdText" disabled="@_busy">
+                            <option value="">— Select —</option>
+                            @foreach (PartyDto s in _suppliers)
+                            {
+                                <option value="@s.Id">@s.Name</option>
+                            }
+                        </select>
+                    </label>
+                    <label class="cpo-field">
+                        <span>Purchase Order Nr</span>
+                        <div class="cpo-invoice-row">
+                            <input @bind="_invoiceNo" @bind:event="oninput" disabled="@_busy" placeholder="e.g. 140926-003" />
+                            @if (!IsEditing)
+                            {
+                                <button type="button" class="cpo-auto-btn" disabled="@_busy" @onclick="GenerateInvoiceNoAsync">Auto</button>
+                            }
+                        </div>
+                    </label>
+                    <label class="cpo-field">
+                        <span>Purchase Date</span>
+                        <input type="date" @bind="_purchaseDate" disabled="@_busy" />
+                    </label>
+                    <label class="cpo-field">
+                        <span>Discount (Rs)</span>
+                        <input type="number" step="0.01" min="0" @bind="_discountRs" disabled="@_busy" />
+                    </label>
+                </div>
+
+                <header class="cpo-search-bar">
+                    <div class="cpo-search-wrap">
+                        <input id="cpo-scan"
+                               class="cpo-search-input"
+                               type="search"
+                               autocomplete="off"
+                               placeholder="Scan or type name, SKU, barcode..."
+                               value="@_scanText"
+                               disabled="@_busy"
+                               @oninput="OnScanInput"
+                               @onkeydown="OnScanKeyDown" />
+                        <span class="cpo-search-icon" aria-hidden="true"></span>
+                        @if (_hits.Count > 0 && !string.IsNullOrWhiteSpace(_scanText))
+                        {
+                            <ul class="cpo-suggest-list" role="listbox">
+                                @for (int i = 0; i < _hits.Count; i++)
+                                {
+                                    ProductDto hit = _hits[i];
+                                    int hitIndex = i;
+                                    <li role="option"
+                                        class="@(hitIndex == _highlightIndex ? "active" : null)"
+                                        @onmousedown:preventDefault
+                                        @onclick="() => SelectSuggestion(hit)">
+                                        <strong>@hit.Name</strong>
+                                        <span>
+                                            @(hit.IsBulk ? "Master" : "SKU")
+                                            · @(ItemCodeOf(hit))
+                                            · Rs @FormatRs(hit.RetailPricePaisa)
+                                        </span>
+                                    </li>
+                                }
+                            </ul>
+                        }
+                    </div>
+                    <div class="cpo-qty-chip" title="Line count">
+                        <span>ITEMS</span>
+                        <strong>@_lines.Count</strong>
+                    </div>
+                </header>
+
+                <div class="cpo-grid-wrap">
+                    <table class="cpo-grid-table">
+                        <thead>
+                            <tr>
+                                <th class="col-sr">#</th>
+                                <th class="col-desc">Product</th>
+                                <th class="col-pack">Unit</th>
+                                <th class="col-qty">Quantity</th>
+                                <th class="col-price">Purchase Price (Rs)</th>
+                                <th class="col-price">Retail Price (Rs)</th>
+                                <th class="col-amt">Total Purchase (Rs)</th>
+                                <th class="col-amt">Total Retail (Rs)</th>
+                                <th class="col-act">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @{
+                                int rowCount = Math.Max(8, _lines.Count);
+                                for (int row = 0; row < rowCount; row++)
+                                {
+                                    if (row < _lines.Count)
+                                    {
+                                        int index = row;
+                                        PoLine line = _lines[index];
+                                        decimal purchaseTotal = line.Quantity * line.CostRs;
+                                        decimal retailTotal = line.Quantity * line.RetailRs;
+                                        <tr class="@(row % 2 == 1 ? "zebra" : null)">
+                                            <td class="col-sr">@(index + 1)</td>
+                                            <td class="col-desc" title="@($"{line.ProductName} · {line.ItemCode}")">
+                                                <strong>@line.ProductName</strong>
+                                                <div class="cpo-subcode">@line.ItemCode</div>
+                                            </td>
+                                            <td class="col-pack">@line.Packing</td>
+                                            <td class="col-qty">
+                                                <input id="@($"cpo-qty-{index}")"
+                                                       class="cpo-cell-input"
+                                                       type="text"
+                                                       inputmode="decimal"
+                                                       value="@FormatQty(line.Quantity)"
+                                                       disabled="@_busy"
+                                                       @onchange="e => UpdateQty(index, e)"
+                                                       @onkeydown="e => OnQtyKeyDown(index, e)" />
+                                            </td>
+                                            <td class="col-price">
+                                                <input class="cpo-cell-input"
+                                                       type="text"
+                                                       inputmode="decimal"
+                                                       value="@FormatQty(line.CostRs)"
+                                                       disabled="@_busy"
+                                                       @onchange="e => UpdateCost(index, e)" />
+                                            </td>
+                                            <td class="col-price">
+                                                <input class="cpo-cell-input"
+                                                       type="text"
+                                                       inputmode="decimal"
+                                                       value="@FormatQty(line.RetailRs)"
+                                                       disabled="@_busy"
+                                                       @onchange="e => UpdateRetail(index, e)" />
+                                            </td>
+                                            <td class="col-amt">@purchaseTotal.ToString("N2")</td>
+                                            <td class="col-amt">@retailTotal.ToString("N2")</td>
+                                            <td class="col-act">
+                                                <button type="button" class="cpo-remove" disabled="@_busy" @onclick="() => RemoveLine(index)" title="Remove">✕</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                    else
+                                    {
+                                        <tr class="cpo-empty-row @(row % 2 == 1 ? "zebra" : null)">
+                                            <td class="col-sr"></td>
+                                            <td class="col-desc"></td>
+                                            <td class="col-pack"></td>
+                                            <td class="col-qty"></td>
+                                            <td class="col-price"></td>
+                                            <td class="col-price"></td>
+                                            <td class="col-amt"></td>
+                                            <td class="col-amt"></td>
+                                            <td class="col-act"></td>
+                                        </tr>
+                                    }
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="cpo-totals">
+                    <div class="cpo-tot">
+                        <span>Total Purchase Amount</span>
+                        <strong>@SubTotalRs.ToString("N2")</strong>
+                    </div>
+                    <div class="cpo-tot">
+                        <span>Total Retail Amount</span>
+                        <strong>@RetailTotalRs.ToString("N2")</strong>
+                    </div>
+                    <div class="cpo-tot">
+                        <span>Discount</span>
+                        <strong>@_discountRs.ToString("N2")</strong>
+                    </div>
+                    <div class="cpo-tot">
+                        <span>Items</span>
+                        <strong>@_lines.Count</strong>
+                    </div>
+                    <div class="cpo-tot cpo-tot-grand">
+                        <span>Net Payable</span>
+                        <strong>@GrandTotalRs.ToString("N2")</strong>
+                    </div>
+                </div>
+
+                <label class="cpo-remarks">
+                    <span>Remarks</span>
+                    <input type="text" @bind="_remarks" @bind:event="oninput" disabled="@_busy" placeholder="Optional notes…" />
+                </label>
+
+                <div class="cpo-actions" role="toolbar" aria-label="Purchase order actions">
+                    <button type="button" class="cpo-act" disabled="@_busy" @onclick="NewOrderAsync">
+                        <span class="cpo-act-label">New</span>
+                    </button>
+                    <button type="button" class="cpo-act" disabled="@_busy" @onclick="PrintAsync">
+                        <span class="cpo-act-label">Print</span>
+                    </button>
+                    <button type="button"
+                            class="cpo-act"
+                            disabled="@(_busy || _lines.Count == 0)"
+                            @onclick="ReceiveAsync">
+                        <span class="cpo-act-label">Receive</span>
+                    </button>
+                    <button type="button" class="cpo-act" disabled="@_busy" @onclick="ClearLines">
+                        <span class="cpo-act-label">Clear</span>
+                    </button>
+                    <button type="button"
+                            class="cpo-save"
+                            disabled="@(_busy || _lines.Count == 0)"
+                            @onclick="SavePurchaseOrderAsync">
+                        <span class="cpo-save-keys">
+                            <span>Ctrl + Enter</span>
+                            <span>Insert</span>
+                            <span>F12</span>
+                        </span>
+                        <span class="cpo-save-main">
+                            <span class="cpo-save-label">@(_busy ? "Saving…" : "Save Purchase Order")</span>
+                        </span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private static readonly Regex PoNrPattern = new(
+        @"^(?<day>\d{6})-(?<seq>\d+)$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private sealed class PoLine
+    {
+        public Guid ProductId { get; set; }
+        public string ProductName { get; set; } = string.Empty;
+        public string ItemCode { get; set; } = "—";
+        public string Packing { get; set; } = "—";
+        public decimal Quantity { get; set; } = 1m;
+        public decimal BonusQuantity { get; set; }
+        public decimal CostRs { get; set; }
+        public decimal RetailRs { get; set; }
+        public string BatchNumber { get; set; } = string.Empty;
+        public DateOnly? ExpiryDate { get; set; }
+        public string? RackLocation { get; set; }
+    }
+
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public Guid? EditingPurchaseOrderId { get; set; }
+    [Parameter] public PurchaseIntakeApiClient IntakeService { get; set; } = default!;
+    [Parameter] public Guid ReceiverId { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnMinimize { get; set; }
+    [Parameter] public EventCallback OnCreated { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+    [Parameter] public EventCallback OnReceived { get; set; }
+
+    private readonly List<PartyDto> _suppliers = [];
+    private readonly List<PoLine> _lines = [];
+    private readonly List<ProductDto> _hits = [];
+    private string _supplierIdText = string.Empty;
+    private string _invoiceNo = string.Empty;
+    private DateTime _purchaseDate = DateTime.Today;
+    private decimal _discountRs;
+    private string _remarks = string.Empty;
+    private string? _error;
+    private string? _success;
+    private bool _busy;
+    private bool _wasVisible;
+    private Guid? _loadedEditingId;
+
+    private string _scanText = string.Empty;
+    private int _highlightIndex;
+    private int _searchVersion;
+    private CancellationTokenSource? _searchCts;
+    private bool _focusScan;
+
+    public bool IsEditing => EditingPurchaseOrderId is Guid id && id != Guid.Empty;
+
+    public string InvoiceNo => _invoiceNo;
+
+    public int ProductLineCount => _lines.Count;
+
+    private decimal SubTotalRs
+    {
+        get
+        {
+            decimal sub = 0;
+            foreach (PoLine line in _lines)
+            {
+                sub += line.Quantity * line.CostRs;
+            }
+
+            return sub;
+        }
+    }
+
+    private decimal RetailTotalRs
+    {
+        get
+        {
+            decimal sub = 0;
+            foreach (PoLine line in _lines)
+            {
+                sub += line.Quantity * line.RetailRs;
+            }
+
+            return sub;
+        }
+    }
+
+    private decimal TotalQty
+    {
+        get
+        {
+            decimal qty = 0;
+            foreach (PoLine line in _lines)
+            {
+                qty += line.Quantity;
+            }
+
+            return qty;
+        }
+    }
+
+    private decimal GrandTotalRs => Math.Max(0, SubTotalRs - _discountRs);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Visible && !_wasVisible)
+        {
+            _error = null;
+            _success = null;
+            await EnsureSuppliersAsync();
+
+            if (IsEditing)
+            {
+                if (_loadedEditingId != EditingPurchaseOrderId)
+                {
+                    await LoadEditingOrderAsync(EditingPurchaseOrderId!.Value);
+                }
+            }
+            else
+            {
+                if (_loadedEditingId is not null)
+                {
+                    ResetForm();
+                }
+
+                _loadedEditingId = null;
+                if (string.IsNullOrWhiteSpace(_invoiceNo))
+                {
+                    await GenerateInvoiceNoAsync();
+                }
+
+                _focusScan = true;
+            }
+        }
+        else if (Visible && IsEditing && EditingPurchaseOrderId != _loadedEditingId)
+        {
+            await LoadEditingOrderAsync(EditingPurchaseOrderId!.Value);
+        }
+
+        _wasVisible = Visible;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusScan)
+        {
+            _focusScan = false;
+            try { await Js.InvokeVoidAsync("webPosFocusById", "cpo-scan"); } catch { /* ignore */ }
+        }
+    }
+
+    private async Task LoadEditingOrderAsync(Guid purchaseOrderId)
+    {
+        _busy = true;
+        _error = null;
+        try
+        {
+            Result<PurchaseOrderDetailDto> result = await IntakeService.GetPurchaseAsync(purchaseOrderId);
+            if (!result.Success || result.Data is null)
+            {
+                _error = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                    ? "Failed to load purchase order."
+                    : result.ErrorMessage;
+                return;
+            }
+
+            PurchaseOrderDetailDto detail = result.Data;
+            if (detail.IsReceived)
+            {
+                _error = "This purchase order is already received and cannot be edited.";
+                return;
+            }
+
+            ApplyDetail(detail);
+            _loadedEditingId = purchaseOrderId;
+            _focusScan = true;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void ApplyDetail(PurchaseOrderDetailDto detail)
+    {
+        _lines.Clear();
+        _supplierIdText = detail.SupplierId.ToString();
+        _invoiceNo = detail.SupplierInvoiceNo;
+        _purchaseDate = detail.CreatedAt.ToLocalTime().Date;
+        _discountRs = detail.DiscountPaisa / 100m;
+        _remarks = string.Empty;
+
+        foreach (PurchaseOrderLineDto line in detail.Lines)
+        {
+            _lines.Add(new PoLine
+            {
+                ProductId = line.ProductId,
+                ProductName = string.IsNullOrWhiteSpace(line.ProductName)
+                    ? line.ProductId.ToString("N")[..8]
+                    : line.ProductName,
+                ItemCode = "—",
+                Packing = "—",
+                Quantity = line.Quantity > 0 ? line.Quantity : 1m,
+                BonusQuantity = line.BonusQuantity,
+                CostRs = line.PurchasePricePaisa / 100m,
+                RetailRs = line.RetailPricePaisa / 100m,
+                BatchNumber = line.BatchNumber,
+                ExpiryDate = line.ExpiryDate,
+                RackLocation = line.RackLocation
+            });
+        }
+    }
+
+    private async Task EnsureSuppliersAsync()
+    {
+        if (_suppliers.Count > 0)
+        {
+            return;
+        }
+
+        Result<IReadOnlyList<PartyDto>> result = await IntakeService.GetSuppliersAsync();
+        if (result.Success && result.Data is not null)
+        {
+            _suppliers.Clear();
+            _suppliers.AddRange(result.Data);
+        }
+    }
+
+    private async Task GenerateInvoiceNoAsync()
+    {
+        string day = DateTime.Today.ToString("ddMMyy", CultureInfo.InvariantCulture);
+        int maxSeq = 0;
+
+        Result<IReadOnlyList<PurchaseOrderSummaryDto>> listed =
+            await IntakeService.ListPurchasesAsync(200);
+        if (listed.Success && listed.Data is not null)
+        {
+            foreach (PurchaseOrderSummaryDto order in listed.Data)
+            {
+                Match m = PoNrPattern.Match(order.SupplierInvoiceNo.Trim());
+                if (!m.Success || !string.Equals(m.Groups["day"].Value, day, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (int.TryParse(m.Groups["seq"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out int seq))
+                {
+                    maxSeq = Math.Max(maxSeq, seq);
+                }
+            }
+        }
+
+        string prefKey = $"webpos.po.seq.{day}";
+        int localSeq = Preferences.Default.Get(prefKey, 0);
+        int next = Math.Max(maxSeq, localSeq) + 1;
+        Preferences.Default.Set(prefKey, next);
+        _invoiceNo = $"{day}-{next.ToString("D3", CultureInfo.InvariantCulture)}";
+    }
+
+    private async Task OnScanInput(ChangeEventArgs e)
+    {
+        _scanText = e.Value?.ToString() ?? string.Empty;
+        _highlightIndex = 0;
+        _error = null;
+        await DebouncedSearchAsync();
+    }
+
+    private async Task OnScanKeyDown(KeyboardEventArgs e)
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        if (e.Key == "ArrowDown" && _hits.Count > 0)
+        {
+            _highlightIndex = Math.Min(_highlightIndex + 1, _hits.Count - 1);
+            return;
+        }
+
+        if (e.Key == "ArrowUp" && _hits.Count > 0)
+        {
+            _highlightIndex = Math.Max(_highlightIndex - 1, 0);
+            return;
+        }
+
+        if (e.Key == "Escape")
+        {
+            _scanText = string.Empty;
+            _hits.Clear();
+            _highlightIndex = 0;
+            return;
+        }
+
+        if (e.Key == "Enter")
+        {
+            await ResolveScanAsync();
+        }
+    }
+
+    private async Task DebouncedSearchAsync()
+    {
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+        _searchCts = new CancellationTokenSource();
+        CancellationToken token = _searchCts.Token;
+        int version = ++_searchVersion;
+
+        try
+        {
+            await Task.Delay(220, token);
+        }
+        catch (TaskCanceledException)
+        {
+            return;
+        }
+
+        string q = _scanText.Trim();
+        if (q.Length == 0)
+        {
+            _hits.Clear();
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        Result<PagedProductResult> result = await ProductApi.SearchAsync(q, page: 1, pageSize: 40, cancellationToken: token);
+        if (version != _searchVersion)
+        {
+            return;
+        }
+
+        _hits.Clear();
+        if (result.Success && result.Data?.Items is not null)
+        {
+            _hits.AddRange(
+                result.Data.Items
+                    .Where(p => p.ParentProductId is null)
+                    .Take(25));
+        }
+
+        _highlightIndex = 0;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ResolveScanAsync()
+    {
+        _error = null;
+        string code = _scanText.Trim();
+        if (string.IsNullOrEmpty(code))
+        {
+            return;
+        }
+
+        ProductDto? exact = FindExactCodeMatch(code);
+        if (exact is not null)
+        {
+            SelectSuggestion(exact);
+            return;
+        }
+
+        if (_hits.Count > 0 && _highlightIndex >= 0 && _highlightIndex < _hits.Count)
+        {
+            SelectSuggestion(_hits[_highlightIndex]);
+            return;
+        }
+
+        if (_hits.Count == 1)
+        {
+            SelectSuggestion(_hits[0]);
+            return;
+        }
+
+        if (_hits.Count > 1)
+        {
+            _error = $"Multiple matches for “{code}” — pick one from the list.";
+            _focusScan = true;
+            return;
+        }
+
+        Result<PagedProductResult> result = await ProductApi.SearchAsync(code, page: 1, pageSize: 40);
+        IReadOnlyList<ProductDto> masters = (result.Data?.Items ?? [])
+            .Where(p => p.ParentProductId is null)
+            .ToList();
+        exact = FindExactIn(masters, code);
+        if (exact is not null)
+        {
+            SelectSuggestion(exact);
+            return;
+        }
+
+        if (masters.Count == 1)
+        {
+            SelectSuggestion(masters[0]);
+            return;
+        }
+
+        if (masters.Count > 1)
+        {
+            _hits.Clear();
+            _hits.AddRange(masters.Take(25));
+            _highlightIndex = 0;
+            _error = $"Multiple matches for “{code}” — pick one from the list.";
+            _focusScan = true;
+            return;
+        }
+
+        await OpenNewProductAsync();
+    }
+
+    private async Task OpenNewProductAsync()
+    {
+        _error = null;
+        await Minimize();
+        Navigation.NavigateTo("/products/new");
+    }
+
+    private ProductDto? FindExactCodeMatch(string code) => FindExactIn(_hits, code);
+
+    private static ProductDto? FindExactIn(IEnumerable<ProductDto> products, string code) =>
+        products.FirstOrDefault(p =>
+            string.Equals(p.Barcode, code, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(p.ShortCode, code, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(p.Sku, code, StringComparison.OrdinalIgnoreCase));
+
+    private static string ItemCodeOf(ProductDto product)
+    {
+        if (!string.IsNullOrWhiteSpace(product.ShortCode))
+        {
+            return product.ShortCode;
+        }
+
+        if (!string.IsNullOrWhiteSpace(product.Sku))
+        {
+            return product.Sku;
+        }
+
+        if (!string.IsNullOrWhiteSpace(product.Barcode))
+        {
+            return product.Barcode;
+        }
+
+        return "—";
+    }
+
+    private void SelectSuggestion(ProductDto product)
+    {
+        AddProductLine(product);
+        _scanText = string.Empty;
+        _hits.Clear();
+        _highlightIndex = 0;
+        _focusScan = true;
+    }
+
+    private void AddProductLine(ProductDto product)
+    {
+        decimal costRs = product.CostPricePaisa > 0 ? product.CostPricePaisa / 100m : 0m;
+        decimal retailRs = product.RetailPricePaisa > 0
+            ? product.RetailPricePaisa / 100m
+            : (costRs > 0 ? costRs : 0m);
+
+        PoLine? existing = _lines.FirstOrDefault(l =>
+            l.ProductId == product.Id
+            && l.CostRs == costRs
+            && l.RetailRs == retailRs);
+
+        if (existing is not null)
+        {
+            existing.Quantity += 1m;
+        }
+        else
+        {
+            _lines.Add(new PoLine
+            {
+                ProductId = product.Id,
+                ProductName = product.Name,
+                ItemCode = ItemCodeOf(product),
+                Packing = string.IsNullOrWhiteSpace(product.BaseUnit) ? "—" : product.BaseUnit,
+                Quantity = 1m,
+                CostRs = costRs,
+                RetailRs = retailRs
+            });
+        }
+
+        _error = null;
+    }
+
+    private async Task OnDialogKeyDown(KeyboardEventArgs e)
+    {
+        if (_busy || _lines.Count == 0)
+        {
+            return;
+        }
+
+        if ((e.CtrlKey && e.Key == "Enter") || e.Key is "Insert" or "F12")
+        {
+            await SavePurchaseOrderAsync();
+        }
+    }
+
+    private async Task SavePurchaseOrderAsync()
+    {
+        if (IsEditing)
+        {
+            await SaveAsync(receiveAfter: false);
+        }
+        else
+        {
+            await CreateAsync(receiveAfter: false);
+        }
+    }
+
+    private async Task ReceiveAsync()
+    {
+        if (IsEditing)
+        {
+            await SaveAsync(receiveAfter: true);
+        }
+        else
+        {
+            await CreateAsync(receiveAfter: true);
+        }
+    }
+
+    private async Task NewOrderAsync()
+    {
+        if (IsEditing)
+        {
+            _lines.Clear();
+            _scanText = string.Empty;
+            _hits.Clear();
+            _remarks = string.Empty;
+            _error = null;
+            _success = null;
+            _focusScan = true;
+            return;
+        }
+
+        ResetForm();
+        await GenerateInvoiceNoAsync();
+    }
+
+    private void ClearLines()
+    {
+        _lines.Clear();
+        _scanText = string.Empty;
+        _hits.Clear();
+        _highlightIndex = 0;
+        _error = null;
+        _focusScan = true;
+    }
+
+    private async Task PrintAsync()
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("print");
+        }
+        catch
+        {
+            _error = "Print is not available on this terminal.";
+        }
+    }
+
+    private void RemoveLine(int index)
+    {
+        if (index < 0 || index >= _lines.Count)
+        {
+            return;
+        }
+
+        _lines.RemoveAt(index);
+    }
+
+    private async Task OnQtyKeyDown(int index, KeyboardEventArgs e)
+    {
+        if (e.Key != "Enter" || _busy)
+        {
+            return;
+        }
+
+        int next = index + 1;
+        if (next >= _lines.Count)
+        {
+            _focusScan = true;
+            return;
+        }
+
+        try
+        {
+            await Js.InvokeVoidAsync("webPosFocusById", $"cpo-qty-{next}");
+        }
+        catch
+        {
+            /* ignore */
+        }
+    }
+
+    private void UpdateQty(int index, ChangeEventArgs e)
+    {
+        if (TryParseDecimal(e.Value?.ToString(), out decimal qty) && qty > 0)
+        {
+            _lines[index].Quantity = qty;
+        }
+    }
+
+    private void UpdateCost(int index, ChangeEventArgs e)
+    {
+        if (TryParseDecimal(e.Value?.ToString(), out decimal v))
+        {
+            _lines[index].CostRs = Math.Max(0, v);
+            if (_lines[index].RetailRs <= 0 && v > 0)
+            {
+                _lines[index].RetailRs = v;
+            }
+        }
+    }
+
+    private void UpdateRetail(int index, ChangeEventArgs e)
+    {
+        if (TryParseDecimal(e.Value?.ToString(), out decimal v))
+        {
+            _lines[index].RetailRs = Math.Max(0, v);
+        }
+    }
+
+    private bool TryBuildLines(out List<CreatePurchaseLineDto> lines, out Guid supplierId)
+    {
+        lines = [];
+        supplierId = Guid.Empty;
+        _error = null;
+        _success = null;
+
+        if (ReceiverId == Guid.Empty && !IsEditing)
+        {
+            _error = "Cashier session is missing.";
+            return false;
+        }
+
+        if (!Guid.TryParse(_supplierIdText, out supplierId) || supplierId == Guid.Empty)
+        {
+            _error = "Select a supplier.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(_invoiceNo))
+        {
+            _error = "Enter purchase order number.";
+            return false;
+        }
+
+        foreach (PoLine line in _lines)
+        {
+            if (line.ProductId == Guid.Empty)
+            {
+                continue;
+            }
+
+            if (line.Quantity <= 0)
+            {
+                _error = "Quantity must be greater than zero.";
+                return false;
+            }
+
+            if (ToPaisa(line.CostRs) <= 0)
+            {
+                _error = "Purchase price must be greater than zero for all lines.";
+                return false;
+            }
+
+            long retailPaisa = ToPaisa(line.RetailRs);
+            if (retailPaisa <= 0)
+            {
+                _error = "Retail price must be greater than zero for all lines.";
+                return false;
+            }
+
+            lines.Add(new CreatePurchaseLineDto
+            {
+                ProductId = line.ProductId,
+                Quantity = line.Quantity,
+                BonusQuantity = line.BonusQuantity,
+                PurchasePricePaisa = ToPaisa(line.CostRs),
+                RetailPricePaisa = retailPaisa,
+                BatchNumber = line.BatchNumber,
+                ExpiryDate = line.ExpiryDate,
+                RackLocation = line.RackLocation
+            });
+        }
+
+        if (lines.Count == 0)
+        {
+            _error = "Add at least one line.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private async Task CreateAsync(bool receiveAfter)
+    {
+        if (!TryBuildLines(out List<CreatePurchaseLineDto> lines, out Guid supplierId))
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            Result<CreatePurchaseOrderResultDto> result = await IntakeService.CreatePurchaseAsync(
+                new CreatePurchaseRequestDto
+                {
+                    SupplierId = supplierId,
+                    ReceiverId = ReceiverId,
+                    SupplierInvoiceNo = _invoiceNo.Trim(),
+                    PurchaseDate = ToPurchaseDateOffset(_purchaseDate),
+                    DiscountPaisa = ToPaisa(_discountRs),
+                    Lines = lines
+                });
+
+            if (!result.Success || result.Data is null)
+            {
+                _error = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                    ? "Failed to create purchase order."
+                    : result.ErrorMessage;
+                return;
+            }
+
+            if (receiveAfter)
+            {
+                Result<ReceiveStockResultDto> received =
+                    await IntakeService.ReceivePurchaseAsync(result.Data.PurchaseOrderId);
+                if (!received.Success || received.Data is null)
+                {
+                    _error = string.IsNullOrWhiteSpace(received.ErrorMessage)
+                        ? "PO created but receive failed — open it from Purchase Orders to retry."
+                        : received.ErrorMessage;
+                    await OnCreated.InvokeAsync();
+                    return;
+                }
+
+                _success = $"PO created & received · Net Rs {FormatRs(received.Data.NetPayablePaisa)}";
+                ResetForm();
+                await OnReceived.InvokeAsync();
+                return;
+            }
+
+            _success = $"PO created · Net Rs {FormatRs(result.Data.NetPayablePaisa)}";
+            ResetForm();
+            await OnCreated.InvokeAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task SaveAsync(bool receiveAfter)
+    {
+        if (!IsEditing || EditingPurchaseOrderId is not Guid orderId || orderId == Guid.Empty)
+        {
+            _error = "No purchase order selected.";
+            return;
+        }
+
+        if (!TryBuildLines(out List<CreatePurchaseLineDto> lines, out Guid supplierId))
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            Result<PurchaseOrderDetailDto> updated = await IntakeService.UpdatePurchaseAsync(
+                orderId,
+                new UpdateOpenPurchaseRequestDto
+                {
+                    SupplierInvoiceNo = _invoiceNo.Trim(),
+                    SupplierId = supplierId,
+                    PurchaseDate = ToPurchaseDateOffset(_purchaseDate),
+                    DiscountPaisa = ToPaisa(_discountRs),
+                    Lines = lines
+                });
+
+            if (!updated.Success || updated.Data is null)
+            {
+                _error = string.IsNullOrWhiteSpace(updated.ErrorMessage)
+                    ? "Failed to save purchase order."
+                    : updated.ErrorMessage;
+                return;
+            }
+
+            if (!receiveAfter)
+            {
+                _success = $"PO saved · Net Rs {FormatRs(updated.Data.NetPayablePaisa)}";
+                ApplyDetail(updated.Data);
+                await OnSaved.InvokeAsync();
+                return;
+            }
+
+            Result<ReceiveStockResultDto> received = await IntakeService.ReceivePurchaseAsync(orderId);
+            if (!received.Success || received.Data is null)
+            {
+                _error = string.IsNullOrWhiteSpace(received.ErrorMessage)
+                    ? "Saved, but receive failed."
+                    : received.ErrorMessage;
+                await OnSaved.InvokeAsync();
+                return;
+            }
+
+            _success = $"PO received · Net Rs {FormatRs(received.Data.NetPayablePaisa)}";
+            await OnReceived.InvokeAsync();
+            await Close();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void ResetForm()
+    {
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+        _searchCts = null;
+        _hits.Clear();
+        _scanText = string.Empty;
+        _lines.Clear();
+        _supplierIdText = string.Empty;
+        _invoiceNo = string.Empty;
+        _purchaseDate = DateTime.Today;
+        _discountRs = 0;
+        _remarks = string.Empty;
+        _loadedEditingId = null;
+        _focusScan = true;
+    }
+
+    private async Task Minimize()
+    {
+        if (OnMinimize.HasDelegate)
+        {
+            await OnMinimize.InvokeAsync();
+            return;
+        }
+
+        await Close();
+    }
+
+    private async Task Close()
+    {
+        _error = null;
+        await OnClose.InvokeAsync();
+    }
+
+    private static bool TryParseDecimal(string? text, out decimal value) =>
+        decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out value)
+        || decimal.TryParse(text, NumberStyles.Number, CultureInfo.CurrentCulture, out value);
+
+    private static long ToPaisa(decimal rs) =>
+        (long)Math.Round(rs * 100m, MidpointRounding.AwayFromZero);
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+
+    private static string FormatQty(decimal value) =>
+        value.ToString("0.###", CultureInfo.InvariantCulture);
+
+    private static DateTimeOffset ToPurchaseDateOffset(DateTime date) =>
+        new(date.Year, date.Month, date.Day, 0, 0, 0, TimeSpan.Zero);
+
+    public void Dispose()
+    {
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+    }
+}

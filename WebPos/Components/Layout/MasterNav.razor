@@ -76,11 +76,11 @@
     private static readonly string IconPeople =
         """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>""";
     private static readonly string IconWallet =
-        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M20 7H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><circle cx="16" cy="14" r="1.25"/></svg>""";
+        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V6a4 4 0 0 1 8 0v1"/><path d="M12 12v3"/></svg>""";
     private static readonly string IconChart =
         """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 17V10"/><path d="M12 17V7"/><path d="M16 17v-4"/></svg>""";
     private static readonly string IconGear =
-        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>""";
+        """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2.2M12 19.8V22M4.22 4.22l1.56 1.56M18.22 18.22l1.56 1.56M2 12h2.2M19.8 12H22M4.22 19.78l1.56-1.56M18.22 5.78l1.56-1.56"/></svg>""";
     private static readonly string IconTag =
         """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><circle cx="7" cy="7" r="1.25"/></svg>""";
     private static readonly string IconStar =
@@ -116,10 +116,17 @@
         ]),
         new("finance", "Finance", IconWallet,
         [
+            new("Dashboard", "/master/finance", false, IconDash),
+            new("Payments", "/master/payments", false, IconCard),
+            new("Accounts", "/master/accounts", false, IconWallet),
+            new("Business Position", "/master/business-position", false, IconChart),
+            new("Cash Management", "/master/cash", false, IconCash),
+            new("Stock Position", "/master/stock-position", false, IconBox),
+            new("Cash vs Stock", "/master/cash-stock-reconciliation", false, IconChart),
             new("Expenses", "/master/expenses", false, IconReceipt),
             new("Customer Payments", "/master/parties?role=CUSTOMER", false, IconCard),
             new("Supplier Payments", "/master/parties?role=SUPPLIER", false, IconCard),
-            new("Cash Management", "/master/cash", false, IconCash)
+            new("Reports", "/master/reports", false, IconChart)
         ]),
         new("reports", "Reports", IconChart,
         [
@@ -220,7 +227,14 @@
             return;
         }
 
-        if (path.StartsWith("/master/cash", StringComparison.OrdinalIgnoreCase)
+        if (path.StartsWith("/master/finance", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/master/payments", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/master/accounts", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/master/account-ledger", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/master/business-position", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/master/stock-position", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/master/cash-stock-reconciliation", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/master/cash", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/master/expenses", StringComparison.OrdinalIgnoreCase))
         {
             _sectionId = "finance";

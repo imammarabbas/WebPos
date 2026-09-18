@@ -11,6 +11,7 @@ public static class ExpenseCategories
     public const string Theft = "THEFT";
     public const string OwnerDraw = "OWNER_DRAW";
     public const string Discount = "DISCOUNT";
+    public const string CashShortage = "CASH_SHORTAGE";
     public const string Other = "OTHER";
 
     public static readonly IReadOnlyList<string> All =
@@ -24,6 +25,7 @@ public static class ExpenseCategories
         Theft,
         OwnerDraw,
         Discount,
+        CashShortage,
         Other
     ];
 

@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>WebPos.WindowsTerminal.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WebPos.Client.Sdk\WebPos.Client.Sdk.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\WebPos.WindowsTerminal\Services\SalesScanFocusCoordinator.cs" Link="SalesScanFocusCoordinator.cs" />
+    <Compile Include="..\WebPos.WindowsTerminal\Services\CartService.cs" Link="CartService.cs" />
+    <Compile Include="..\WebPos.WindowsTerminal\Services\CartLine.cs" Link="CartLine.cs" />
+  </ItemGroup>
+
+</Project>

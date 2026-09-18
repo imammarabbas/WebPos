@@ -2,12 +2,11 @@
 @layout MasterLayout
 @attribute [Authorize(Roles = "Owner,Manager")]
 @rendermode InteractiveServer
+@implements IDisposable
 @using Microsoft.AspNetCore.Authorization
-@using Microsoft.AspNetCore.Components.Web
 @using Microsoft.AspNetCore.WebUtilities
 @using WebPos.Core.Abstractions
 @inject IProductAdminService ProductService
-@inject ICategoryService CategoryService
 @inject NavigationManager Navigation
 
 <PageTitle>Products · Cone Mart</PageTitle>
@@ -18,48 +17,70 @@
             <h1>Products</h1>
             <p>Catalog, stock floors, and opening balances</p>
         </div>
-        <button type="button" class="mm-btn mm-btn-primary" @onclick="StartCreate">+ New product</button>
+        <a class="mm-btn mm-btn-primary" href="/master/products/new">+ New product</a>
     </div>
 
     @if (!string.IsNullOrEmpty(_error))
     {
         <div class="mm-alert mm-alert-error">@_error</div>
     }
-    @if (!string.IsNullOrEmpty(_success))
-    {
-        <div class="mm-alert mm-alert-ok">@_success</div>
-    }
 
     <div class="mm-toolbar">
-        <input class="form-control" style="max-width: 280px;" placeholder="Filter products…" @bind="_filter" @bind:event="oninput" />
+        <input class="form-control"
+               style="max-width: 320px;"
+               placeholder="Search name, SKU, barcode…"
+               value="@_filter"
+               @oninput="OnFilterInput" />
         @if (_lowOnly)
         {
             <span class="mm-badge mm-badge-warn">Low stock filter on</span>
             <button type="button" class="mm-btn" @onclick="ClearLowFilter">Clear</button>
         }
+        <span class="mm-muted" style="margin-left:auto;">@_pagerLabel</span>
     </div>
 
-    <div class="mm-split">
-        <div class="mm-table-wrap">
-            <table class="mm-table">
-                <thead>
+    <div class="mm-table-wrap">
+        <table class="mm-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>SKU</th>
+                    <th>Brand</th>
+                    <th>Stock</th>
+                    <th>Min</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (_loading)
+                {
                     <tr>
-                        <th>Name</th>
-                        <th>SKU</th>
-                        <th>Brand</th>
-                        <th>Stock</th>
-                        <th>Min</th>
+                        <td colspan="5" class="mm-muted">Loading…</td>
                     </tr>
-                </thead>
-                <tbody>
-                    @foreach (ProductAdminDto p in FilteredProducts)
+                }
+                else if (_pageItems.Count == 0)
+                {
+                    <tr>
+                        <td colspan="5" class="mm-muted">No products match this search.</td>
+                    </tr>
+                }
+                else
+                {
+                    @foreach (ProductAdminDto p in _pageItems)
                     {
-                        <tr class="clickable @(p.Id == _editingId ? "selected" : null)" @onclick="() => StartEdit(p)">
+                        <tr class="clickable" @onclick="() => OpenProduct(p.Id)">
                             <td>
                                 @p.Name
                                 @if (p.IsLoose)
                                 {
                                     <span class="mm-badge">Loose</span>
+                                }
+                                @if (p.IsBulk)
+                                {
+                                    <span class="mm-badge">Bulk</span>
+                                }
+                                else if (p.ParentProductId is not null)
+                                {
+                                    <span class="mm-badge">Alias</span>
                                 }
                             </td>
                             <td>@p.Sku</td>
@@ -68,169 +89,46 @@
                             <td>@p.MinStockQty.ToString("0.##")</td>
                         </tr>
                     }
-                </tbody>
-            </table>
-        </div>
+                }
+            </tbody>
+        </table>
+    </div>
 
-        <div class="mm-card">
-            <h2>@(_editingId is null ? "Create product" : "Edit product")</h2>
-            <EditForm Model="_form" OnValidSubmit="SaveAsync">
-                <div class="mm-form-grid">
-                    <div class="mm-field">
-                        <label for="p-barcode">Barcode</label>
-                        <input id="p-barcode"
-                               @ref="_barcodeInput"
-                               value="@_form.Barcode"
-                               @oninput="OnBarcodeInput"
-                               @onkeydown="OnBarcodeKeyDown"
-                               @onkeydown:preventDefault="_preventBarcodeEnter"
-                               @onkeydown:stopPropagation="_preventBarcodeEnter" />
-                    </div>
-                    <div class="mm-field">
-                        <label for="p-name">Name</label>
-                        <input id="p-name"
-                               @ref="_nameInput"
-                               value="@_form.Name"
-                               @oninput="e => _form.Name = e.Value?.ToString() ?? string.Empty" />
-                    </div>
-                    <div class="mm-field">
-                        <label for="p-sku">SKU</label>
-                        <InputText id="p-sku" @bind-Value="_form.Sku" />
-                    </div>
-                    <div class="mm-field">
-                        <label for="p-short">Short code</label>
-                        <InputText id="p-short" @bind-Value="_form.ShortCode" />
-                    </div>
-                    <div class="mm-field">
-                        <label for="p-brand">Brand</label>
-                        <InputText id="p-brand" @bind-Value="_form.Brand" />
-                    </div>
-                    <div class="mm-field">
-                        <label for="p-cat">Category</label>
-                        <InputSelect id="p-cat" @bind-Value="_form.CategoryId">
-                            <option value="">— None —</option>
-                            @foreach (CategoryDto c in _categories)
-                            {
-                                <option value="@c.Id">@c.Name</option>
-                            }
-                        </InputSelect>
-                    </div>
-                    <div class="mm-field">
-                        <label for="p-sale-unit">Sale unit (stock)</label>
-                        <InputText id="p-sale-unit" @bind-Value="_form.BaseUnit" placeholder="g, PCS, L…" />
-                    </div>
-                    <div class="mm-field">
-                        <label for="p-buy-unit">Purchase unit</label>
-                        <InputText id="p-buy-unit" @bind-Value="_form.PurchaseUnit" placeholder="kg (optional)" />
-                    </div>
-                    <div class="mm-field">
-                        <label for="p-conv">Sale units per 1 purchase unit</label>
-                        <InputNumber id="p-conv" @bind-Value="_form.ConversionMultiplier" />
-                        <small class="text-muted">e.g. buy kg, sell g → 1000</small>
-                    </div>
-                    <div class="mm-field">
-                        <label for="p-min">Min stock qty (sale units)</label>
-                        <InputNumber id="p-min" @bind-Value="_form.MinStockQty" />
-                    </div>
-                    <div class="mm-check full">
-                        <InputCheckbox @bind-Value="_form.IsLoose" />
-                        <span>Loose / weighed item</span>
-                    </div>
-                    @if (_editingId is null)
-                    {
-                        <div class="mm-field">
-                            <label for="p-open-qty">Opening stock</label>
-                            <InputNumber id="p-open-qty" @bind-Value="_form.OpeningStockQty" />
-                        </div>
-                    }
-                    <div class="mm-field">
-                        <label for="p-cost">Cost price (Rs)</label>
-                        <InputNumber id="p-cost" @bind-Value="_form.CostRs" @bind-Value:event="oninput" />
-                    </div>
-                    <div class="mm-field">
-                        <label for="p-retail">Retail price (Rs)</label>
-                        <InputNumber id="p-retail" @bind-Value="_form.RetailRs" @bind-Value:event="oninput" />
-                    </div>
-                    <div class="mm-margin-widget full">
-                        <div class="mm-margin-item">
-                            <span class="mm-margin-label">Profit</span>
-                            <strong>Rs @ProfitRs.ToString("0.##")</strong>
-                        </div>
-                        <div class="mm-margin-item">
-                            <span class="mm-margin-label">Margin</span>
-                            <strong>@MarginPercent.ToString("0.#")%</strong>
-                        </div>
-                    </div>
-                </div>
-                <div class="mm-form-actions">
-                    <button type="button" class="mm-btn mm-btn-primary" disabled="@_saving" @onclick="SaveAsync">
-                        @(_saving ? "Saving…" : "Save")
-                    </button>
-                    <button type="button" class="mm-btn" @onclick="ResetForm" disabled="@_saving">Cancel</button>
-                </div>
-            </EditForm>
-        </div>
+    <div class="mm-pager">
+        <button type="button" class="mm-btn" disabled="@(_page <= 1 || _loading)" @onclick="PrevPage">Previous</button>
+        <span>Page @_page of @_totalPages</span>
+        <button type="button" class="mm-btn" disabled="@(_page >= _totalPages || _loading)" @onclick="NextPage">Next</button>
     </div>
 </div>
 
 @code {
-    private readonly List<ProductAdminDto> _products = [];
-    private readonly List<CategoryDto> _categories = [];
-    private ProductForm _form = new();
-    private Guid? _editingId;
+    private const int PageSize = 50;
+    private readonly List<ProductAdminDto> _pageItems = [];
     private string _filter = string.Empty;
     private bool _lowOnly;
-    private bool _saving;
+    private bool _loading;
     private string? _error;
-    private string? _success;
-    private bool _preventBarcodeEnter;
-    private ElementReference _barcodeInput;
-    private ElementReference _nameInput;
+    private int _page = 1;
+    private int _totalCount;
+    private CancellationTokenSource? _searchCts;
 
-    private long CostPaisa => ToPaisa(_form.CostRs);
+    private int _totalPages => Math.Max(1, (int)Math.Ceiling(_totalCount / (double)PageSize));
 
-    private long RetailPaisa => ToPaisa(_form.RetailRs);
-
-    private decimal ProfitRs => (RetailPaisa - CostPaisa) / 100m;
-
-    private decimal MarginPercent =>
-        RetailPaisa > 0
-            ? ((RetailPaisa - CostPaisa) / (decimal)RetailPaisa) * 100m
-            : 0m;
-
-    private IEnumerable<ProductAdminDto> FilteredProducts
-    {
-        get
-        {
-            IEnumerable<ProductAdminDto> q = _products;
-            if (_lowOnly)
-            {
-                q = q.Where(p => p.AvailableStock <= p.MinStockQty);
-            }
-
-            if (!string.IsNullOrWhiteSpace(_filter))
-            {
-                string f = _filter.Trim();
-                q = q.Where(p =>
-                    p.Name.Contains(f, StringComparison.OrdinalIgnoreCase)
-                    || p.Sku.Contains(f, StringComparison.OrdinalIgnoreCase)
-                    || p.Barcode.Contains(f, StringComparison.OrdinalIgnoreCase)
-                    || p.ShortCode.Contains(f, StringComparison.OrdinalIgnoreCase)
-                    || p.Brand.Contains(f, StringComparison.OrdinalIgnoreCase));
-            }
-
-            return q;
-        }
-    }
+    private string _pagerLabel =>
+        _totalCount == 0
+            ? "0 products"
+            : $"Showing {((_page - 1) * PageSize) + 1}–{Math.Min(_page * PageSize, _totalCount)} of {_totalCount}";
 
     protected override async Task OnInitializedAsync()
     {
         ApplyQueryFlags();
-        await LoadAsync();
         if (QueryHasFlag("new"))
         {
-            StartCreate();
+            Navigation.NavigateTo("/master/products/new", replace: true);
+            return;
         }
+
+        await LoadPageAsync();
     }
 
     private void ApplyQueryFlags()
@@ -253,164 +151,88 @@
         return QueryHelpers.ParseQuery(uri.Query).ContainsKey(key);
     }
 
-    private async Task LoadAsync()
+    private async Task OnFilterInput(ChangeEventArgs e)
     {
+        _filter = e.Value?.ToString() ?? string.Empty;
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+        _searchCts = new CancellationTokenSource();
+        CancellationToken token = _searchCts.Token;
+        try
+        {
+            await Task.Delay(300, token);
+            _page = 1;
+            await LoadPageAsync();
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    private async Task LoadPageAsync()
+    {
+        _loading = true;
         _error = null;
         try
         {
-            _products.Clear();
-            _products.AddRange(await ProductService.ListAsync());
-            _categories.Clear();
-            _categories.AddRange(await CategoryService.ListAsync());
+            PagedResult<ProductAdminDto> result = await ProductService.SearchAsync(new ProductSearchQuery
+            {
+                Search = _filter,
+                LowStockOnly = _lowOnly,
+                Page = _page,
+                PageSize = PageSize
+            });
+            _pageItems.Clear();
+            _pageItems.AddRange(result.Items);
+            _totalCount = result.TotalCount;
+            _page = result.Page;
         }
         catch (Exception ex)
         {
             _error = ex.Message;
         }
-    }
-
-    private void StartCreate()
-    {
-        _editingId = null;
-        _form = new ProductForm();
-        _success = null;
-        _error = null;
-    }
-
-    private void StartEdit(ProductAdminDto p)
-    {
-        _editingId = p.Id;
-        _form = new ProductForm
+        finally
         {
-            Name = p.Name,
-            Sku = p.Sku,
-            Barcode = p.Barcode,
-            ShortCode = p.ShortCode,
-            Brand = p.Brand,
-            CategoryId = p.CategoryId?.ToString() ?? string.Empty,
-            BaseUnit = p.BaseUnit,
-            PurchaseUnit = p.PurchaseUnit,
-            ConversionMultiplier = p.ConversionMultiplier <= 0 ? 1 : p.ConversionMultiplier,
-            MinStockQty = p.MinStockQty,
-            IsLoose = p.IsLoose,
-            CostRs = p.LatestCostPricePaisa / 100m,
-            RetailRs = p.LatestRetailPricePaisa / 100m
-        };
-        _success = null;
-        _error = null;
+            _loading = false;
+        }
     }
 
-    private void ResetForm() => StartCreate();
-
-    private void ClearLowFilter()
+    private async Task PrevPage()
     {
-        _lowOnly = false;
-        Navigation.NavigateTo("/master/products", replace: true);
-    }
-
-    private void OnBarcodeInput(ChangeEventArgs e)
-    {
-        _form.Barcode = e.Value?.ToString() ?? string.Empty;
-        _preventBarcodeEnter = false;
-    }
-
-    private async Task OnBarcodeKeyDown(KeyboardEventArgs e)
-    {
-        bool isEnter = e.Key is "Enter" or "NumpadEnter";
-        _preventBarcodeEnter = isEnter;
-        if (!isEnter)
+        if (_page <= 1)
         {
             return;
         }
 
-        await _nameInput.FocusAsync();
+        _page--;
+        await LoadPageAsync();
     }
 
-    private async Task SaveAsync()
+    private async Task NextPage()
     {
-        _saving = true;
-        _error = null;
-        _success = null;
-        try
+        if (_page >= _totalPages)
         {
-            if (string.IsNullOrWhiteSpace(_form.Name))
-            {
-                _error = "Product name is required.";
-                return;
-            }
-
-            Guid? categoryId = Guid.TryParse(_form.CategoryId, out Guid cid) ? cid : null;
-            long? costPaisa = _form.CostRs is decimal costRs
-                ? ToPaisa(costRs)
-                : null;
-            long? retailPaisa = _form.RetailRs is decimal retailRs
-                ? ToPaisa(retailRs)
-                : null;
-
-            var request = new UpsertProductRequest
-            {
-                Name = _form.Name.Trim(),
-                Sku = _form.Sku.Trim(),
-                Barcode = _form.Barcode.Trim(),
-                ShortCode = _form.ShortCode.Trim(),
-                Brand = _form.Brand.Trim(),
-                CategoryId = categoryId,
-                BaseUnit = string.IsNullOrWhiteSpace(_form.BaseUnit) ? "PCS" : _form.BaseUnit.Trim(),
-                PurchaseUnit = _form.PurchaseUnit?.Trim() ?? string.Empty,
-                ConversionMultiplier = _form.ConversionMultiplier <= 0 ? 1 : _form.ConversionMultiplier,
-                MinStockQty = _form.MinStockQty,
-                IsLoose = _form.IsLoose,
-                OpeningStockQty = _editingId is null ? _form.OpeningStockQty : null,
-                OpeningRetailPricePaisa = _editingId is null ? retailPaisa : null,
-                OpeningCostPricePaisa = _editingId is null ? costPaisa : null,
-                CostPricePaisa = _editingId is not null ? costPaisa : null,
-                RetailPricePaisa = _editingId is not null ? retailPaisa : null
-            };
-
-            if (_editingId is Guid id)
-            {
-                await ProductService.UpdateAsync(id, request);
-                _success = "Product updated.";
-            }
-            else
-            {
-                await ProductService.CreateAsync(request);
-                _success = "Product created.";
-            }
-
-            await LoadAsync();
-            StartCreate();
+            return;
         }
-        catch (Exception ex)
-        {
-            _error = ex.InnerException?.Message ?? ex.Message;
-        }
-        finally
-        {
-            _saving = false;
-        }
+
+        _page++;
+        await LoadPageAsync();
     }
 
-    private static long ToPaisa(decimal? rupees) =>
-        rupees is null
-            ? 0L
-            : (long)Math.Round(rupees.Value * 100m, MidpointRounding.AwayFromZero);
+    private void OpenProduct(Guid id) =>
+        Navigation.NavigateTo($"/master/products/{id}");
 
-    private sealed class ProductForm
+    private async Task ClearLowFilter()
     {
-        public string Name { get; set; } = string.Empty;
-        public string Sku { get; set; } = string.Empty;
-        public string Barcode { get; set; } = string.Empty;
-        public string ShortCode { get; set; } = string.Empty;
-        public string Brand { get; set; } = string.Empty;
-        public string CategoryId { get; set; } = string.Empty;
-        public string BaseUnit { get; set; } = "PCS";
-        public string PurchaseUnit { get; set; } = string.Empty;
-        public int ConversionMultiplier { get; set; } = 1;
-        public decimal MinStockQty { get; set; } = 10m;
-        public bool IsLoose { get; set; }
-        public decimal? OpeningStockQty { get; set; }
-        public decimal? CostRs { get; set; }
-        public decimal? RetailRs { get; set; }
+        _lowOnly = false;
+        _page = 1;
+        Navigation.NavigateTo("/master/products", replace: true);
+        await LoadPageAsync();
+    }
+
+    public void Dispose()
+    {
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
     }
 }

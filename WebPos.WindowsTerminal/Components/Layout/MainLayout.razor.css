@@ -45,6 +45,20 @@ main {
     background: #f4f5f7;
 }
 
+.terminal-layout.sales-fullscreen {
+    flex-direction: column;
+}
+
+.terminal-layout.sales-fullscreen main {
+    width: 100%;
+}
+
+.sales-content {
+    padding: 0 !important;
+    margin: 0;
+    max-width: none;
+}
+
 @media (max-width: 640.98px) {
     .top-row {
         justify-content: space-between;
@@ -57,7 +71,7 @@ main {
 }
 
 @media (min-width: 641px) {
-    .page {
+    .page:not(.sales-fullscreen) {
         flex-direction: row;
     }
 
@@ -80,8 +94,8 @@ main {
         width: 0;
     }
 
-    .top-row,
-    article {
+    .page:not(.sales-fullscreen) .top-row,
+    .page:not(.sales-fullscreen) article {
         padding-left: 1.25rem !important;
         padding-right: 1.25rem !important;
     }

@@ -9,18 +9,21 @@ namespace WebPos.Core.Services;
 
 public sealed class ExpenseService : IExpenseService
 {
-    private readonly WebPosDbContext _context;
+    private readonly IDbContextFactory<WebPosDbContext> _dbFactory;
+    private readonly IAmbientDbContextAccessor _ambient;
     private readonly ITransactionService _transactionService;
     private readonly ICashAccountService _cashAccountService;
     private readonly ITenantService _tenantService;
 
     public ExpenseService(
-        WebPosDbContext context,
+        IDbContextFactory<WebPosDbContext> dbFactory,
+        IAmbientDbContextAccessor ambient,
         ITransactionService transactionService,
         ICashAccountService cashAccountService,
         ITenantService tenantService)
     {
-        _context = context ?? throw new ArgumentNullException(nameof(context));
+        _dbFactory = dbFactory ?? throw new ArgumentNullException(nameof(dbFactory));
+        _ambient = ambient ?? throw new ArgumentNullException(nameof(ambient));
         _transactionService = transactionService
             ?? throw new ArgumentNullException(nameof(transactionService));
         _cashAccountService = cashAccountService
@@ -39,7 +42,7 @@ public sealed class ExpenseService : IExpenseService
         CancellationToken cancellationToken = default) =>
         RecordExpenseInternalAsync(request, isRecurring: true, cancellationToken);
 
-    public async Task<IReadOnlyList<ExpenseListItemDto>> ListExpensesAsync(
+    public Task<IReadOnlyList<ExpenseListItemDto>> ListExpensesAsync(
         DateTimeOffset from,
         DateTimeOffset to,
         CancellationToken cancellationToken = default)
@@ -51,28 +54,31 @@ public sealed class ExpenseService : IExpenseService
         }
 
         Guid tenantId = _tenantService.TenantId;
-        return await _context.ShiftExpenses
-            .AsNoTracking()
-            .Where(e =>
-                e.TenantId == tenantId
-                && e.LoggedAt >= from
-                && e.LoggedAt <= to)
-            .OrderByDescending(e => e.LoggedAt)
-            .Select(e => new ExpenseListItemDto
-            {
-                Id = e.Id,
-                ShiftId = e.ShiftId,
-                VoucherNo = e.VoucherNo,
-                Description = e.Description,
-                ExpenseCategory = e.ExpenseCategory,
-                PaymentMethod = e.PaymentMethod,
-                ReceiptReference = e.ReceiptReference,
-                AmountPaisa = e.AmountPaisa,
-                IsRecurring = e.IsRecurring,
-                LoggedByUserId = e.LoggedByUserId,
-                LoggedAt = e.LoggedAt
-            })
-            .ToListAsync(cancellationToken);
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
+        {
+            return (IReadOnlyList<ExpenseListItemDto>)await context.ShiftExpenses
+                .AsNoTracking()
+                .Where(e =>
+                    e.TenantId == tenantId
+                    && e.LoggedAt >= from
+                    && e.LoggedAt <= to)
+                .OrderByDescending(e => e.LoggedAt)
+                .Select(e => new ExpenseListItemDto
+                {
+                    Id = e.Id,
+                    ShiftId = e.ShiftId,
+                    VoucherNo = e.VoucherNo,
+                    Description = e.Description,
+                    ExpenseCategory = e.ExpenseCategory,
+                    PaymentMethod = e.PaymentMethod,
+                    ReceiptReference = e.ReceiptReference,
+                    AmountPaisa = e.AmountPaisa,
+                    IsRecurring = e.IsRecurring,
+                    LoggedByUserId = e.LoggedByUserId,
+                    LoggedAt = e.LoggedAt
+                })
+                .ToListAsync(ct);
+        }, cancellationToken);
     }
 
     private Task<RecordExpenseResult> RecordExpenseInternalAsync(
@@ -83,13 +89,14 @@ public sealed class ExpenseService : IExpenseService
         {
             EnsureTenantResolved();
             ValidateRequest(request);
+            WebPosDbContext context = _ambient.Required;
 
             Guid tenantId = _tenantService.TenantId;
             CashierShift? shift = null;
 
             if (request.ShiftId is Guid shiftId)
             {
-                shift = await _context.CashierShifts
+                shift = await context.CashierShifts
                     .FirstOrDefaultAsync(
                         s => s.Id == shiftId && s.TenantId == tenantId,
                         ct)
@@ -106,7 +113,7 @@ public sealed class ExpenseService : IExpenseService
                 ? $"EXP-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Random.Shared.Next(1000, 9999)}"
                 : request.VoucherNo.Trim();
 
-            bool voucherExists = await _context.ShiftExpenses
+            bool voucherExists = await context.ShiftExpenses
                 .AnyAsync(e => e.VoucherNo == voucherNo && e.TenantId == tenantId, ct);
 
             if (voucherExists)
@@ -120,9 +127,52 @@ public sealed class ExpenseService : IExpenseService
                 request.CashAccountId,
                 paymentMethod,
                 ct);
+            EnsureExpensePaymentAccount(paymentMethod, payment);
             string paymentAccount = payment.AccountCode;
             string expenseAccount = LedgerAccounts.Expense(category);
             DateTimeOffset now = DateTimeOffset.UtcNow;
+
+            if (payment.AffectsTillDrawer)
+            {
+                if (shift is null)
+                {
+                    throw new InvalidOperationException(
+                        "Till-funded expenses require an OPEN shift.");
+                }
+
+                if (payment.TerminalId is Guid tillTerminal
+                    && shift.TerminalId != tillTerminal)
+                {
+                    throw new InvalidOperationException(
+                        "Shift terminal does not match the selected till cash account.");
+                }
+
+                CashierShift locked = await CashierShiftLocking.LockByIdForUpdateAsync(
+                    context,
+                    shift.Id,
+                    tenantId,
+                    ct)
+                    ?? throw new InvalidOperationException("Open shift was not found for the expense.");
+
+                shift = locked;
+                long gl = await SumAmbientGlAsync(context, tenantId, paymentAccount, ct);
+                long spendable = CashSpendable.ForTill(gl, shift.ExpectedCashPaisa);
+                CashSpendable.EnsureCanSpend(
+                    paymentAccount,
+                    spendable,
+                    request.AmountPaisa,
+                    shift.Id,
+                    gl,
+                    shift.ExpectedCashPaisa);
+            }
+            else
+            {
+                long gl = await SumAmbientGlAsync(context, tenantId, paymentAccount, ct);
+                CashSpendable.EnsureCanSpend(
+                    paymentAccount,
+                    CashSpendable.ForNonTill(gl),
+                    request.AmountPaisa);
+            }
 
             ShiftExpense expense = new()
             {
@@ -139,7 +189,7 @@ public sealed class ExpenseService : IExpenseService
                 LoggedByUserId = request.LoggedByUserId,
                 LoggedAt = now
             };
-            _context.ShiftExpenses.Add(expense);
+            context.ShiftExpenses.Add(expense);
 
             Guid transactionGroupId = await _transactionService.PostBalancedEntriesAsync(
                 new DoubleEntryPostRequest
@@ -166,16 +216,8 @@ public sealed class ExpenseService : IExpenseService
                 },
                 ct);
 
-            // Drawer impact only when tied to an open shift and paid from a till/cash account.
             if (shift is not null && payment.AffectsTillDrawer)
             {
-                if (payment.TerminalId is Guid tillTerminal
-                    && shift.TerminalId != tillTerminal)
-                {
-                    throw new InvalidOperationException(
-                        "Shift terminal does not match the selected till cash account.");
-                }
-
                 shift.ExpectedCashPaisa -= request.AmountPaisa;
             }
 
@@ -186,6 +228,21 @@ public sealed class ExpenseService : IExpenseService
                 TransactionGroupId = transactionGroupId
             };
         }, cancellationToken);
+
+    private static async Task<long> SumAmbientGlAsync(
+        WebPosDbContext context,
+        Guid tenantId,
+        string accountCode,
+        CancellationToken cancellationToken)
+    {
+        string code = accountCode.ToUpperInvariant();
+        IQueryable<GeneralLedgerEntry> query = context.GeneralLedgerEntries
+            .Where(e => e.TenantId == tenantId && e.AccountCode.ToUpper() == code);
+
+        long? debits = await query.SumAsync(e => (long?)e.DebitPaisa, cancellationToken);
+        long? credits = await query.SumAsync(e => (long?)e.CreditPaisa, cancellationToken);
+        return (debits ?? 0L) - (credits ?? 0L);
+    }
 
     private void EnsureTenantResolved()
     {
@@ -243,6 +300,30 @@ public sealed class ExpenseService : IExpenseService
         if (string.Equals(request.PaymentMethod, "CREDIT", StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException("Expenses cannot use CREDIT as the payment channel.");
+        }
+
+        if (string.Equals(request.PaymentMethod, "CASH", StringComparison.OrdinalIgnoreCase)
+            && request.CashAccountId is null)
+        {
+            throw new ArgumentException(
+                "Cash expenses require an explicit funding account (Till, Owner, Petty, etc.).");
+        }
+    }
+
+    private static void EnsureExpensePaymentAccount(
+        string paymentMethod,
+        CashPaymentResolution payment)
+    {
+        if (!string.Equals(paymentMethod, "CASH", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (string.Equals(payment.AccountCode, LedgerAccounts.Cash, StringComparison.OrdinalIgnoreCase)
+            && payment.CashAccountId is null)
+        {
+            throw new ArgumentException(
+                "Cash expenses must use a specific funding account, not the legacy generic CASH account.");
         }
     }
 }

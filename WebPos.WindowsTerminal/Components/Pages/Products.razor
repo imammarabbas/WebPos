@@ -1,0 +1,247 @@
+@page "/products"
+@using System.Globalization
+@using Common.Models
+@implements IDisposable
+@inject ProductAdminApiClient ProductApi
+@inject ISessionService SessionService
+@inject NavigationManager Navigation
+
+<PageTitle>Products</PageTitle>
+
+<div class="page-shell party-page pc-page po-page">
+    <PosTopMenu />
+
+    <div class="po-page-header">
+        <div class="po-page-header-left">
+            <div class="po-icon-tile" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M4 7h16v12H4zM8 7V5h8v2" stroke-linecap="round" />
+                </svg>
+            </div>
+            <div>
+                <h1>Products</h1>
+                <p>View, manage and track catalog items</p>
+            </div>
+        </div>
+        <div class="po-actions">
+            <a class="po-btn po-btn-primary" href="products/new">+ New product</a>
+            <a class="po-btn po-btn-outline" href="sales">Back to Sale</a>
+        </div>
+    </div>
+
+    <div class="po-card">
+        <div class="po-filter-row" style="grid-template-columns:minmax(200px,1fr) auto auto;">
+            <div class="po-field">
+                <label for="pc-search">Search</label>
+                <input id="pc-search"
+                       class="form-control"
+                       type="search"
+                       placeholder="Search name, barcode, SKU, short code…"
+                       value="@_search"
+                       @oninput="OnSearchInput"
+                       disabled="@_loading" />
+            </div>
+            <div class="po-filter-actions">
+                <button type="button" class="po-btn po-btn-primary" disabled="@_loading" @onclick="() => LoadPageAsync()">Search</button>
+                <button type="button" class="po-btn po-btn-outline" disabled="@_loading" @onclick="ResetSearch">Reset</button>
+            </div>
+            <span class="mm-muted" style="align-self:end;padding-bottom:0.4rem;">@_pagerLabel</span>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="po-alert" style="margin-top:0.75rem;">@_error</div>
+    }
+
+    @if (_view is not null)
+    {
+        <div class="po-card" style="margin-top:1rem;">
+            <h2>Product</h2>
+            <div class="pov-info-grid">
+                <div class="pov-info-item"><label>Name</label><div class="pov-value">@_view.Name</div></div>
+                <div class="pov-info-item"><label>Type</label><div class="pov-value">@KindLabel(_view)</div></div>
+                <div class="pov-info-item"><label>Code</label><div class="pov-value">@(string.IsNullOrWhiteSpace(_view.ShortCode) ? _view.Barcode : _view.ShortCode)</div></div>
+                <div class="pov-info-item"><label>Unit</label><div class="pov-value">@_view.BaseUnit</div></div>
+                <div class="pov-info-item"><label>Stock</label><div class="pov-value">@(_view.ParentProductId is null ? _view.StockQty.ToString("0.##", CultureInfo.InvariantCulture) : "—")</div></div>
+                <div class="pov-info-item"><label>Retail</label><div class="pov-value">@(_view.IsBulk ? "—" : $"Rs {FormatRs(_view.RetailPricePaisa)}")</div></div>
+            </div>
+            <div class="pov-footer-actions">
+                <a class="po-btn po-btn-primary" href="@($"products/{_view.Id:D}")">Edit</a>
+                <button type="button" class="po-btn" @onclick="() => _view = null">Back</button>
+            </div>
+        </div>
+    }
+    else if (_loading)
+    {
+        <p class="po-empty">Loading products…</p>
+    }
+    else if (_pageItems.Count == 0)
+    {
+        <p class="po-empty">No products found.</p>
+    }
+    else
+    {
+        <div class="po-card" style="margin-top:1rem;">
+            <div class="po-table-wrap">
+                <table class="po-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Code</th>
+                            <th>Unit</th>
+                            <th class="po-num">Stock</th>
+                            <th class="po-num">Retail</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (ProductDto p in _pageItems)
+                        {
+                            <tr>
+                                <td><strong>@p.Name</strong></td>
+                                <td><span class="po-badge po-badge-open">@KindLabel(p)</span></td>
+                                <td>@(string.IsNullOrWhiteSpace(p.ShortCode) ? p.Barcode : p.ShortCode)</td>
+                                <td>@p.BaseUnit</td>
+                                <td class="po-num">@(p.ParentProductId is null ? p.StockQty.ToString("0.##", CultureInfo.InvariantCulture) : "—")</td>
+                                <td class="po-num">@(p.IsBulk ? "—" : FormatRs(p.RetailPricePaisa))</td>
+                                <td>
+                                    <div class="po-actions">
+                                        <button type="button" class="po-btn po-btn-sm po-btn-outline" @onclick="() => _view = p">View</button>
+                                        <a class="po-btn po-btn-sm po-btn-outline" href="@($"products/{p.Id:D}")">Edit</a>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <div class="po-pager">
+                <div class="po-pager-meta">@_pagerLabel</div>
+                <div class="po-pager-controls">
+                    <button type="button" class="po-page-btn" disabled="@(_page <= 1 || _loading)" @onclick="PrevPage">‹</button>
+                    <button type="button" class="po-page-btn active">@_page</button>
+                    <button type="button" class="po-page-btn" disabled="@(_page >= _totalPages || _loading)" @onclick="NextPage">›</button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private const int PageSize = 50;
+    private readonly List<ProductDto> _pageItems = [];
+    private string _search = string.Empty;
+    private string? _error;
+    private bool _loading = true;
+    private int _page = 1;
+    private int _totalCount;
+    private ProductDto? _view;
+    private CancellationTokenSource? _searchCts;
+
+    private int _totalPages => Math.Max(1, (int)Math.Ceiling(_totalCount / (double)PageSize));
+
+    private string _pagerLabel =>
+        _totalCount == 0
+            ? "0 products"
+            : $"Showing {((_page - 1) * PageSize) + 1}–{Math.Min(_page * PageSize, _totalCount)} of {_totalCount}";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!SessionService.IsActive)
+        {
+            Navigation.NavigateTo("/start-shift");
+            return;
+        }
+
+        await LoadPageAsync();
+    }
+
+    private async Task ResetSearch()
+    {
+        _search = string.Empty;
+        _page = 1;
+        _view = null;
+        await LoadPageAsync();
+    }
+
+    private async Task OnSearchInput(ChangeEventArgs e)
+    {
+        _search = e.Value?.ToString() ?? string.Empty;
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+        _searchCts = new CancellationTokenSource();
+        CancellationToken token = _searchCts.Token;
+        try
+        {
+            await Task.Delay(300, token);
+            _page = 1;
+            _view = null;
+            await LoadPageAsync();
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    private async Task LoadPageAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            Result<PagedProductResult> result = await ProductApi.SearchAsync(_search, _page, PageSize);
+            if (!result.Success || result.Data is null)
+            {
+                _pageItems.Clear();
+                _totalCount = 0;
+                _error = result.ErrorMessage;
+                return;
+            }
+
+            _pageItems.Clear();
+            _pageItems.AddRange(result.Data.Items);
+            _totalCount = result.Data.TotalCount;
+            _page = result.Data.Page;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task PrevPage()
+    {
+        if (_page <= 1)
+        {
+            return;
+        }
+
+        _page--;
+        await LoadPageAsync();
+    }
+
+    private async Task NextPage()
+    {
+        if (_page >= _totalPages)
+        {
+            return;
+        }
+
+        _page++;
+        await LoadPageAsync();
+    }
+
+    private static string KindLabel(ProductDto p) =>
+        p.ParentProductId is not null ? "Child" : p.IsBulk ? "Parent" : "Independent";
+
+    private static string FormatRs(long paisa) =>
+        (paisa / 100m).ToString("N2", CultureInfo.InvariantCulture);
+
+    public void Dispose()
+    {
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+    }
+}

@@ -8,6 +8,12 @@ public sealed class CartLine
 
     public decimal Quantity { get; set; }
 
+    /// <summary>Optional cashier override of catalog retail (paisa).</summary>
+    public long? UnitPriceOverridePaisa { get; set; }
+
+    public long EffectiveUnitPricePaisa =>
+        UnitPriceOverridePaisa ?? Product.UnitPricePaisa;
+
     public long LineTotalPaisa =>
-        (long)Math.Round(Product.UnitPricePaisa * Quantity, MidpointRounding.AwayFromZero);
+        (long)Math.Round(EffectiveUnitPricePaisa * Quantity, MidpointRounding.AwayFromZero);
 }

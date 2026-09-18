@@ -31,7 +31,6 @@ public sealed class MasterOverviewService(
         {
             List<Product> products = await context.Products
                 .AsNoTracking()
-                .Include(p => p.Batches)
                 .Include(p => p.Category)
                 .Where(p => !p.IsDeleted)
                 .ToListAsync(cancellationToken);
@@ -42,10 +41,11 @@ public sealed class MasterOverviewService(
                 p => p.PartyType == PartyTypes.Supplier, cancellationToken);
 
             List<LowStockItemDto> lowStock = products
+                .Where(p => p.ParentProductId is null)
                 .Select(p => new
                 {
                     Product = p,
-                    Stock = p.Batches.Sum(b => b.CurrentQty)
+                    Stock = p.StockQty
                 })
                 .Where(x => x.Stock < x.Product.MinStockQty)
                 .OrderBy(x => x.Stock)

@@ -1,0 +1,151 @@
+@using Common.Models
+@using System.Globalization
+
+@if (!string.IsNullOrWhiteSpace(CategoryName))
+{
+    <div class="modal-backdrop" @onclick="Close">
+        <div class="sf-modal sf-variant-modal" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="sf-modal-head">
+                <h2>Select Item — @CategoryName</h2>
+                <button type="button" class="link-btn" @onclick="Close">Close</button>
+            </div>
+
+            @if (Rows.Count == 0)
+            {
+                <p class="muted">No sellable items available in this category.</p>
+            }
+            else
+            {
+                <table class="sf-variant-table">
+                    <thead>
+                        <tr>
+                            <th>Item</th>
+                            <th>Packing</th>
+                            <th>Code</th>
+                            <th>Price</th>
+                            <th>Stock</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (CategoryPickRow row in Rows)
+                        {
+                            @if (row.IsMasterHeader)
+                            {
+                                <tr class="sf-cat-master-row" @onclick="() => OpenMasterAsync(row.Master!)">
+                                    <td colspan="5"><strong>@row.Master!.Name</strong> <span class="muted">· pick packing</span></td>
+                                    <td>
+                                        <button type="button" class="sf-mini-btn" @onclick:stopPropagation="true" @onclick="() => OpenMasterAsync(row.Master!)">
+                                            Packs
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                            else if (row.Product is not null)
+                            {
+                                <tr @onclick="() => SelectProductAsync(row.Product)">
+                                    <td><strong>@row.Product.Name</strong></td>
+                                    <td>@(string.IsNullOrWhiteSpace(row.Product.PackingSize) ? "—" : row.Product.PackingSize)</td>
+                                    <td class="mono">@DisplayCode(row.Product)</td>
+                                    <td>Rs @FormatRs(row.Product.UnitPricePaisa)</td>
+                                    <td>@row.Product.AvailableStock.ToString("0.##")</td>
+                                    <td>
+                                        <button type="button" class="sf-mini-btn" @onclick:stopPropagation="true" @onclick="() => SelectProductAsync(row.Product)">
+                                            Add
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    public sealed class CategoryPickRow
+    {
+        public bool IsMasterHeader { get; init; }
+        public SaleMasterDto? Master { get; init; }
+        public SalesProductDto? Product { get; init; }
+    }
+
+    [Parameter] public string? CategoryName { get; set; }
+    [Parameter] public IReadOnlyList<SalesProductDto> Products { get; set; } = [];
+    [Parameter] public IReadOnlyList<SaleMasterDto> Masters { get; set; } = [];
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<SalesProductDto> OnProductSelected { get; set; }
+    [Parameter] public EventCallback<SaleMasterDto> OnMasterSelected { get; set; }
+
+    private IReadOnlyList<CategoryPickRow> Rows
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(CategoryName))
+            {
+                return [];
+            }
+
+            List<CategoryPickRow> rows = [];
+            HashSet<Guid> masterChildIds = [];
+
+            foreach (SaleMasterDto master in Masters
+                .Where(m => string.Equals(m.CategoryName, CategoryName, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(m => m.Name))
+            {
+                rows.Add(new CategoryPickRow { IsMasterHeader = true, Master = master });
+                foreach (SaleVariantChildDto child in (master.Children ?? []).OrderBy(c => c.PackingSize).ThenBy(c => c.Name))
+                {
+                    masterChildIds.Add(child.ProductId);
+                    rows.Add(new CategoryPickRow
+                    {
+                        Product = new SalesProductDto
+                        {
+                            ProductId = child.ProductId,
+                            BatchId = Guid.Empty,
+                            BatchNumber = string.Empty,
+                            Name = string.IsNullOrWhiteSpace(child.Name) ? "Item" : child.Name,
+                            Sku = child.Sku ?? string.Empty,
+                            Barcode = child.Barcode ?? string.Empty,
+                            ShortCode = child.ShortCode ?? string.Empty,
+                            CategoryName = child.CategoryName ?? string.Empty,
+                            IsLoose = child.IsLoose,
+                            BaseUnit = child.BaseUnit ?? string.Empty,
+                            PackingSize = child.PackingSize ?? string.Empty,
+                            UnitPricePaisa = child.UnitPricePaisa,
+                            AvailableStock = child.AvailableStock,
+                            ExpiryDate = null
+                        }
+                    });
+                }
+            }
+
+            foreach (SalesProductDto product in Products
+                .Where(p =>
+                    string.Equals(p.CategoryName, CategoryName, StringComparison.OrdinalIgnoreCase)
+                    && !masterChildIds.Contains(p.ProductId))
+                .OrderBy(p => p.Name))
+            {
+                rows.Add(new CategoryPickRow { Product = product });
+            }
+
+            return rows;
+        }
+    }
+
+    private async Task Close() => await OnClose.InvokeAsync();
+
+    private async Task SelectProductAsync(SalesProductDto product) =>
+        await OnProductSelected.InvokeAsync(product);
+
+    private async Task OpenMasterAsync(SaleMasterDto master) =>
+        await OnMasterSelected.InvokeAsync(master);
+
+    private static string DisplayCode(SalesProductDto p) =>
+        !string.IsNullOrWhiteSpace(p.ShortCode) ? p.ShortCode : p.Barcode;
+
+    private static string FormatRs(long paisa) =>
+        (paisa / 100m).ToString("N2", CultureInfo.InvariantCulture);
+}

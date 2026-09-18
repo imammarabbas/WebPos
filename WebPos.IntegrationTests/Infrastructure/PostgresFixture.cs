@@ -14,9 +14,9 @@ namespace WebPos.IntegrationTests.Infrastructure;
 /// </summary>
 public sealed class PostgresFixture : IAsyncLifetime
 {
-    // Matches WebPos/appsettings.json DefaultConnection (local WebPos_Test database).
+    // Matches WebPos/appsettings.Development.json local Postgres credentials.
     private const string ConnectionString =
-        "Server=localhost;Port=5432;Database=WebPos_Test;User Id=postgres;Password=sa;Include Error Detail=true";
+        "Host=localhost;Port=5432;Database=WebPos_Test;Username=postgres;Password=postgres;Include Error Detail=true";
 
     private DbContextOptions<WebPosDbContext>? _options;
 
@@ -84,49 +84,79 @@ public sealed class IntegrationTestScope : IAsyncDisposable, IDisposable
 
     public IReportingService ReportingService { get; }
 
+    public IStockPositionService StockPositionService { get; }
+
+    public IBusinessPositionService BusinessPositionService { get; }
+
     public ICashAccountService CashAccountService { get; }
 
     public ICashTransferService CashTransferService { get; }
+
+    public IShiftService ShiftService { get; }
+
+    public IDbContextFactory<WebPosDbContext> DbFactory { get; }
+
+    public IAmbientDbContextAccessor Ambient { get; }
 
     public IntegrationTestScope(DbContextOptions<WebPosDbContext> options)
     {
         TenantService = new FixedTenantService(TenantDefaults.MasterTenantId);
         DbContext = new WebPosDbContext(options, TenantService);
-        TransactionService = new TransactionService(DbContext);
+        DbFactory = new TestDbContextFactory(options, TenantService);
+        Ambient = new AmbientDbContextAccessor();
+        TransactionService = new TransactionService(DbFactory);
         PartyLedgerService = new PartyLedgerService(
-            DbContext,
+            DbFactory,
             TransactionService,
             TenantService);
         PartyService = new PartyService(
-            DbContext,
+            DbFactory,
+            Ambient,
             TransactionService,
             PartyLedgerService,
             TenantService,
-            new CreatePartyRequestValidator(DbContext, TenantService));
-        CashAccountService = new CashAccountService(DbContext, TenantService);
+            new CreatePartyRequestValidator(DbFactory, TenantService));
+        CashAccountService = new CashAccountService(DbFactory, Ambient, TenantService);
         CashTransferService = new CashTransferService(
-            DbContext,
+            DbFactory,
+            Ambient,
             TransactionService,
             TenantService);
+        ShiftService = new ShiftService(
+            DbFactory,
+            Ambient,
+            TransactionService,
+            TenantService,
+            CashAccountService);
         ProcurementService = new ProcurementService(
-            DbContext,
+            DbFactory,
+            Ambient,
             TransactionService,
             PartyLedgerService,
             PartyService,
             CashAccountService,
             TenantService);
         SalesService = new SalesService(
-            DbContext,
+            DbFactory,
+            Ambient,
             TransactionService,
             PartyLedgerService,
             CashAccountService);
         SalesReturnService = new SalesReturnService(
-            DbContext,
+            DbFactory,
+            Ambient,
             TransactionService,
             PartyLedgerService);
         ReportingService = new ReportingService(
-            new TestDbContextFactory(options, TenantService),
+            DbFactory,
             TenantService);
+        StockPositionService = new StockPositionService(DbFactory, TenantService);
+        BusinessPositionService = new BusinessPositionService(
+            DbFactory,
+            TenantService,
+            CashAccountService,
+            StockPositionService,
+            ReportingService);
     }
 
     private sealed class TestDbContextFactory(

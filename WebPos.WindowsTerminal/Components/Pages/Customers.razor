@@ -1,0 +1,271 @@
+@page "/customers"
+@using System.Globalization
+@using Common.Models
+@inject CustomerApiClient CustomerApi
+@inject ISessionService SessionService
+@inject NavigationManager Navigation
+
+<PageTitle>Customers</PageTitle>
+
+<div class="page-shell party-page po-page">
+    <PosTopMenu />
+
+    <div class="po-page-header">
+        <div class="po-page-header-left">
+            <div class="po-icon-tile" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="8" r="3.5" />
+                    <path d="M5 19c1.5-3.5 4-5 7-5s5.5 1.5 7 5" stroke-linecap="round" />
+                </svg>
+            </div>
+            <div>
+                <h1>Customers</h1>
+                <p>View and manage customer contacts and balances</p>
+            </div>
+        </div>
+        <div class="po-actions">
+            <button type="button" class="po-btn po-btn-primary" @onclick="OpenCreate">+ New Customer</button>
+            <a class="po-btn po-btn-outline" href="sales">Back to Sale</a>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="po-alert">@_error</div>
+    }
+
+    @if (_mode == PartyUiMode.View && _selected is not null)
+    {
+        <div class="po-card">
+            <h2>Customer</h2>
+            <div class="pov-info-grid">
+                <div class="pov-info-item"><label>Name</label><div class="pov-value">@_selected.Name</div></div>
+                <div class="pov-info-item"><label>Phone</label><div class="pov-value">@_selected.PhoneNumber</div></div>
+                <div class="pov-info-item"><label>Balance</label><div class="pov-value">Rs @FormatRs(_selected.CurrentBalancePaisa)</div></div>
+                <div class="pov-info-item"><label>Address</label><div class="pov-value">@(string.IsNullOrWhiteSpace(_selected.Address) ? "—" : _selected.Address)</div></div>
+            </div>
+            <div class="pov-footer-actions">
+                <a class="po-btn po-btn-primary" href="@($"sales?customer={_selected.Id:D}")">Sell</a>
+                <button type="button" class="po-btn po-btn-outline" @onclick="OpenEditSelected">Edit</button>
+                <button type="button" class="po-btn" @onclick="BackToList">Back</button>
+            </div>
+        </div>
+    }
+    else if (_mode == PartyUiMode.Edit)
+    {
+        <div class="po-card">
+            <h2>@(_editingId is Guid ? "Edit Customer" : "New Customer")</h2>
+            <div class="pov-info-grid">
+                <div class="po-field">
+                    <label for="cust-name">Name</label>
+                    <input id="cust-name" class="form-control" @bind="_editName" disabled="@_saving" />
+                </div>
+                <div class="po-field">
+                    <label for="cust-phone">Phone</label>
+                    <input id="cust-phone" class="form-control" type="tel" @bind="_editPhone" disabled="@_saving" />
+                </div>
+                <div class="po-field">
+                    <label for="cust-addr">Address</label>
+                    <input id="cust-addr" class="form-control" @bind="_editAddress" disabled="@_saving" />
+                </div>
+            </div>
+            <div class="pov-footer-actions">
+                <button type="button" class="po-btn po-btn-primary" disabled="@_saving" @onclick="SaveAsync">
+                    @(_saving ? "Saving…" : "Save")
+                </button>
+                <button type="button" class="po-btn" disabled="@_saving" @onclick="BackToList">Back</button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="po-card">
+            <div class="po-filter-row" style="grid-template-columns:minmax(200px,1fr) auto;">
+                <div class="po-field">
+                    <label for="cust-search">Search</label>
+                    <input id="cust-search"
+                           class="form-control"
+                           type="search"
+                           placeholder="Search name or phone…"
+                           @bind="_search"
+                           @bind:event="oninput"
+                           disabled="@_loading" />
+                </div>
+                <div class="po-filter-actions">
+                    <button type="button" class="po-btn po-btn-outline" disabled="@_loading" @onclick="LoadAsync">Refresh</button>
+                </div>
+            </div>
+        </div>
+
+        @if (_loading)
+        {
+            <p class="po-empty">Loading customers…</p>
+        }
+        else if (Filtered.Count == 0)
+        {
+            <p class="po-empty">No customers found.</p>
+        }
+        else
+        {
+            <div class="po-card" style="margin-top:1rem;">
+                <div class="po-table-wrap">
+                    <table class="po-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Phone</th>
+                                <th class="po-num">Balance</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (PartyDto c in Filtered)
+                            {
+                                <tr>
+                                    <td><strong>@c.Name</strong></td>
+                                    <td>@c.PhoneNumber</td>
+                                    <td class="po-num">@FormatRs(c.CurrentBalancePaisa)</td>
+                                    <td>
+                                        <div class="po-actions">
+                                            <button type="button" class="po-btn po-btn-sm po-btn-outline" @onclick="() => OpenView(c)">View</button>
+                                            <button type="button" class="po-btn po-btn-sm po-btn-outline" @onclick="() => OpenEdit(c)">Edit</button>
+                                            <a class="po-btn po-btn-sm po-btn-primary" href="@($"sales?customer={c.Id:D}")">Sell</a>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private enum PartyUiMode { List, View, Edit }
+
+    private IReadOnlyList<PartyDto> _customers = [];
+    private string _search = string.Empty;
+    private string? _error;
+    private bool _loading = true;
+    private bool _saving;
+    private PartyUiMode _mode = PartyUiMode.List;
+    private PartyDto? _selected;
+    private Guid? _editingId;
+    private string _editName = string.Empty;
+    private string _editPhone = string.Empty;
+    private string _editAddress = string.Empty;
+
+    private IReadOnlyList<PartyDto> Filtered =>
+        CustomerApiClient.FilterCustomers(_customers, _search).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!SessionService.IsActive)
+        {
+            Navigation.NavigateTo("/start-shift");
+            return;
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        Result<IReadOnlyList<PartyDto>> result = await CustomerApi.GetCustomersAsync();
+        _loading = false;
+        if (result.Success && result.Data is not null)
+        {
+            _customers = result.Data;
+            return;
+        }
+
+        _customers = [];
+        _error = result.ErrorMessage ?? "Unable to load customers.";
+    }
+
+    private void OpenView(PartyDto c)
+    {
+        _selected = c;
+        _mode = PartyUiMode.View;
+    }
+
+    private void OpenEdit(PartyDto c)
+    {
+        _selected = c;
+        _editingId = c.Id;
+        _editName = c.Name;
+        _editPhone = c.PhoneNumber;
+        _editAddress = c.Address ?? string.Empty;
+        _mode = PartyUiMode.Edit;
+    }
+
+    private void OpenEditSelected()
+    {
+        if (_selected is not null)
+        {
+            OpenEdit(_selected);
+        }
+    }
+
+    private void OpenCreate()
+    {
+        _selected = null;
+        _editingId = null;
+        _editName = string.Empty;
+        _editPhone = string.Empty;
+        _editAddress = string.Empty;
+        _mode = PartyUiMode.Edit;
+    }
+
+    private void BackToList()
+    {
+        _mode = PartyUiMode.List;
+        _selected = null;
+        _editingId = null;
+        _error = null;
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _error = null;
+        try
+        {
+            Result<PartyDto> result;
+            if (_editingId is Guid id)
+            {
+                long creditLimit = _selected?.CreditLimitPaisa ?? 0;
+                result = await CustomerApi.UpdateCustomerAsync(
+                    id,
+                    _editName,
+                    _editPhone,
+                    _editAddress,
+                    creditLimit);
+            }
+            else
+            {
+                result = await CustomerApi.CreateCustomerAsync(_editName, _editPhone, _editAddress);
+            }
+
+            if (!result.Success || result.Data is null)
+            {
+                _error = result.ErrorMessage ?? "Unable to save customer.";
+                return;
+            }
+
+            await LoadAsync();
+            OpenView(result.Data);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static string FormatRs(long paisa) =>
+        (paisa / 100m).ToString("N2", CultureInfo.InvariantCulture);
+}

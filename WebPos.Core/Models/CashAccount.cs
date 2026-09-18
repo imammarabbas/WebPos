@@ -5,7 +5,8 @@ namespace WebPos.Core.Models;
 
 /// <summary>
 /// Tenant-scoped cash / wallet registry. <see cref="AccountCode"/> is posted on
-/// <see cref="GeneralLedgerEntry.AccountCode"/>; balances are derived from the GL.
+/// <see cref="GeneralLedgerEntry.AccountCode"/>. <see cref="BalancePaisa"/> is the
+/// materialized GL net (debits − credits) with a database zero-floor.
 /// </summary>
 public class CashAccount : BaseEntity
 {
@@ -31,4 +32,7 @@ public class CashAccount : BaseEntity
 
     /// <summary>Optional POS/payment mapping key (CASH, EASYPAISA, BANK_TRANSFER, …).</summary>
     public string? PaymentMethodKey { get; set; }
+
+    /// <summary>Materialized cash balance (debits − credits). Must stay ≥ 0.</summary>
+    public long BalancePaisa { get; set; }
 }

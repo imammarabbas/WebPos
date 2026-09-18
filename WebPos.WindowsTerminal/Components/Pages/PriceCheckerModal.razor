@@ -1,0 +1,149 @@
+@using Common.Models
+@using System.Globalization
+
+@if (Visible)
+{
+    <div class="modal-backdrop" @onclick="Close">
+        <div class="sf-modal sf-price-modal" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="sf-modal-head">
+                <h2>Price Checker · F6</h2>
+                <button type="button" class="link-btn" @onclick="Close">Close</button>
+            </div>
+            <input class="scan-input"
+                   type="search"
+                   placeholder="Scan or type code…"
+                   @ref="_input"
+                   @bind="_query"
+                   @bind:event="oninput"
+                   @onkeydown="OnKeyDown"
+                   autocomplete="off" />
+
+            @if (_foundProduct is not null)
+            {
+                <div class="sf-price-card">
+                    <h3>@_foundProduct.Name</h3>
+                    <dl>
+                        <div><dt>Code</dt><dd>@DisplayCode(_foundProduct)</dd></div>
+                        <div><dt>Packing</dt><dd>@(string.IsNullOrWhiteSpace(_foundProduct.PackingSize) ? "—" : _foundProduct.PackingSize)</dd></div>
+                        <div><dt>Price</dt><dd>Rs @FormatRs(_foundProduct.UnitPricePaisa)</dd></div>
+                        <div><dt>Stock</dt><dd>@_foundProduct.AvailableStock.ToString("0.##")</dd></div>
+                    </dl>
+                    <p class="muted">Lookup only — does not add to the cart.</p>
+                </div>
+            }
+            else if (_foundMaster is not null)
+            {
+                <div class="sf-price-card">
+                    <h3>@_foundMaster.Name <span class="muted">(Master)</span></h3>
+                    <ul class="sf-price-variants">
+                        @foreach (SaleVariantChildDto c in _foundMaster.Children ?? [])
+                        {
+                            <li>
+                                <strong>@c.PackingSize</strong>
+                                · Rs @FormatRs(c.UnitPricePaisa)
+                                · stock @c.AvailableStock.ToString("0.##")
+                            </li>
+                        }
+                    </ul>
+                    <p class="muted">Lookup only — use F5 or scan to sell a packing.</p>
+                </div>
+            }
+            else if (_lookedUp && !string.IsNullOrWhiteSpace(_query))
+            {
+                <p class="muted">No product matched “@_query”.</p>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public IReadOnlyList<SalesProductDto> Products { get; set; } = [];
+    [Parameter] public IReadOnlyList<SaleMasterDto> Masters { get; set; } = [];
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private ElementReference _input;
+    private string _query = string.Empty;
+    private SalesProductDto? _foundProduct;
+    private SaleMasterDto? _foundMaster;
+    private bool _lookedUp;
+    private bool _wasVisible;
+
+    protected override void OnParametersSet()
+    {
+        if (Visible && !_wasVisible)
+        {
+            _query = string.Empty;
+            _foundProduct = null;
+            _foundMaster = null;
+            _lookedUp = false;
+        }
+
+        _wasVisible = Visible;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Visible)
+        {
+            try { await _input.FocusAsync(); } catch { /* ignore */ }
+        }
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            await Close();
+            return;
+        }
+
+        if (e.Key == "Enter")
+        {
+            Lookup();
+        }
+    }
+
+    private void Lookup()
+    {
+        _lookedUp = true;
+        _foundProduct = null;
+        _foundMaster = null;
+        string q = _query.Trim();
+        if (q.Length == 0)
+        {
+            return;
+        }
+
+        _foundProduct = Products.FirstOrDefault(p =>
+            string.Equals(p.Barcode, q, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(p.ShortCode, q, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(p.Sku, q, StringComparison.OrdinalIgnoreCase));
+
+        if (_foundProduct is not null)
+        {
+            return;
+        }
+
+        _foundMaster = Masters.FirstOrDefault(m =>
+            string.Equals(m.Barcode, q, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(m.ShortCode, q, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(m.Sku, q, StringComparison.OrdinalIgnoreCase));
+
+        if (_foundMaster is not null)
+        {
+            return;
+        }
+
+        _foundProduct = Products.FirstOrDefault(p =>
+            p.Name.Contains(q, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task Close() => await OnClose.InvokeAsync();
+
+    private static string DisplayCode(SalesProductDto p) =>
+        !string.IsNullOrWhiteSpace(p.ShortCode) ? p.ShortCode : p.Barcode;
+
+    private static string FormatRs(long paisa) =>
+        (paisa / 100m).ToString("N2", CultureInfo.InvariantCulture);
+}

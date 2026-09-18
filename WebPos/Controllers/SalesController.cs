@@ -19,7 +19,8 @@ namespace WebPos.Controllers;
 public sealed class SalesController(
     ISalesService salesService,
     ISalesReturnService salesReturnService,
-    ISalesInvoiceQueryService invoiceQueryService) : ControllerBase
+    ISalesInvoiceQueryService invoiceQueryService,
+    IReportingService reportingService) : ControllerBase
 {
     private readonly ISalesService _salesService =
         salesService ?? throw new ArgumentNullException(nameof(salesService));
@@ -28,6 +29,24 @@ public sealed class SalesController(
         ?? throw new ArgumentNullException(nameof(salesReturnService));
     private readonly ISalesInvoiceQueryService _invoiceQueryService =
         invoiceQueryService ?? throw new ArgumentNullException(nameof(invoiceQueryService));
+    private readonly IReportingService _reportingService =
+        reportingService ?? throw new ArgumentNullException(nameof(reportingService));
+
+    [HttpGet("by-cashier")]
+    [ProducesResponseType(typeof(IReadOnlyList<CashierSalesSummaryDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<IReadOnlyList<CashierSalesSummaryDto>>> SalesByCashier(
+        [FromQuery] DateTimeOffset from,
+        [FromQuery] DateTimeOffset to,
+        CancellationToken cancellationToken = default)
+    {
+        if (to < from)
+        {
+            return BadRequest("Query 'to' must be on or after 'from'.");
+        }
+
+        return Ok(await _reportingService.GetSalesByCashierAsync(from, to, cancellationToken));
+    }
 
     [HttpGet("invoices")]
     [ProducesResponseType(typeof(IReadOnlyList<SalesInvoiceSummaryDto>), StatusCodes.Status200OK)]

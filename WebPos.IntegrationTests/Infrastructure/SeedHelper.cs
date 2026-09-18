@@ -15,10 +15,12 @@ public static class SeedHelper
 
     public static async Task<SaleSeedData> SeedSalePrerequisitesAsync(
         WebPosDbContext context,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        decimal? stockQty = null)
     {
         ArgumentNullException.ThrowIfNull(context);
 
+        decimal qty = stockQty is > 0 ? stockQty.Value : InitialBatchQty;
         Guid tenantId = TenantDefaults.MasterTenantId;
         DateTimeOffset now = DateTimeOffset.UtcNow;
         Guid roleId = Guid.NewGuid();
@@ -129,6 +131,9 @@ public static class SeedHelper
             BaseUnit = "PCS",
             ConversionMultiplier = 1,
             ShowOnWebshop = false,
+            StockQty = qty,
+            CostPricePaisa = 10_000L,
+            RetailPricePaisa = RetailPricePaisa,
             CreatedAt = now,
             UpdatedAt = now
         });
@@ -142,8 +147,8 @@ public static class SeedHelper
             ExpiryDate = DateOnly.FromDateTime(now.UtcDateTime.AddYears(1)),
             CostPricePaisa = 10_000L,
             RetailPricePaisa = RetailPricePaisa,
-            InitialQty = InitialBatchQty,
-            CurrentQty = InitialBatchQty,
+            InitialQty = qty,
+            CurrentQty = qty,
             SupplierId = supplierId,
             RackLocation = "A1",
             CreatedAt = now
@@ -163,7 +168,7 @@ public static class SeedHelper
             ShortCode: shortCode,
             BatchId: batchId,
             BatchNumber: batchNumber,
-            InitialQty: InitialBatchQty,
+            InitialQty: qty,
             UnitPricePaisa: RetailPricePaisa);
     }
 }

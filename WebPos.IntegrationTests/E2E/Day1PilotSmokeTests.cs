@@ -153,10 +153,10 @@ public sealed class Day1PilotSmokeTests
             .SumAsync(e => e.DebitPaisa - e.CreditPaisa);
         cashNet.Should().BeGreaterThanOrEqualTo(expectedTotal);
 
-        ProductBatch batch = await db.ProductBatches
+        Product product = await db.Products
             .IgnoreQueryFilters()
-            .SingleAsync(b => b.Id == seed.BatchId);
-        batch.CurrentQty.Should().Be(seed.InitialQty - 2m);
+            .SingleAsync(p => p.Id == seed.ProductId);
+        product.StockQty.Should().Be(seed.InitialQty - 2m);
 
         CashierShift closed = await db.CashierShifts
             .IgnoreQueryFilters()
@@ -262,6 +262,9 @@ public sealed class Day1PilotSmokeTests
             BaseUnit = "L",
             ConversionMultiplier = 1,
             ShowOnWebshop = false,
+            StockQty = initialQty,
+            CostPricePaisa = 18_000,
+            RetailPricePaisa = unitPrice,
             CreatedAt = now,
             UpdatedAt = now
         });

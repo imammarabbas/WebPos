@@ -1,0 +1,135 @@
+@page "/master/business-position"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using WebPos.Core.Abstractions
+@inject IBusinessPositionService PositionService
+
+<PageTitle>Business Position · Cone Mart</PageTitle>
+
+<div class="mm-page">
+    <div class="mm-page-header">
+        <div>
+            <h1>Business position</h1>
+            <p>Historical position reconstructed from transaction history — not today's live balance for past dates</p>
+        </div>
+        <div class="mm-form-actions" style="margin:0;">
+            @foreach ((string id, string label) in Presets)
+            {
+                <button type="button" class="mm-btn @(_preset == id ? "mm-btn-primary" : null)" @onclick="() => SetPreset(id)">@label</button>
+            }
+        </div>
+    </div>
+
+    @if (_preset == "custom")
+    {
+        <div class="mm-form-grid" style="margin-bottom:1rem;">
+            <div class="mm-field"><label>From</label><InputText type="date" @bind-Value="_fromDate" /></div>
+            <div class="mm-field"><label>To</label><InputText type="date" @bind-Value="_toDate" /></div>
+            <div class="mm-field" style="align-self:end;"><button type="button" class="mm-btn mm-btn-primary" @onclick="LoadAsync">Apply</button></div>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+
+    @if (_position is not null)
+    {
+        <div class="mm-table-wrap">
+            <table class="mm-table">
+                <tbody>
+                    <tr><td>Available cash (tills)</td><td>Rs @FormatRs(_position.AvailableCashPaisa)</td></tr>
+                    <tr><td>Bank</td><td>Rs @FormatRs(_position.BankPaisa)</td></tr>
+                    <tr><td>Customer receivable (as-of end)</td><td>Rs @FormatRs(_position.CustomerReceivablePaisa)</td></tr>
+                    <tr><td>Supplier payable (as-of end)</td><td>Rs @FormatRs(_position.SupplierPayablePaisa)</td></tr>
+                    <tr><td>Stock value</td><td>Rs @FormatRs(_position.StockValuePaisa)</td></tr>
+                    <tr><td>Stock difference</td><td>Rs @FormatRs(_position.StockDifferencePaisa)</td></tr>
+                    <tr><td>Unrecorded physical cash</td><td>Rs @FormatRs(_position.UnrecordedPhysicalCashPaisa)</td></tr>
+                    <tr><td>Unregistered cash (GL)</td><td>Rs @FormatRs(_position.UnregisteredCashLiabilityPaisa)</td></tr>
+                    <tr><td>Sales (period)</td><td>Rs @FormatRs(_position.SalesPaisa)</td></tr>
+                    <tr><td>Purchases / COGS (period)</td><td>Rs @FormatRs(_position.PurchasesPaisa)</td></tr>
+                    <tr><td>Expenses (period)</td><td>Rs @FormatRs(_position.ExpensesPaisa)</td></tr>
+                    <tr><td>Owner capital (as-of end)</td><td>Rs @FormatRs(_position.OwnerCapitalPaisa)</td></tr>
+                    <tr><td>Loan outstanding (as-of end)</td><td>Rs @FormatRs(_position.LoanOutstandingPaisa)</td></tr>
+                    <tr><td>Cash In (period)</td><td>Rs @FormatRs(_position.CashInPaisa)</td></tr>
+                    <tr><td>Cash Out (period)</td><td>Rs @FormatRs(_position.CashOutPaisa)</td></tr>
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@code {
+    private BusinessPositionDto? _position;
+    private string _preset = "today";
+    private string _fromDate = DateTime.Today.ToString("yyyy-MM-dd");
+    private string _toDate = DateTime.Today.ToString("yyyy-MM-dd");
+    private string? _error;
+
+    private static readonly (string Id, string Label)[] Presets =
+    [
+        ("today", "Today"),
+        ("yesterday", "Yesterday"),
+        ("week", "This week"),
+        ("month", "This month"),
+        ("prev", "Previous month"),
+        ("custom", "Custom")
+    ];
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task SetPreset(string preset)
+    {
+        _preset = preset;
+        if (preset != "custom")
+        {
+            await LoadAsync();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _error = null;
+        try
+        {
+            (DateTimeOffset from, DateTimeOffset to) = _preset == "custom"
+                ? (new DateTimeOffset(DateTime.Parse(_fromDate), TimeSpan.Zero),
+                    new DateTimeOffset(DateTime.Parse(_toDate).AddDays(1).AddTicks(-1), TimeSpan.Zero))
+                : ResolveRange(_preset);
+
+            _position = await PositionService.GetPositionAsync(new BusinessPositionQuery { From = from, To = to });
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private static (DateTimeOffset From, DateTimeOffset To) ResolveRange(string preset)
+    {
+        DateTime today = DateTime.UtcNow.Date;
+        return preset switch
+        {
+            "yesterday" => (
+                new DateTimeOffset(today.AddDays(-1), TimeSpan.Zero),
+                new DateTimeOffset(today.AddTicks(-1), TimeSpan.Zero)),
+            "week" => (
+                new DateTimeOffset(today.AddDays(-(int)today.DayOfWeek), TimeSpan.Zero),
+                new DateTimeOffset(today.AddDays(1).AddTicks(-1), TimeSpan.Zero)),
+            "month" => (
+                new DateTimeOffset(new DateTime(today.Year, today.Month, 1), TimeSpan.Zero),
+                new DateTimeOffset(today.AddDays(1).AddTicks(-1), TimeSpan.Zero)),
+            "prev" => (
+                new DateTimeOffset(new DateTime(today.Year, today.Month, 1).AddMonths(-1), TimeSpan.Zero),
+                new DateTimeOffset(new DateTime(today.Year, today.Month, 1).AddTicks(-1), TimeSpan.Zero)),
+            _ => (
+                new DateTimeOffset(today, TimeSpan.Zero),
+                new DateTimeOffset(today.AddDays(1).AddTicks(-1), TimeSpan.Zero))
+        };
+    }
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+}

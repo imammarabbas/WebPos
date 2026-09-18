@@ -47,13 +47,33 @@ public sealed class ApiClient : IApiClient
 
     public Task<CashierDto> LoginAsync(
         string pin,
+        CancellationToken cancellationToken = default) =>
+        LoginAsync(pin, role: null, cancellationToken);
+
+    public Task<CashierDto> LoginAsync(
+        string pin,
+        string? role,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pin);
         return SendAsync<CashierDto>(
             HttpMethod.Post,
             "api/auth/login",
-            new LoginRequest { Pin = pin },
+            new LoginRequest { Pin = pin, Role = role },
+            cancellationToken);
+    }
+
+    public Task<CashierDto> LoginWithPasswordAsync(
+        string username,
+        string password,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(username);
+        ArgumentException.ThrowIfNullOrWhiteSpace(password);
+        return SendAsync<CashierDto>(
+            HttpMethod.Post,
+            "api/auth/login-password",
+            new StaffPasswordLoginRequest { Username = username, Password = password },
             cancellationToken);
     }
 
@@ -66,6 +86,21 @@ public sealed class ApiClient : IApiClient
             HttpMethod.Post,
             "api/shift/start",
             request,
+            cancellationToken);
+    }
+
+    public Task<SuggestedOpeningCashDto> GetSuggestedOpeningCashAsync(
+        Guid? terminalId = null,
+        CancellationToken cancellationToken = default)
+    {
+        string path = terminalId is Guid id && id != Guid.Empty
+            ? $"api/shift/suggested-opening?terminalId={id:D}"
+            : "api/shift/suggested-opening";
+
+        return SendAsync<SuggestedOpeningCashDto>(
+            HttpMethod.Get,
+            path,
+            content: null,
             cancellationToken);
     }
 
@@ -166,11 +201,122 @@ public sealed class ApiClient : IApiClient
             content: null,
             cancellationToken);
 
+    public Task<PagedProductResult> SearchProductsAsync(
+        string? search = null,
+        int page = 1,
+        int pageSize = 50,
+        bool lowStockOnly = false,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new Dictionary<string, string?>
+        {
+            ["search"] = search,
+            ["page"] = page.ToString(),
+            ["pageSize"] = pageSize.ToString(),
+            ["lowStockOnly"] = lowStockOnly ? "true" : "false"
+        };
+        string qs = string.Join(
+            "&",
+            query
+                .Where(kv => !string.IsNullOrWhiteSpace(kv.Value))
+                .Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value!)}"));
+        return SendAsync<PagedProductResult>(
+            HttpMethod.Get,
+            string.IsNullOrEmpty(qs) ? "api/products/search" : $"api/products/search?{qs}",
+            content: null,
+            cancellationToken);
+    }
+
+    public Task<IReadOnlyList<ProductDto>> GetBulkParentsAsync(
+        string? search = null,
+        int take = 50,
+        Guid? includeId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var parts = new List<string>
+        {
+            $"take={take}"
+        };
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            parts.Add($"search={Uri.EscapeDataString(search.Trim())}");
+        }
+
+        if (includeId is Guid id)
+        {
+            parts.Add($"includeId={id:D}");
+        }
+
+        return SendAsync<IReadOnlyList<ProductDto>>(
+            HttpMethod.Get,
+            $"api/products/bulk-parents?{string.Join("&", parts)}",
+            content: null,
+            cancellationToken);
+    }
+
+    public Task<ProductDto> GetProductAsync(
+        Guid productId,
+        CancellationToken cancellationToken = default) =>
+        SendAsync<ProductDto>(
+            HttpMethod.Get,
+            $"api/products/{productId:D}",
+            content: null,
+            cancellationToken);
+
+    public Task<ProductDto> CreateProductAsync(
+        UpsertProductRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync<ProductDto>(
+            HttpMethod.Post,
+            "api/products",
+            request,
+            cancellationToken);
+    }
+
+    public Task<ProductDto> UpdateProductAsync(
+        Guid productId,
+        UpsertProductRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync<ProductDto>(
+            HttpMethod.Put,
+            $"api/products/{productId:D}",
+            request,
+            cancellationToken);
+    }
+
+    public Task<IReadOnlyList<CategoryDto>> GetCategoriesAsync(
+        CancellationToken cancellationToken = default) =>
+        SendAsync<IReadOnlyList<CategoryDto>>(
+            HttpMethod.Get,
+            "api/categories",
+            content: null,
+            cancellationToken);
+
     public Task<IReadOnlyList<SalesProductDto>> GetProductsForSaleAsync(
         CancellationToken cancellationToken = default) =>
         SendAsync<IReadOnlyList<SalesProductDto>>(
             HttpMethod.Get,
             "api/products/for-sale",
+            content: null,
+            cancellationToken);
+
+    public Task<IReadOnlyList<SaleMasterDto>> GetSaleMastersAsync(
+        CancellationToken cancellationToken = default) =>
+        SendAsync<IReadOnlyList<SaleMasterDto>>(
+            HttpMethod.Get,
+            "api/products/for-sale/masters",
+            content: null,
+            cancellationToken);
+
+    public Task<IReadOnlyList<SaleQuickLinkDto>> GetSaleQuickLinksAsync(
+        CancellationToken cancellationToken = default) =>
+        SendAsync<IReadOnlyList<SaleQuickLinkDto>>(
+            HttpMethod.Get,
+            "api/products/for-sale/quick-links",
             content: null,
             cancellationToken);
 
@@ -222,6 +368,58 @@ public sealed class ApiClient : IApiClient
             cancellationToken);
     }
 
+    public Task<PartyDto> CreatePartyAsync(
+        CreatePartyRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync<PartyDto>(
+            HttpMethod.Post,
+            "api/parties",
+            request,
+            cancellationToken);
+    }
+
+    public Task<PartyDto> UpdatePartyAsync(
+        Guid partyId,
+        UpdatePartyRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync<PartyDto>(
+            HttpMethod.Put,
+            $"api/parties/{partyId:D}",
+            request,
+            cancellationToken);
+    }
+
+    public Task<IReadOnlyList<PartyLedgerEntryDto>> GetPartyLedgerAsync(
+        Guid partyId,
+        DateTimeOffset? from = null,
+        DateTimeOffset? to = null,
+        int limit = 500,
+        CancellationToken cancellationToken = default)
+    {
+        int clamped = Math.Clamp(limit, 1, 500);
+        var query = new List<string> { $"limit={clamped}" };
+        if (from is DateTimeOffset fromValue)
+        {
+            query.Add($"from={Uri.EscapeDataString(fromValue.ToString("O"))}");
+        }
+
+        if (to is DateTimeOffset toValue)
+        {
+            query.Add($"to={Uri.EscapeDataString(toValue.ToString("O"))}");
+        }
+
+        string path = $"api/parties/{partyId:D}/ledger?{string.Join('&', query)}";
+        return SendAsync<IReadOnlyList<PartyLedgerEntryDto>>(
+            HttpMethod.Get,
+            path,
+            content: null,
+            cancellationToken);
+    }
+
     public Task<IReadOnlyList<SalesInvoiceSummaryDto>> GetInvoicesAsync(
         Guid? shiftId = null,
         int limit = 50,
@@ -233,6 +431,20 @@ public sealed class ApiClient : IApiClient
             : $"api/sales/invoices?limit={clamped}";
 
         return SendAsync<IReadOnlyList<SalesInvoiceSummaryDto>>(
+            HttpMethod.Get,
+            path,
+            content: null,
+            cancellationToken);
+    }
+
+    public Task<IReadOnlyList<CashierSalesSummaryDto>> GetSalesByCashierAsync(
+        DateTimeOffset from,
+        DateTimeOffset to,
+        CancellationToken cancellationToken = default)
+    {
+        string path =
+            $"api/sales/by-cashier?from={Uri.EscapeDataString(from.ToString("O"))}&to={Uri.EscapeDataString(to.ToString("O"))}";
+        return SendAsync<IReadOnlyList<CashierSalesSummaryDto>>(
             HttpMethod.Get,
             path,
             content: null,
@@ -334,6 +546,80 @@ public sealed class ApiClient : IApiClient
             HttpMethod.Post,
             "api/purchases/direct-receive",
             request,
+            cancellationToken);
+    }
+
+    public Task<CreatePurchaseOrderResultDto> CreatePurchaseAsync(
+        CreatePurchaseRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync<CreatePurchaseOrderResultDto>(
+            HttpMethod.Post,
+            "api/purchases",
+            request,
+            cancellationToken);
+    }
+
+    public Task<PurchaseOrderDetailDto> UpdatePurchaseAsync(
+        Guid purchaseOrderId,
+        UpdateOpenPurchaseRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (purchaseOrderId == Guid.Empty)
+        {
+            throw new ArgumentException("Purchase order id is required.", nameof(purchaseOrderId));
+        }
+
+        return SendAsync<PurchaseOrderDetailDto>(
+            HttpMethod.Put,
+            $"api/purchases/{purchaseOrderId:D}",
+            request,
+            cancellationToken);
+    }
+
+    public Task<ReceiveStockResultDto> ReceivePurchaseAsync(
+        Guid purchaseOrderId,
+        CancellationToken cancellationToken = default)
+    {
+        if (purchaseOrderId == Guid.Empty)
+        {
+            throw new ArgumentException("Purchase order id is required.", nameof(purchaseOrderId));
+        }
+
+        return SendAsync<ReceiveStockResultDto>(
+            HttpMethod.Post,
+            $"api/purchases/{purchaseOrderId:D}/receive",
+            content: null,
+            cancellationToken);
+    }
+
+    public Task<IReadOnlyList<PurchaseOrderSummaryDto>> GetPurchasesAsync(
+        int limit = 50,
+        CancellationToken cancellationToken = default)
+    {
+        int clamped = Math.Clamp(limit, 1, 200);
+        return SendAsync<IReadOnlyList<PurchaseOrderSummaryDto>>(
+            HttpMethod.Get,
+            $"api/purchases?limit={clamped}",
+            content: null,
+            cancellationToken);
+    }
+
+    public Task<PurchaseOrderDetailDto> GetPurchaseAsync(
+        Guid purchaseOrderId,
+        CancellationToken cancellationToken = default)
+    {
+        if (purchaseOrderId == Guid.Empty)
+        {
+            throw new ArgumentException("Purchase order id is required.", nameof(purchaseOrderId));
+        }
+
+        return SendAsync<PurchaseOrderDetailDto>(
+            HttpMethod.Get,
+            $"api/purchases/{purchaseOrderId:D}",
+            content: null,
             cancellationToken);
     }
 

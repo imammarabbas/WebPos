@@ -1,30 +1,101 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
-    <div class="container-fluid">
-        <a class="navbar-brand" href="">WebPos</a>
-    </div>
-</div>
+﻿@using Microsoft.AspNetCore.Components
+@inject NavigationManager Navigation
 
 <input type="checkbox" title="Navigation menu" class="navbar-toggler" />
 
 <div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
-    <nav class="nav flex-column">
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
-            </NavLink>
-        </div>
-
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="counter">
-                <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Counter
-            </NavLink>
-        </div>
-
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="weather">
-                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Weather
-            </NavLink>
-        </div>
+    <nav class="app-rail" aria-label="Primary">
+        <a class="app-rail-item @(IsSell ? "active" : null)" href="/master">
+            <span class="app-rail-ico" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h8.8a2 2 0 0 0 2-1.5L22 8H7"/></svg>
+            </span>
+            <span class="app-rail-label">Sell</span>
+        </a>
+        <a class="app-rail-item @(IsCatalog ? "active" : null)" href="/master/products">
+            <span class="app-rail-ico" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg>
+            </span>
+            <span class="app-rail-label">Catalog</span>
+        </a>
+        <a class="app-rail-item @(IsParties ? "active" : null)" href="/master/parties">
+            <span class="app-rail-ico" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </span>
+            <span class="app-rail-label">Parties</span>
+        </a>
+        <a class="app-rail-item @(IsFinance ? "active" : null)" href="/master/finance">
+            <span class="app-rail-ico" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V6a4 4 0 0 1 8 0v1"/><path d="M12 12v3"/></svg>
+            </span>
+            <span class="app-rail-label">Finance</span>
+        </a>
+        <a class="app-rail-item @(IsReports ? "active" : null)" href="/master/reports">
+            <span class="app-rail-ico" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 17V10"/><path d="M12 17V7"/><path d="M16 17v-4"/></svg>
+            </span>
+            <span class="app-rail-label">Reports</span>
+        </a>
+        <a class="app-rail-item @(IsAdmin ? "active" : null)" href="/admin/users">
+            <span class="app-rail-ico" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2.2M12 19.8V22M4.22 4.22l1.56 1.56M18.22 18.22l1.56 1.56M2 12h2.2M19.8 12H22M4.22 19.78l1.56-1.56M18.22 5.78l1.56-1.56"/></svg>
+            </span>
+            <span class="app-rail-label">Admin</span>
+        </a>
     </nav>
 </div>
 
+@code {
+    private string Path
+    {
+        get
+        {
+            string path = Navigation.ToAbsoluteUri(Navigation.Uri).AbsolutePath.TrimEnd('/');
+            return string.IsNullOrEmpty(path) ? "/" : path;
+        }
+    }
+
+    private string Query => Navigation.ToAbsoluteUri(Navigation.Uri).Query;
+
+    private bool Starts(string prefix) =>
+        Path.Equals(prefix, StringComparison.OrdinalIgnoreCase)
+        || Path.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase);
+
+    private bool IsSell =>
+        Path is "/" or "/counter"
+        || (Starts("/master")
+            && !IsCatalog
+            && !IsParties
+            && !IsFinance
+            && !IsReports
+            && !IsAdmin);
+
+    private bool IsCatalog =>
+        Starts("/master/products")
+        || Starts("/master/categories")
+        || Starts("/master/brands");
+
+    private bool IsParties =>
+        (Starts("/master/parties") || Starts("/master/customers") || Starts("/master/suppliers"))
+        && !Query.Contains("role=", StringComparison.OrdinalIgnoreCase);
+
+    private bool IsFinance =>
+        Starts("/master/finance")
+        || Starts("/master/payments")
+        || Starts("/master/accounts")
+        || Starts("/master/account-ledger")
+        || Starts("/master/business-position")
+        || Starts("/master/stock-position")
+        || Starts("/master/cash-stock-reconciliation")
+        || Starts("/master/expenses")
+        || Starts("/master/cash")
+        || ((Starts("/master/parties") || Starts("/master/customers") || Starts("/master/suppliers"))
+            && Query.Contains("role=", StringComparison.OrdinalIgnoreCase));
+
+    private bool IsReports =>
+        Starts("/master/reports")
+        || Starts("/master/profitability");
+
+    private bool IsAdmin =>
+        Starts("/admin")
+        || Starts("/master/settings");
+}

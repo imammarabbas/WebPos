@@ -36,6 +36,8 @@ public class WebPosDbContext : DbContext
 
     public DbSet<ShiftExpense> ShiftExpenses => Set<ShiftExpense>();
 
+    public DbSet<ShiftCashMovement> ShiftCashMovements => Set<ShiftCashMovement>();
+
     public DbSet<Party> Parties => Set<Party>();
 
     public DbSet<PartyLedger> PartyLedgers => Set<PartyLedger>();
@@ -76,6 +78,10 @@ public class WebPosDbContext : DbContext
 
     public DbSet<DamagedStockLog> DamagedStockLogs => Set<DamagedStockLog>();
 
+    public DbSet<StockCount> StockCounts => Set<StockCount>();
+
+    public DbSet<StockCountLine> StockCountLines => Set<StockCountLine>();
+
     public override Task<int> SaveChangesAsync(
         CancellationToken cancellationToken = default) =>
         SaveChangesAsync(acceptAllChangesOnSuccess: true, cancellationToken);
@@ -85,6 +91,7 @@ public class WebPosDbContext : DbContext
         CancellationToken cancellationToken = default)
     {
         StampAddedEntitiesWithTenant();
+        NormalizeDateTimeOffsetsToUtc();
         return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
@@ -116,6 +123,44 @@ public class WebPosDbContext : DbContext
         }
     }
 
+    /// <summary>
+    /// Npgsql timestamptz only accepts DateTimeOffset with Offset=0. Force UTC on tracked values
+    /// before write (complements <see cref="ConfigureConventions"/> converters).
+    /// </summary>
+    private void NormalizeDateTimeOffsetsToUtc()
+    {
+        foreach (var entry in ChangeTracker.Entries()
+                     .Where(e => e.State is EntityState.Added or EntityState.Modified))
+        {
+            foreach (var property in entry.Properties)
+            {
+                if (property.Metadata.ClrType == typeof(DateTimeOffset)
+                    && property.CurrentValue is DateTimeOffset dto
+                    && dto.Offset != TimeSpan.Zero)
+                {
+                    property.CurrentValue = dto.ToUniversalTime();
+                }
+                else if (property.Metadata.ClrType == typeof(DateTimeOffset?)
+                         && property.CurrentValue is DateTimeOffset nullableDto
+                         && nullableDto.Offset != TimeSpan.Zero)
+                {
+                    property.CurrentValue = nullableDto.ToUniversalTime();
+                }
+            }
+        }
+    }
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        configurationBuilder
+            .Properties<DateTimeOffset>()
+            .HaveConversion<UtcDateTimeOffsetConverter>();
+
+        configurationBuilder
+            .Properties<DateTimeOffset?>()
+            .HaveConversion<UtcNullableDateTimeOffsetConverter>();
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureTenant(modelBuilder.Entity<Tenant>());
@@ -125,6 +170,7 @@ public class WebPosDbContext : DbContext
         ConfigureCashAccount(modelBuilder.Entity<CashAccount>());
         ConfigureCashierShift(modelBuilder.Entity<CashierShift>());
         ConfigureShiftExpense(modelBuilder.Entity<ShiftExpense>());
+        ConfigureShiftCashMovement(modelBuilder.Entity<ShiftCashMovement>());
         ConfigureParty(modelBuilder.Entity<Party>());
         ConfigurePartyLedger(modelBuilder.Entity<PartyLedger>());
         ConfigurePartyPaymentAllocation(modelBuilder.Entity<PartyPaymentAllocation>());
@@ -145,6 +191,8 @@ public class WebPosDbContext : DbContext
         ConfigurePurchaseReturn(modelBuilder.Entity<PurchaseReturn>());
         ConfigurePurchaseReturnItem(modelBuilder.Entity<PurchaseReturnItem>());
         ConfigureDamagedStockLog(modelBuilder.Entity<DamagedStockLog>());
+        ConfigureStockCount(modelBuilder.Entity<StockCount>());
+        ConfigureStockCountLine(modelBuilder.Entity<StockCountLine>());
 
         ApplyTenantFilter<Role>(modelBuilder);
         ApplyTenantFilter<User>(modelBuilder);
@@ -152,6 +200,7 @@ public class WebPosDbContext : DbContext
         ApplyTenantFilter<CashAccount>(modelBuilder);
         ApplyTenantFilter<CashierShift>(modelBuilder);
         ApplyTenantFilter<ShiftExpense>(modelBuilder);
+        ApplyTenantFilter<ShiftCashMovement>(modelBuilder);
         ApplyTenantFilter<Party>(modelBuilder);
         ApplyTenantFilter<PartyLedger>(modelBuilder);
         ApplyTenantFilter<PartyPaymentAllocation>(modelBuilder);
@@ -172,6 +221,8 @@ public class WebPosDbContext : DbContext
         ApplyTenantFilter<PurchaseReturn>(modelBuilder);
         ApplyTenantFilter<PurchaseReturnItem>(modelBuilder);
         ApplyTenantFilter<DamagedStockLog>(modelBuilder);
+        ApplyTenantFilter<StockCount>(modelBuilder);
+        ApplyTenantFilter<StockCountLine>(modelBuilder);
         ValidateTenantModel(modelBuilder);
     }
 
@@ -312,7 +363,9 @@ public class WebPosDbContext : DbContext
 
     private static void ConfigureCashAccount(EntityTypeBuilder<CashAccount> entity)
     {
-        entity.ToTable("cash_accounts");
+        entity.ToTable("cash_accounts", t => t.HasCheckConstraint(
+            "CK_cash_accounts_balance_paisa_non_negative",
+            "\"balance_paisa\" >= 0"));
 
         entity.HasKey(e => e.Id);
 
@@ -341,6 +394,11 @@ public class WebPosDbContext : DbContext
         entity.Property(e => e.PaymentMethodKey)
             .HasColumnName("payment_method_key")
             .HasMaxLength(30);
+
+        MapPaisa(entity.Property(e => e.BalancePaisa))
+            .HasColumnName("balance_paisa")
+            .IsRequired()
+            .HasDefaultValue(0L);
 
         entity.HasIndex(e => new { e.TenantId, e.AccountCode })
             .IsUnique()
@@ -426,6 +484,42 @@ public class WebPosDbContext : DbContext
         entity.HasOne(e => e.Shift)
             .WithMany(s => s.ShiftExpenses)
             .HasForeignKey(e => e.ShiftId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureShiftCashMovement(EntityTypeBuilder<ShiftCashMovement> entity)
+    {
+        entity.ToTable("shift_cash_movements");
+
+        entity.HasKey(e => e.Id);
+
+        entity.Property(e => e.Id).HasColumnName("id");
+        entity.Property(e => e.ShiftId).HasColumnName("shift_id").IsRequired();
+        entity.Property(e => e.TillCashAccountId).HasColumnName("till_cash_account_id").IsRequired();
+        entity.Property(e => e.Direction).HasColumnName("direction").HasMaxLength(8).IsRequired();
+        MapPaisa(entity.Property(e => e.AmountPaisa)).HasColumnName("amount_paisa").IsRequired();
+        MapPaisa(entity.Property(e => e.AlignPaisa)).HasColumnName("align_paisa").IsRequired();
+        MapPaisa(entity.Property(e => e.ExcessPaisa)).HasColumnName("excess_paisa").IsRequired();
+        entity.Property(e => e.Reason).HasColumnName("reason").HasMaxLength(80).IsRequired();
+        entity.Property(e => e.Note).HasColumnName("note").HasMaxLength(500).IsRequired();
+        entity.Property(e => e.Status).HasColumnName("status").HasMaxLength(20).IsRequired();
+        entity.Property(e => e.LinkedReferenceType).HasColumnName("linked_reference_type").HasMaxLength(50);
+        entity.Property(e => e.LinkedReferenceId).HasColumnName("linked_reference_id");
+        entity.Property(e => e.TransactionGroupId).HasColumnName("transaction_group_id");
+        entity.Property(e => e.CreatedByUserId).HasColumnName("created_by_user_id").IsRequired();
+        entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
+
+        entity.HasIndex(e => new { e.ShiftId, e.Status });
+        entity.HasIndex(e => e.TillCashAccountId);
+
+        entity.HasOne(e => e.Shift)
+            .WithMany()
+            .HasForeignKey(e => e.ShiftId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        entity.HasOne(e => e.TillCashAccount)
+            .WithMany()
+            .HasForeignKey(e => e.TillCashAccountId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 
@@ -561,6 +655,8 @@ public class WebPosDbContext : DbContext
         entity.Property(e => e.ParentCategoryId).HasColumnName("parent_category_id");
         entity.Property(e => e.TargetMarginPercentage).HasColumnName("target_margin_percentage").IsRequired();
         entity.Property(e => e.ShowOnWebshop).HasColumnName("show_on_webshop").IsRequired();
+        entity.Property(e => e.ShowOnPosQuick).HasColumnName("show_on_pos_quick").IsRequired().HasDefaultValue(false);
+        entity.Property(e => e.PosQuickSort).HasColumnName("pos_quick_sort").IsRequired().HasDefaultValue(0);
         entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
 
         entity.HasOne(e => e.ParentCategory)
@@ -587,7 +683,22 @@ public class WebPosDbContext : DbContext
         entity.Property(e => e.PurchaseUnit).HasColumnName("purchase_unit").HasMaxLength(20).IsRequired().HasDefaultValue(string.Empty);
         entity.Property(e => e.ConversionMultiplier).HasColumnName("conversion_multiplier").IsRequired();
         entity.Property(e => e.ShowOnWebshop).HasColumnName("show_on_webshop").IsRequired();
+        entity.Property(e => e.ShowOnPosQuick).HasColumnName("show_on_pos_quick").IsRequired().HasDefaultValue(false);
+        entity.Property(e => e.PosQuickSort).HasColumnName("pos_quick_sort").IsRequired().HasDefaultValue(0);
         entity.Property(e => e.MinStockQty).HasColumnName("min_stock_qty").HasPrecision(18, 3).IsRequired().HasDefaultValue(10m);
+        MapNumeric(entity.Property(e => e.StockQty)).HasColumnName("stock_qty").IsRequired().HasDefaultValue(0m);
+        MapPaisa(entity.Property(e => e.CostPricePaisa)).HasColumnName("cost_price_paisa").IsRequired().HasDefaultValue(0L);
+        MapPaisa(entity.Property(e => e.RetailPricePaisa)).HasColumnName("retail_price_paisa").IsRequired().HasDefaultValue(0L);
+        entity.Property(e => e.IsBulk).HasColumnName("is_bulk").IsRequired().HasDefaultValue(false);
+        entity.Property(e => e.DefaultMarginPercent)
+            .HasColumnName("default_margin_percent")
+            .HasPrecision(6, 2)
+            .IsRequired()
+            .HasDefaultValue(20m);
+        entity.Property(e => e.ParentProductId).HasColumnName("parent_product_id");
+        entity.Property(e => e.DeductionMultiplier)
+            .HasColumnName("deduction_multiplier")
+            .HasColumnType("numeric(12,3)");
         entity.Property(e => e.IsDeleted).HasColumnName("is_deleted").IsRequired().HasDefaultValue(false);
         entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
         entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
@@ -595,15 +706,25 @@ public class WebPosDbContext : DbContext
         entity.HasIndex(e => new { e.TenantId, e.UpdatedAt })
             .HasDatabaseName("IX_products_tenant_updated_at");
 
+        entity.HasIndex(e => new { e.TenantId, e.Name })
+            .HasDatabaseName("IX_products_tenant_name_active")
+            .HasFilter("is_deleted = FALSE");
+
         entity.HasIndex(e => e.Sku).IsUnique();
         entity.HasIndex(e => e.Barcode).IsUnique();
         entity.HasIndex(e => new { e.TenantId, e.ShortCode })
             .IsUnique()
             .HasFilter("short_code <> ''");
+        entity.HasIndex(e => new { e.TenantId, e.ParentProductId });
 
         entity.HasOne(e => e.Category)
             .WithMany(c => c.Products)
             .HasForeignKey(e => e.CategoryId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        entity.HasOne(e => e.ParentProduct)
+            .WithMany(p => p.ChildAliases)
+            .HasForeignKey(e => e.ParentProductId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 
@@ -853,11 +974,12 @@ public class WebPosDbContext : DbContext
         entity.Property(e => e.Id).HasColumnName("id");
         entity.Property(e => e.InvoiceNo).HasColumnName("invoice_no").HasMaxLength(100).IsRequired();
         entity.Property(e => e.ProductId).HasColumnName("product_id").IsRequired();
-        entity.Property(e => e.BatchId).HasColumnName("batch_id").IsRequired();
+        entity.Property(e => e.BatchId).HasColumnName("batch_id");
         MapNumeric(entity.Property(e => e.Quantity)).HasColumnName("quantity").IsRequired();
         MapPaisa(entity.Property(e => e.UnitPricePaisa)).HasColumnName("unit_price_paisa").IsRequired();
         MapPaisa(entity.Property(e => e.UnitCostPaisa)).HasColumnName("unit_cost_paisa").IsRequired();
         MapPaisa(entity.Property(e => e.DiscountAppliedPaisa)).HasColumnName("discount_applied_paisa").IsRequired();
+        MapNumeric(entity.Property(e => e.ParentQtyDeducted)).HasColumnName("parent_qty_deducted").IsRequired().HasDefaultValue(0m);
 
         entity.HasOne(e => e.Invoice)
             .WithMany(i => i.Items)
@@ -872,7 +994,8 @@ public class WebPosDbContext : DbContext
         entity.HasOne(e => e.Batch)
             .WithMany(b => b.SalesItems)
             .HasForeignKey(e => e.BatchId)
-            .OnDelete(DeleteBehavior.Restrict);
+            .OnDelete(DeleteBehavior.Restrict)
+            .IsRequired(false);
     }
 
     private static void ConfigureSalesReturn(EntityTypeBuilder<SalesReturn> entity)
@@ -913,7 +1036,7 @@ public class WebPosDbContext : DbContext
         entity.Property(e => e.Id).HasColumnName("id");
         entity.Property(e => e.SalesReturnId).HasColumnName("sales_return_id").IsRequired();
         entity.Property(e => e.ProductId).HasColumnName("product_id").IsRequired();
-        entity.Property(e => e.BatchId).HasColumnName("batch_id").IsRequired();
+        entity.Property(e => e.BatchId).HasColumnName("batch_id");
         MapNumeric(entity.Property(e => e.Quantity)).HasColumnName("quantity").IsRequired();
         MapPaisa(entity.Property(e => e.RefundUnitPricePaisa)).HasColumnName("refund_unit_price_paisa").IsRequired();
         entity.Property(e => e.ReturnCondition).HasColumnName("return_condition").HasMaxLength(20).IsRequired();
@@ -931,7 +1054,8 @@ public class WebPosDbContext : DbContext
         entity.HasOne(e => e.Batch)
             .WithMany(b => b.SalesReturnItems)
             .HasForeignKey(e => e.BatchId)
-            .OnDelete(DeleteBehavior.Restrict);
+            .OnDelete(DeleteBehavior.Restrict)
+            .IsRequired(false);
     }
 
     private static void ConfigurePurchaseReturn(EntityTypeBuilder<PurchaseReturn> entity)
@@ -1023,6 +1147,42 @@ public class WebPosDbContext : DbContext
             .OnDelete(DeleteBehavior.Restrict);
     }
 
+    private static void ConfigureStockCount(EntityTypeBuilder<StockCount> entity)
+    {
+        entity.ToTable("stock_counts");
+        entity.HasKey(e => e.Id);
+        entity.Property(e => e.Id).HasColumnName("id");
+        entity.Property(e => e.CountedAt).HasColumnName("counted_at").IsRequired();
+        entity.Property(e => e.Note).HasColumnName("note").HasMaxLength(500);
+        entity.Property(e => e.CountedByUserId).HasColumnName("counted_by_user_id");
+    }
+
+    private static void ConfigureStockCountLine(EntityTypeBuilder<StockCountLine> entity)
+    {
+        entity.ToTable("stock_count_lines");
+        entity.HasKey(e => e.Id);
+        entity.Property(e => e.Id).HasColumnName("id");
+        entity.Property(e => e.StockCountId).HasColumnName("stock_count_id").IsRequired();
+        entity.Property(e => e.ProductId).HasColumnName("product_id").IsRequired();
+        entity.Property(e => e.BatchId).HasColumnName("batch_id");
+        MapNumeric(entity.Property(e => e.CountedQty)).HasColumnName("counted_qty").IsRequired();
+
+        entity.HasOne(e => e.StockCount)
+            .WithMany(c => c.Lines)
+            .HasForeignKey(e => e.StockCountId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        entity.HasOne(e => e.Product)
+            .WithMany()
+            .HasForeignKey(e => e.ProductId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        entity.HasOne(e => e.Batch)
+            .WithMany()
+            .HasForeignKey(e => e.BatchId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
     private static PropertyBuilder<long> MapPaisa(PropertyBuilder<long> property) =>
         property.HasColumnType("bigint");
 
@@ -1034,4 +1194,27 @@ public class WebPosDbContext : DbContext
 
     private static PropertyBuilder<decimal?> MapNumeric(PropertyBuilder<decimal?> property) =>
         property.HasColumnType("numeric(12,3)");
+}
+
+/// <summary>
+/// Stores DateTimeOffset as UTC (Offset=0) so Npgsql timestamptz writes succeed.
+/// </summary>
+file sealed class UtcDateTimeOffsetConverter : ValueConverter<DateTimeOffset, DateTimeOffset>
+{
+    public UtcDateTimeOffsetConverter()
+        : base(
+            toProvider => toProvider.ToUniversalTime(),
+            fromProvider => fromProvider.ToUniversalTime())
+    {
+    }
+}
+
+file sealed class UtcNullableDateTimeOffsetConverter : ValueConverter<DateTimeOffset?, DateTimeOffset?>
+{
+    public UtcNullableDateTimeOffsetConverter()
+        : base(
+            toProvider => toProvider.HasValue ? toProvider.Value.ToUniversalTime() : null,
+            fromProvider => fromProvider.HasValue ? fromProvider.Value.ToUniversalTime() : null)
+    {
+    }
 }

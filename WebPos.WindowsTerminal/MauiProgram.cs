@@ -54,8 +54,8 @@ public static class MauiProgram
         builder.Services.AddSingleton<ShiftApiClient>();
         builder.Services.AddSingleton<SalesApiClient>();
         builder.Services.AddSingleton<CartService>();
-        builder.Services.AddSingleton<ReceiveDraftService>();
         builder.Services.AddSingleton<CustomerApiClient>();
+        builder.Services.AddSingleton<ProductAdminApiClient>();
         builder.Services.AddSingleton<WhatsAppReceiptService>();
         builder.Services.AddSingleton<LastSaleReceiptStore>();
         builder.Services.AddSingleton<CartHoldService>();

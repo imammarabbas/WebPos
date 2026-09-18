@@ -8,11 +8,11 @@ namespace WebPos.Core.Services;
 
 public sealed class TransactionService : ITransactionService
 {
-    private readonly WebPosDbContext _context;
+    private readonly IDbContextFactory<WebPosDbContext> _dbFactory;
 
-    public TransactionService(WebPosDbContext context)
+    public TransactionService(IDbContextFactory<WebPosDbContext> dbFactory)
     {
-        _context = context ?? throw new ArgumentNullException(nameof(context));
+        _dbFactory = dbFactory ?? throw new ArgumentNullException(nameof(dbFactory));
     }
 
     public Task ExecuteInTransactionAsync(
@@ -30,35 +30,43 @@ public sealed class TransactionService : ITransactionService
     {
         ArgumentNullException.ThrowIfNull(action);
 
-        if (_context.Database.CurrentTransaction is not null)
+        WebPosDbContext? ambient = AmbientDbContextAccessor.GetAmbient();
+        if (ambient is not null)
         {
             return await action(cancellationToken);
         }
 
-        // InMemory (and other non-relational providers) do not support ambient DB transactions.
-        if (!_context.Database.IsRelational())
-        {
-            T inMemoryResult = await action(cancellationToken);
-            await _context.SaveChangesAsync(cancellationToken);
-            return inMemoryResult;
-        }
-
-        await using IDbContextTransaction transaction =
-            await _context.Database.BeginTransactionAsync(cancellationToken);
-
+        await using WebPosDbContext context = await _dbFactory.CreateDbContextAsync(cancellationToken);
+        AmbientDbContextAccessor.SetAmbient(context);
         try
         {
-            T result = await action(cancellationToken);
-            await _context.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            return result;
+            // InMemory (and other non-relational providers) do not support ambient DB transactions.
+            if (!context.Database.IsRelational())
+            {
+                T inMemoryResult = await action(cancellationToken);
+                await context.SaveChangesAsync(cancellationToken);
+                return inMemoryResult;
+            }
+
+            await using IDbContextTransaction transaction =
+                await context.Database.BeginTransactionAsync(cancellationToken);
+
+            try
+            {
+                T result = await action(cancellationToken);
+                await context.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return result;
+            }
+            catch
+            {
+                await TryRollbackAsync(transaction);
+                throw;
+            }
         }
-        catch
+        finally
         {
-            // Always attempt rollback even if the caller token is cancelled,
-            // so FOR UPDATE locks and pending writes are released.
-            await TryRollbackAsync(transaction);
-            throw;
+            AmbientDbContextAccessor.SetAmbient(null);
         }
     }
 
@@ -87,8 +95,13 @@ public sealed class TransactionService : ITransactionService
             throw new InvalidOperationException("Balanced postings must have a positive total amount.");
         }
 
+        WebPosDbContext context = AmbientDbContextAccessor.GetAmbient()
+            ?? throw new InvalidOperationException(
+                "PostBalancedEntriesAsync requires an ambient transaction context.");
+
         Guid transactionGroupId = request.TransactionGroupId ?? Guid.NewGuid();
         DateTimeOffset now = DateTimeOffset.UtcNow;
+        Dictionary<string, long> cashDeltas = new(StringComparer.OrdinalIgnoreCase);
 
         foreach (LedgerPosting posting in request.Postings)
         {
@@ -107,7 +120,7 @@ public sealed class TransactionService : ITransactionService
                 continue;
             }
 
-            _context.GeneralLedgerEntries.Add(new GeneralLedgerEntry
+            context.GeneralLedgerEntries.Add(new GeneralLedgerEntry
             {
                 Id = Guid.NewGuid(),
                 TransactionGroupId = transactionGroupId,
@@ -121,9 +134,69 @@ public sealed class TransactionService : ITransactionService
                 PartyId = request.PartyId,
                 CreatedAt = now
             });
+
+            long delta = posting.DebitPaisa - posting.CreditPaisa;
+            if (delta != 0 && !string.IsNullOrWhiteSpace(posting.AccountCode))
+            {
+                string code = posting.AccountCode.Trim();
+                cashDeltas[code] = cashDeltas.TryGetValue(code, out long existing)
+                    ? existing + delta
+                    : delta;
+            }
         }
 
+        await ApplyCashAccountBalanceDeltasAsync(context, cashDeltas, cancellationToken);
+
         return transactionGroupId;
+    }
+
+    private static async Task ApplyCashAccountBalanceDeltasAsync(
+        WebPosDbContext context,
+        Dictionary<string, long> deltasByCode,
+        CancellationToken cancellationToken)
+    {
+        if (deltasByCode.Count == 0)
+        {
+            return;
+        }
+
+        List<string> codes = deltasByCode.Keys.Select(c => c.ToUpperInvariant()).ToList();
+        List<CashAccount> accounts = await context.CashAccounts
+            .Where(a => codes.Contains(a.AccountCode.ToUpper()))
+            .ToListAsync(cancellationToken);
+
+        foreach (CashAccount account in accounts)
+        {
+            if (!deltasByCode.TryGetValue(account.AccountCode, out long delta))
+            {
+                // Case-insensitive match fallback
+                KeyValuePair<string, long> match = deltasByCode
+                    .FirstOrDefault(kv =>
+                        string.Equals(kv.Key, account.AccountCode, StringComparison.OrdinalIgnoreCase));
+                if (match.Key is null)
+                {
+                    continue;
+                }
+
+                delta = match.Value;
+            }
+
+            if (delta == 0)
+            {
+                continue;
+            }
+
+            long next = account.BalancePaisa + delta;
+            if (next < 0)
+            {
+                throw new InsufficientCashBalanceException(
+                    account.AccountCode,
+                    Math.Max(0L, account.BalancePaisa),
+                    Math.Abs(delta));
+            }
+
+            account.BalancePaisa = next;
+        }
     }
 
     private static async Task TryRollbackAsync(IDbContextTransaction transaction)
@@ -134,11 +207,9 @@ public sealed class TransactionService : ITransactionService
         }
         catch (ObjectDisposedException)
         {
-            // Transaction already disposed / closed — nothing left to roll back.
         }
         catch (InvalidOperationException)
         {
-            // Provider reports no active transaction (already committed/rolled back).
         }
     }
 }

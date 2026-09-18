@@ -49,6 +49,12 @@ public sealed class RecordSupplierPaymentRequest
 
     public Guid? CashAccountId { get; init; }
 
+    /// <summary>
+    /// Optional GL/cash account code (e.g. OWNER_CASH, BANK, PETTY_CASH).
+    /// When set, funds the payment from that asset without requiring an open till.
+    /// </summary>
+    public string? AccountCode { get; init; }
+
     public IReadOnlyList<PaymentAllocationRequest>? Allocations { get; init; }
 }
 
@@ -76,6 +82,9 @@ public sealed class RecordCustomerPaymentRequest
     public Guid? ShiftId { get; init; }
 
     public Guid? CashAccountId { get; init; }
+
+    /// <summary>Optional receipt account code (e.g. OWNER_CASH, BANK).</summary>
+    public string? AccountCode { get; init; }
 
     public IReadOnlyList<PaymentAllocationRequest>? Allocations { get; init; }
 }

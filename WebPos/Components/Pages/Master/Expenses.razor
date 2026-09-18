@@ -8,9 +8,11 @@
 @using Common.Models
 @using WebPos.Core.Abstractions
 @using WebPos.Core.Constants
+@using WebPos.Core.Models
 @using WebPos.Core.Services
 @inject IExpenseService ExpenseService
 @inject IShiftService ShiftService
+@inject ICashAccountService CashAccounts
 @inject AuthenticationStateProvider AuthStateProvider
 
 <PageTitle>Expenses · Cone Mart</PageTitle>
@@ -19,7 +21,7 @@
     <div class="mm-page-header">
         <div>
             <h1>Expenses</h1>
-            <p>Shop overhead with GL posting — till cash only when tied to an open shift</p>
+            <p>Record what you spent and which account funded it — every expense posts to the correct ledger</p>
         </div>
     </div>
 
@@ -67,7 +69,7 @@
                 {
                     <div class="mm-field full">
                         <label for="exp-shift">Open shift</label>
-                        <InputSelect id="exp-shift" @bind-Value="_selectedShiftId">
+                        <InputSelect id="exp-shift" @bind-Value="_selectedShiftId" @bind-Value:after="OnShiftChanged">
                             <option value="">Select open shift…</option>
                             @foreach (OpenShiftDto s in _openShifts)
                             {
@@ -78,7 +80,7 @@
                 }
 
                 <div class="mm-field">
-                    <label for="exp-cat">Category</label>
+                    <label for="exp-cat">What was it for? (expense category)</label>
                     <InputSelect id="exp-cat" @bind-Value="_category">
                         @foreach (string c in ExpenseCategories.All.Where(c => c != ExpenseCategories.Discount))
                         {
@@ -91,14 +93,33 @@
                     <InputNumber id="exp-amt" @bind-Value="_amountRs" />
                 </div>
                 <div class="mm-field">
-                    <label for="exp-pay">Payment method</label>
-                    <InputSelect id="exp-pay" @bind-Value="_paymentMethod">
+                    <label for="exp-pay">Payment channel</label>
+                    <InputSelect id="exp-pay" @bind-Value="_paymentMethod" @bind-Value:after="OnPaymentMethodChanged">
                         <option value="CASH">Cash</option>
                         <option value="BANK_TRANSFER">Bank transfer</option>
                         <option value="EASYPAISA">EasyPaisa</option>
                         <option value="JAZZCASH">JazzCash</option>
                     </InputSelect>
                 </div>
+                @if (ShowsFundingPicker)
+                {
+                    <div class="mm-field full">
+                        <label for="exp-fund">Paid from (funding account)</label>
+                        <InputSelect id="exp-fund" @bind-Value="_fundingAccountId" @bind-Value:after="OnFundingChanged">
+                            <option value="">Select account…</option>
+                            @foreach (CashAccountDto account in VisibleFundingAccounts)
+                            {
+                                <option value="@account.Id">@FormatFundingLabel(account)</option>
+                            }
+                        </InputSelect>
+                        @if (_selectedSpendablePaisa is long spendable)
+                        {
+                            <p class="mm-muted" style="margin: 0.4rem 0 0; font-size: 0.85rem;">
+                                Available to spend: <strong>Rs @FormatRs(spendable)</strong>
+                            </p>
+                        }
+                    </div>
+                }
                 <div class="mm-field">
                     <label for="exp-receipt">Receipt / ref</label>
                     <InputText id="exp-receipt" @bind-Value="_receiptRef" />
@@ -182,8 +203,11 @@
 @code {
     private readonly List<ExpenseListItemDto> _items = [];
     private readonly List<OpenShiftDto> _openShifts = [];
+    private readonly List<CashAccountDto> _fundingAccounts = [];
+    private readonly Dictionary<Guid, long> _spendableByAccountId = [];
     private bool _tieToShift;
     private string _selectedShiftId = string.Empty;
+    private string _fundingAccountId = string.Empty;
     private string _category = ExpenseCategories.Other;
     private decimal _amountRs;
     private string _paymentMethod = "BANK_TRANSFER";
@@ -196,8 +220,25 @@
     private string? _error;
     private string? _success;
 
+    private bool ShowsFundingPicker =>
+        string.Equals(_paymentMethod, "CASH", StringComparison.OrdinalIgnoreCase);
+
+    private IEnumerable<CashAccountDto> VisibleFundingAccounts =>
+        _tieToShift
+            ? _fundingAccounts.Where(a =>
+                a.Type == CashAccountType.Till && a.IsActive)
+            : _fundingAccounts.Where(a =>
+                a.IsActive && a.Type != CashAccountType.Till);
+
+    private long? _selectedSpendablePaisa =>
+        Guid.TryParse(_fundingAccountId, out Guid id)
+        && _spendableByAccountId.TryGetValue(id, out long spendable)
+            ? spendable
+            : null;
+
     protected override async Task OnInitializedAsync()
     {
+        await LoadFundingAccountsAsync();
         await LoadOpenShiftsAsync();
         await LoadListAsync();
     }
@@ -208,10 +249,124 @@
         if (!_tieToShift)
         {
             _selectedShiftId = string.Empty;
-            if (_paymentMethod == "CASH")
+        }
+
+        PreferFundingForMode();
+    }
+
+    private void OnPaymentMethodChanged()
+    {
+        if (!ShowsFundingPicker)
+        {
+            _fundingAccountId = string.Empty;
+            return;
+        }
+
+        PreferFundingForMode();
+    }
+
+    private void OnShiftChanged()
+    {
+        if (_tieToShift && ShowsFundingPicker)
+        {
+            PreferFundingForMode();
+        }
+    }
+
+    private void OnFundingChanged()
+    {
+        if (!Guid.TryParse(_fundingAccountId, out Guid accountId))
+        {
+            return;
+        }
+
+        CashAccountDto? account = _fundingAccounts.FirstOrDefault(a => a.Id == accountId);
+        if (account?.Type == CashAccountType.Till && account.TerminalId is Guid terminalId)
+        {
+            OpenShiftDto? match = _openShifts.FirstOrDefault(s => s.TerminalId == terminalId);
+            _selectedShiftId = match?.ShiftId.ToString() ?? string.Empty;
+        }
+    }
+
+    private async Task LoadFundingAccountsAsync()
+    {
+        try
+        {
+            _fundingAccounts.Clear();
+            _spendableByAccountId.Clear();
+            IReadOnlyList<CashAccountDto> all = await CashAccounts.ListAsync();
+            _fundingAccounts.AddRange(
+                all
+                    .Where(a => a.IsActive)
+                    .OrderBy(a => a.Type == CashAccountType.Till ? 0 : 1)
+                    .ThenBy(a => a.SortOrder)
+                    .ThenBy(a => a.Name));
+
+            foreach (CashAccountDto account in _fundingAccounts)
             {
-                _paymentMethod = "BANK_TRANSFER";
+                try
+                {
+                    CashSpendableBalanceDto spendable = await CashAccounts.GetSpendableBalanceAsync(account.Id);
+                    _spendableByAccountId[account.Id] = spendable.SpendablePaisa;
+                }
+                catch
+                {
+                    _spendableByAccountId[account.Id] = 0;
+                }
             }
+
+            PreferFundingForMode();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private void PreferFundingForMode()
+    {
+        if (!ShowsFundingPicker || _fundingAccounts.Count == 0)
+        {
+            return;
+        }
+
+        if (_tieToShift)
+        {
+            if (Guid.TryParse(_selectedShiftId, out Guid shiftId))
+            {
+                OpenShiftDto? shift = _openShifts.FirstOrDefault(s => s.ShiftId == shiftId);
+                if (shift is not null)
+                {
+                    CashAccountDto? till = _fundingAccounts.FirstOrDefault(a =>
+                        a.Type == CashAccountType.Till
+                        && a.TerminalId == shift.TerminalId);
+                    if (till is not null)
+                    {
+                        _fundingAccountId = till.Id.ToString();
+                        return;
+                    }
+                }
+            }
+
+            CashAccountDto? liveTill = _fundingAccounts.FirstOrDefault(a =>
+                a.Type == CashAccountType.Till
+                && a.TerminalId is Guid tid
+                && _openShifts.Any(s => s.TerminalId == tid));
+            if (liveTill is not null)
+            {
+                _fundingAccountId = liveTill.Id.ToString();
+                OpenShiftDto? shift = _openShifts.FirstOrDefault(s => s.TerminalId == liveTill.TerminalId);
+                _selectedShiftId = shift?.ShiftId.ToString() ?? _selectedShiftId;
+            }
+
+            return;
+        }
+
+        CashAccountDto? owner = _fundingAccounts.FirstOrDefault(a =>
+            a.AccountCode.Equals("OWNER_CASH", StringComparison.OrdinalIgnoreCase));
+        if (owner is not null)
+        {
+            _fundingAccountId = owner.Id.ToString();
         }
     }
 
@@ -269,6 +424,18 @@
                 return;
             }
 
+            Guid? cashAccountId = null;
+            if (ShowsFundingPicker)
+            {
+                if (!Guid.TryParse(_fundingAccountId, out Guid parsedAccount) || parsedAccount == Guid.Empty)
+                {
+                    _error = "Select the funding account this expense is paid from.";
+                    return;
+                }
+
+                cashAccountId = parsedAccount;
+            }
+
             Guid? shiftId = null;
             if (_tieToShift)
             {
@@ -279,6 +446,15 @@
                 }
 
                 shiftId = parsed;
+            }
+            else if (ShowsFundingPicker)
+            {
+                CashAccountDto? fund = _fundingAccounts.FirstOrDefault(a => a.Id == cashAccountId);
+                if (fund?.Type == CashAccountType.Till)
+                {
+                    _error = "Till cash requires tying the expense to an open shift.";
+                    return;
+                }
             }
 
             AuthenticationState state = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -297,6 +473,7 @@
                 ExpenseCategory = _category,
                 ReceiptReference = _receiptRef.Trim(),
                 PaymentMethod = _paymentMethod,
+                CashAccountId = cashAccountId,
                 AmountPaisa = amountPaisa
             });
 
@@ -304,6 +481,7 @@
             _amountRs = 0;
             _description = string.Empty;
             _receiptRef = string.Empty;
+            await LoadFundingAccountsAsync();
             await LoadListAsync();
             await LoadOpenShiftsAsync();
         }
@@ -321,4 +499,10 @@
 
     private static string FormatShift(OpenShiftDto s) =>
         $"{s.TerminalName ?? s.TerminalId.ToString("N")[..8]} · {s.CashierName} · opened {s.OpenedAt.LocalDateTime:dd MMM HH:mm}";
+
+    private string FormatFundingLabel(CashAccountDto account)
+    {
+        long spendable = _spendableByAccountId.GetValueOrDefault(account.Id);
+        return $"{account.Name} · Rs {FormatRs(spendable)} available";
+    }
 }

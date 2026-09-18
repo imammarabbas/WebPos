@@ -1,53 +1,100 @@
 @page "/"
 @page "/login"
 @using Common.Models
+@using WebPos.Client.Sdk
+@implements IDisposable
 @inject LoginApiClient LoginApi
+@inject IApiClient ApiClient
 @inject NavigationManager Navigation
 @inject TerminalOptions TerminalOptions
 @inject SecureEnrollmentCertificateStore CertificateStore
+@inject ShiftStatusApiClient ShiftStatus
+@inject ISessionService SessionService
 
 <PageTitle>Staff Login</PageTitle>
 
-<div class="terminal-shell">
-    <section class="login-card">
-        <header>
-            <span class="brand">WebPos</span>
-            <h1>Staff Login</h1>
-            <p class="login-hint">Cashier or Manager PIN</p>
+<div class="auth-shell">
+    <aside class="login-rail" aria-label="Terminal status">
+        <div class="login-rail-stats">
+            <div class="login-stat">
+                <span>Drawer</span>
+                <strong>Rs @FormatRs(ShiftStatus.ExpectedCashPaisa)</strong>
+            </div>
+            <div class="login-stat">
+                <span>Shift</span>
+                <strong>@(SessionService.IsActive ? $"OPEN · {ShiftLabel}" : "—")</strong>
+            </div>
+            <div class="login-stat">
+                <span>Terminal</span>
+                <strong class="@(_terminalOnline ? "online" : "offline")">
+                    @(_terminalOnline ? "Online" : "Offline")
+                </strong>
+            </div>
+        </div>
+
+        <div class="login-rail-spacer"></div>
+
+        <div class="login-rail-user">
+            <span class="login-avatar" aria-hidden="true">PIN</span>
+            <div class="login-lock-wrap">
+                <button type="button" class="login-lock-btn" @onclick="OnLock" disabled="@_isBusy">Lock</button>
+                <span class="login-lock-hint">Keeps shift open</span>
+            </div>
+            <span class="login-loc">Copenhagen</span>
+        </div>
+    </aside>
+
+    <section class="auth-card" aria-labelledby="loginTitle">
+        <header class="auth-brand">
+            <span class="auth-logo" aria-hidden="true"></span>
+            <div class="auth-brand-text">
+                <strong>Smart POS</strong>
+                <span>Cone Mart · Staff</span>
+            </div>
         </header>
+
+        <div class="auth-heading">
+            <h1 id="loginTitle">Enter PIN</h1>
+            <p>4-digit staff code</p>
+        </div>
 
         @if (!string.IsNullOrWhiteSpace(_errorMessage))
         {
-            <div class="alert-red" role="alert">@_errorMessage</div>
+            <div class="auth-alert" role="alert">@_errorMessage</div>
         }
 
-        <form @onsubmit="LoginAsync" @onsubmit:preventDefault>
-            <label for="pin">Enter PIN</label>
+        <form class="auth-form" @onsubmit="LoginAsync" @onsubmit:preventDefault>
+            <div class="pin-dots" aria-live="polite" aria-label="PIN length @_pin.Length of @PinLength">
+                @for (int i = 0; i < PinLength; i++)
+                {
+                    <span class="pin-dot @(i < _pin.Length ? "filled" : null)"></span>
+                }
+            </div>
+
             <input id="pin"
-                   class="pin-display"
+                   class="pin-sr-only"
                    type="password"
                    inputmode="numeric"
                    pattern="[0-9]*"
-                   maxlength="12"
+                   maxlength="@PinLength"
                    autocomplete="off"
                    autofocus
-                   @bind="_pin"
-                   @bind:event="oninput"
+                   aria-label="4-digit PIN"
+                   value="@_pin"
+                   @oninput="OnPinInput"
                    disabled="@_isBusy" />
 
             <div class="keypad" aria-label="Numeric keypad">
                 @foreach (string digit in Digits)
                 {
-                    <button type="button" @onclick="() => AppendDigit(digit)" disabled="@_isBusy">
-                        @digit
-                    </button>
+                    <button type="button" class="key" @onclick="() => AppendDigit(digit)" disabled="@_isBusy">@digit</button>
                 }
-                <button type="button" class="secondary" @onclick="Clear" disabled="@_isBusy">Clear</button>
-                <button type="button" @onclick="AppendZero" disabled="@_isBusy">0</button>
-                <button type="button" class="secondary" @onclick="Backspace" disabled="@_isBusy">⌫</button>
+                <button type="button" class="key key-muted" @onclick="Clear" disabled="@_isBusy">Clear</button>
+                <button type="button" class="key" @onclick="AppendZero" disabled="@_isBusy">0</button>
+                <button type="button" class="key key-muted" @onclick="Backspace" disabled="@_isBusy" aria-label="Backspace">⌫</button>
             </div>
 
-            <button class="login-button" type="submit" disabled="@(_isBusy || _pin.Length < 4)">
+            <button class="auth-submit" type="submit" disabled="@(_isBusy || _pin.Length < PinLength)">
                 @(_isBusy ? "Signing in…" : "Login")
             </button>
         </form>
@@ -55,35 +102,78 @@
 </div>
 
 @code {
+    private const int PinLength = 4;
     private static readonly string[] Digits = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
     private string _pin = string.Empty;
     private string? _errorMessage;
     private bool _isBusy;
+    private bool _terminalOnline = true;
 
-    protected override void OnInitialized()
+    private string ShiftLabel =>
+        SessionService.OpenedAt is DateTimeOffset opened
+            ? opened.ToLocalTime().ToString("HH:mm")
+            : "—";
+
+    protected override async Task OnInitializedAsync()
     {
         LoginApi.ClearCashier();
         _pin = string.Empty;
         _errorMessage = null;
+        ShiftStatus.Changed += OnShiftStatusChanged;
 
         if (!CertificateStore.IsEnrolled || !TerminalOptions.IsEnrolled)
         {
             Navigation.NavigateTo("/enroll");
+            return;
+        }
+
+        await RefreshTerminalStatusAsync();
+    }
+
+    public void Dispose() => ShiftStatus.Changed -= OnShiftStatusChanged;
+
+    private void OnShiftStatusChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task RefreshTerminalStatusAsync()
+    {
+        try
+        {
+            await ShiftStatus.RefreshAsync();
+            await ApiClient.GetEnrollmentPublicKeyAsync();
+            _terminalOnline = true;
+        }
+        catch
+        {
+            _terminalOnline = SessionService.IsActive && ShiftStatus.IsApiOnline;
         }
     }
 
-    private void AppendDigit(string digit)
+    private void OnPinInput(ChangeEventArgs e)
     {
-        if (_pin.Length < 12)
+        string raw = e.Value?.ToString() ?? string.Empty;
+        _pin = new string(raw.Where(char.IsDigit).Take(PinLength).ToArray());
+        _errorMessage = null;
+        _ = TryAutoSubmitAsync();
+    }
+
+    private async Task AppendDigit(string digit)
+    {
+        if (_pin.Length < PinLength)
         {
             _pin += digit;
+            _errorMessage = null;
+            await TryAutoSubmitAsync();
         }
     }
 
-    private void Clear() => _pin = string.Empty;
+    private void Clear()
+    {
+        _pin = string.Empty;
+        _errorMessage = null;
+    }
 
-    private void AppendZero() => AppendDigit("0");
+    private Task AppendZero() => AppendDigit("0");
 
     private void Backspace()
     {
@@ -93,14 +183,30 @@
         }
     }
 
+    private async Task TryAutoSubmitAsync()
+    {
+        if (_pin.Length != PinLength || _isBusy)
+        {
+            return;
+        }
+
+        await LoginAsync();
+    }
+
     private async Task LoginAsync()
     {
+        if (_isBusy || _pin.Length < PinLength)
+        {
+            return;
+        }
+
         _errorMessage = null;
         _isBusy = true;
+        string pin = _pin;
+        _pin = string.Empty;
         try
         {
-            Result<CashierDto> result = await LoginApi.LoginAsync(_pin);
-            _pin = string.Empty;
+            Result<CashierDto> result = await LoginApi.LoginAsync(pin);
 
             if (!result.Success)
             {
@@ -115,4 +221,21 @@
             _isBusy = false;
         }
     }
+
+    private async Task OnLock()
+    {
+        LoginApi.ClearCashier();
+        if (SessionService.IsActive)
+        {
+            SessionService.ClearSession();
+        }
+
+        await ShiftStatus.RefreshAsync();
+        _pin = string.Empty;
+        _errorMessage = null;
+        Navigation.NavigateTo("/login", forceLoad: true);
+    }
+
+    private static string FormatRs(long paisa) =>
+        (paisa / 100m).ToString("N2");
 }

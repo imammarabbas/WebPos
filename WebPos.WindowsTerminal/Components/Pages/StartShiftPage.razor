@@ -53,6 +53,23 @@
                        @bind:event="oninput"
                        disabled="@_isBusy" />
 
+                @if (_suggestion is not null)
+                {
+                    <div class="terminal-id" style="margin-top:0.75rem;line-height:1.5;">
+                        Till GL (recorded): Rs @FormatRs(_suggestion.TillGlPaisa)<br />
+                        @if (_suggestion.LastExpectedCashPaisa is long lastExp)
+                        {
+                            <text>Previous expected: Rs @FormatRs(lastExp)<br /></text>
+                        }
+                        @if (_suggestion.LastPhysicalCountPaisa is long lastPhys)
+                        {
+                            <text>Previous physical count: Rs @FormatRs(lastPhys)<br /></text>
+                        }
+                        Suggested opening: <strong>Rs @FormatRs(_suggestion.SuggestedOpeningPaisa)</strong>
+                        (no new GL money — confirms cash still in till)
+                    </div>
+                }
+
                 <div class="terminal-id">
                     Terminal: @(TerminalOptions.TerminalId == Guid.Empty
                         ? "Not configured"
@@ -74,6 +91,7 @@
     private string? _errorMessage;
     private bool _isBusy;
     private OpenShiftDto? _foreignOpen;
+    private SuggestedOpeningCashDto? _suggestion;
 
     protected override async Task OnInitializedAsync()
     {
@@ -90,8 +108,24 @@
             return;
         }
 
+        await LoadSuggestedOpeningAsync();
         await TryResumeOrDetectConflictAsync();
     }
+
+    private async Task LoadSuggestedOpeningAsync()
+    {
+        try
+        {
+            _suggestion = await ApiClient.GetSuggestedOpeningCashAsync(TerminalOptions.TerminalId);
+            _openingCashText = (_suggestion.SuggestedOpeningPaisa / 100m).ToString("0.00");
+        }
+        catch
+        {
+            /* keep default if suggestion unavailable */
+        }
+    }
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
 
     private async Task TryResumeOrDetectConflictAsync()
     {

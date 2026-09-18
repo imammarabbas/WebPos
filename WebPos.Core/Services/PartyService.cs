@@ -11,20 +11,23 @@ namespace WebPos.Core.Services;
 
 public sealed class PartyService : IPartyService
 {
-    private readonly WebPosDbContext _context;
+    private readonly IDbContextFactory<WebPosDbContext> _dbFactory;
+    private readonly IAmbientDbContextAccessor _ambient;
     private readonly ITransactionService _transactionService;
     private readonly IPartyLedgerService _partyLedgerService;
     private readonly ITenantService _tenantService;
     private readonly IValidator<CreatePartyRequest> _createValidator;
 
     public PartyService(
-        WebPosDbContext context,
+        IDbContextFactory<WebPosDbContext> dbFactory,
+        IAmbientDbContextAccessor ambient,
         ITransactionService transactionService,
         IPartyLedgerService partyLedgerService,
         ITenantService tenantService,
         IValidator<CreatePartyRequest> createValidator)
     {
-        _context = context ?? throw new ArgumentNullException(nameof(context));
+        _dbFactory = dbFactory ?? throw new ArgumentNullException(nameof(dbFactory));
+        _ambient = ambient ?? throw new ArgumentNullException(nameof(ambient));
         _transactionService = transactionService
             ?? throw new ArgumentNullException(nameof(transactionService));
         _partyLedgerService = partyLedgerService
@@ -51,6 +54,7 @@ public sealed class PartyService : IPartyService
                 throw new ValidationException(validation.Errors);
             }
 
+            WebPosDbContext context = _ambient.Required;
             string role = PartyTypes.Normalize(request.Role);
             DateTimeOffset now = DateTimeOffset.UtcNow;
             Guid partyId = Guid.NewGuid();
@@ -68,10 +72,9 @@ public sealed class PartyService : IPartyService
                 CreatedAt = now,
                 UpdatedAt = now
             };
-            _context.Parties.Add(party);
+            context.Parties.Add(party);
 
-            // Persist party before ledger init so FK lookups succeed in-transaction.
-            await _context.SaveChangesAsync(ct);
+            await context.SaveChangesAsync(ct);
 
             if (role == PartyTypes.Supplier)
             {
@@ -92,7 +95,8 @@ public sealed class PartyService : IPartyService
 
         return _transactionService.ExecuteInTransactionAsync(async ct =>
         {
-            Party party = await _context.Parties
+            WebPosDbContext context = _ambient.Required;
+            Party party = await context.Parties
                 .FirstOrDefaultAsync(
                     candidate =>
                         candidate.Id == partyId
@@ -106,82 +110,91 @@ public sealed class PartyService : IPartyService
             party.Address = request.Address?.Trim() ?? string.Empty;
             party.CreditLimitPaisa = request.CreditLimitPaisa;
             party.UpdatedAt = DateTimeOffset.UtcNow;
-            await _context.SaveChangesAsync(ct);
+            await context.SaveChangesAsync(ct);
             return ToDto(party);
         }, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<PartyDto>> GetPartiesAsync(
+    public Task<IReadOnlyList<PartyDto>> GetPartiesAsync(
         string? role,
         CancellationToken cancellationToken = default)
     {
         EnsureTenantResolved();
 
-        IQueryable<Party> query = _context.Parties.AsNoTracking()
-            .Where(party => party.TenantId == _tenantService.TenantId);
-
-        if (!string.IsNullOrWhiteSpace(role))
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
-            if (!PartyTypes.IsKnown(role))
+            IQueryable<Party> query = context.Parties.AsNoTracking()
+                .Where(party => party.TenantId == _tenantService.TenantId);
+
+            if (!string.IsNullOrWhiteSpace(role))
             {
-                throw new InvalidOperationException(
-                    "Role must be CUSTOMER or SUPPLIER.");
+                if (!PartyTypes.IsKnown(role))
+                {
+                    throw new InvalidOperationException(
+                        "Role must be CUSTOMER or SUPPLIER.");
+                }
+
+                string normalizedRole = PartyTypes.Normalize(role);
+                query = query.Where(party => party.PartyType == normalizedRole);
             }
 
-            string normalizedRole = PartyTypes.Normalize(role);
-            query = query.Where(party => party.PartyType == normalizedRole);
-        }
+            List<Party> parties = await query
+                .OrderBy(party => party.Name)
+                .ToListAsync(ct);
 
-        List<Party> parties = await query
-            .OrderBy(party => party.Name)
-            .ToListAsync(cancellationToken);
-
-        return parties.Select(ToDto).ToList();
+            return (IReadOnlyList<PartyDto>)parties.Select(ToDto).ToList();
+        }, cancellationToken);
     }
 
-    public async Task<PartyDto> GetPartyAsync(
+    public Task<PartyDto> GetPartyAsync(
         Guid partyId,
         CancellationToken cancellationToken = default)
     {
         EnsureTenantResolved();
 
-        Party party = await _context.Parties.AsNoTracking()
-            .FirstOrDefaultAsync(
-                candidate =>
-                    candidate.Id == partyId
-                    && candidate.TenantId == _tenantService.TenantId,
-                cancellationToken)
-            ?? throw new KeyNotFoundException(
-                "Party was not found for the current tenant.");
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
+        {
+            Party party = await context.Parties.AsNoTracking()
+                .FirstOrDefaultAsync(
+                    candidate =>
+                        candidate.Id == partyId
+                        && candidate.TenantId == _tenantService.TenantId,
+                    ct)
+                ?? throw new KeyNotFoundException(
+                    "Party was not found for the current tenant.");
 
-        return ToDto(party);
+            return ToDto(party);
+        }, cancellationToken);
     }
 
-    public async Task<PartyDto> GetSupplierAsync(
+    public Task<PartyDto> GetSupplierAsync(
         Guid supplierId,
         CancellationToken cancellationToken = default)
     {
         EnsureTenantResolved();
 
-        Party party = await _context.Parties.AsNoTracking()
-            .FirstOrDefaultAsync(
-                candidate =>
-                    candidate.Id == supplierId
-                    && candidate.TenantId == _tenantService.TenantId,
-                cancellationToken)
-            ?? throw new InvalidOperationException(
-                "Supplier was not found for the current tenant.");
-
-        if (!string.Equals(
-                party.PartyType,
-                PartyTypes.Supplier,
-                StringComparison.OrdinalIgnoreCase))
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
-            throw new InvalidOperationException(
-                "The selected party is not a SUPPLIER.");
-        }
+            Party party = await context.Parties.AsNoTracking()
+                .FirstOrDefaultAsync(
+                    candidate =>
+                        candidate.Id == supplierId
+                        && candidate.TenantId == _tenantService.TenantId,
+                    ct)
+                ?? throw new InvalidOperationException(
+                    "Supplier was not found for the current tenant.");
 
-        return ToDto(party);
+            if (!string.Equals(
+                    party.PartyType,
+                    PartyTypes.Supplier,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "The selected party is not a SUPPLIER.");
+            }
+
+            return ToDto(party);
+        }, cancellationToken);
     }
 
     public Task<IReadOnlyList<PartyDto>> GetSuppliersAsync(

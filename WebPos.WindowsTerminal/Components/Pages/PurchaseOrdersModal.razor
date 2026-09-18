@@ -1,0 +1,494 @@
+@using System.Globalization
+@using Common.Models
+@using WebPos.WindowsTerminal.Services
+
+@if (Visible)
+{
+    <div class="modal-backdrop ro-backdrop po-modal-backdrop" @onclick="Close">
+        <div class="po-modal-panel" role="dialog" aria-modal="true" aria-labelledby="po-list-title" @onclick:stopPropagation="true">
+            @if (_detail is null)
+            {
+                <div class="po-page-header">
+                    <div class="po-page-header-left">
+                        <div class="po-icon-tile" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" stroke-linecap="round" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h1 id="po-list-title">Purchase Orders</h1>
+                            <p>View, manage and track all purchase orders</p>
+                        </div>
+                    </div>
+                    <div class="po-actions">
+                        <button type="button" class="po-btn po-btn-primary" disabled="@_busy" @onclick="CreateNew">+ New Purchase Order</button>
+                        <button type="button" class="po-btn po-btn-outline" disabled="@_busy" @onclick="RefreshAsync">Refresh</button>
+                        <button type="button" class="po-btn po-btn-icon" disabled="@_busy" @onclick="Minimize" title="Minimize">−</button>
+                        <button type="button" class="po-btn po-btn-icon" @onclick="Close" title="Close">✕</button>
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(_error))
+                {
+                    <div class="po-alert" role="alert">@_error</div>
+                }
+
+                <div class="po-modal-body">
+                    <div class="po-card">
+                        <div class="po-filter-row">
+                            <div class="po-field">
+                                <label for="term-po-search">Search</label>
+                                <input id="term-po-search"
+                                       class="form-control"
+                                       placeholder="Search PO No / Supplier…"
+                                       @bind="_filter"
+                                       @bind:event="oninput"
+                                       @bind:after="OnFilterChanged" />
+                            </div>
+                            <div class="po-field">
+                                <label for="term-po-from">Date From</label>
+                                <input id="term-po-from" class="form-control" type="date" @bind="_dateFrom" @bind:after="OnFilterChanged" />
+                            </div>
+                            <div class="po-field">
+                                <label for="term-po-to">Date To</label>
+                                <input id="term-po-to" class="form-control" type="date" @bind="_dateTo" @bind:after="OnFilterChanged" />
+                            </div>
+                            <div class="po-field">
+                                <label for="term-po-status">Status</label>
+                                <select id="term-po-status" class="form-control" @bind="_statusFilter" @bind:after="OnFilterChanged">
+                                    <option value="all">All</option>
+                                    <option value="open">Open</option>
+                                    <option value="received">Received</option>
+                                </select>
+                            </div>
+                            <div class="po-filter-actions">
+                                <button type="button" class="po-btn po-btn-primary" @onclick="() => _page = 1">Search</button>
+                                <button type="button" class="po-btn po-btn-outline" @onclick="ResetFilters">Reset</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="po-card">
+                        @if (!_busy && FilteredCount == 0 && string.IsNullOrWhiteSpace(_error))
+                        {
+                            <p class="po-empty">No purchase orders match the current filters.</p>
+                        }
+                        else
+                        {
+                            <div class="po-table-wrap">
+                                <table class="po-table">
+                                    <thead>
+                                        <tr>
+                                            <th>PO No.</th>
+                                            <th>Date</th>
+                                            <th>Supplier</th>
+                                            <th class="po-num">Items</th>
+                                            <th class="po-num">Total (Rs)</th>
+                                            <th>Status</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (PurchaseOrderSummaryDto po in PageRows)
+                                        {
+                                            <tr>
+                                                <td><strong>@po.SupplierInvoiceNo</strong></td>
+                                                <td>@po.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy")</td>
+                                                <td>@(string.IsNullOrWhiteSpace(po.SupplierName) ? "—" : po.SupplierName)</td>
+                                                <td class="po-num">@po.LineCount</td>
+                                                <td class="po-num">@FormatRs(po.NetPayablePaisa)</td>
+                                                <td>
+                                                    @if (po.IsReceived)
+                                                    {
+                                                        <span class="po-badge po-badge-received">Received</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="po-badge po-badge-open">Open</span>
+                                                    }
+                                                    <span style="margin-left:0.35rem;font-size:0.8rem;color:var(--po-muted);">@po.PaymentStatus</span>
+                                                </td>
+                                                <td>
+                                                    <div class="po-actions">
+                                                        <button type="button" class="po-btn po-btn-sm po-btn-outline" disabled="@_busy" @onclick="() => ViewAsync(po.Id)">View</button>
+                                                        @if (!po.IsReceived)
+                                                        {
+                                                            <button type="button" class="po-btn po-btn-sm po-btn-outline" disabled="@_busy" @onclick="() => EditAsync(po.Id)">Edit</button>
+                                                            <button type="button" class="po-btn po-btn-sm po-btn-primary" disabled="@_busy" @onclick="() => ReceiveAsync(po.Id)">Receive</button>
+                                                        }
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div class="po-pager">
+                                <div class="po-pager-meta">
+                                    @if (FilteredCount == 0)
+                                    {
+                                        <text>Showing 0 purchase orders</text>
+                                    }
+                                    else
+                                    {
+                                        <text>Showing @FromIndex to @ToIndex of @FilteredCount purchase orders</text>
+                                    }
+                                </div>
+                                <div class="po-pager-controls">
+                                    <button type="button" class="po-page-btn" disabled="@(_page <= 1)" @onclick="() => GoPage(_page - 1)">‹</button>
+                                    <button type="button" class="po-page-btn active">@_page</button>
+                                    <button type="button" class="po-page-btn" disabled="@(_page >= TotalPages)" @onclick="() => GoPage(_page + 1)">›</button>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="po-page-header">
+                    <div class="po-page-header-left">
+                        <div class="po-icon-tile" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" stroke-linecap="round" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h1 id="po-list-title">Purchase Order</h1>
+                            <p>@_detail.SupplierInvoiceNo · View and manage purchase order details</p>
+                        </div>
+                    </div>
+                    <div class="po-actions">
+                        <button type="button" class="po-btn po-btn-outline" disabled="@_busy" @onclick="BackToList">Back</button>
+                        <button type="button" class="po-btn po-btn-icon" disabled="@_busy" @onclick="Minimize" title="Minimize">−</button>
+                        <button type="button" class="po-btn po-btn-icon" @onclick="Close" title="Close">✕</button>
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(_error))
+                {
+                    <div class="po-alert" role="alert">@_error</div>
+                }
+
+                <div class="po-modal-body">
+                    <div class="po-card">
+                        <h2>PO Information</h2>
+                        <div class="pov-info-grid">
+                            <div class="pov-info-item">
+                                <label>PO No.</label>
+                                <div class="pov-value">@_detail.SupplierInvoiceNo</div>
+                            </div>
+                            <div class="pov-info-item">
+                                <label>Supplier</label>
+                                <div class="pov-value">@(string.IsNullOrWhiteSpace(_detail.SupplierName) ? "—" : _detail.SupplierName)</div>
+                            </div>
+                            <div class="pov-info-item">
+                                <label>Purchase Date</label>
+                                <div class="pov-value">@_detail.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy")</div>
+                            </div>
+                            <div class="pov-info-item">
+                                <label>Status</label>
+                                <div>
+                                    @if (_detail.IsReceived)
+                                    {
+                                        <span class="po-badge po-badge-received">Received</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="po-badge po-badge-open">Open</span>
+                                    }
+                                </div>
+                            </div>
+                            <div class="pov-info-item">
+                                <label>Payment</label>
+                                <div class="pov-value">@_detail.PaymentStatus</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="po-card">
+                        <h2>Receiving Summary</h2>
+                        <div class="pov-summary-row">
+                            <div class="pov-summary-kpi">
+                                <span>Lines</span>
+                                <strong>@_detail.Lines.Count</strong>
+                            </div>
+                            <div class="pov-summary-kpi">
+                                <span>Total Qty</span>
+                                <strong>@_detail.Lines.Sum(l => l.Quantity).ToString("N3", CultureInfo.InvariantCulture)</strong>
+                            </div>
+                            <div class="pov-summary-kpi">
+                                <span>Stock Status</span>
+                                <strong style="font-size:1rem;">@(_detail.IsReceived ? "Fully received" : "Not received")</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="po-card">
+                        <h2>Items</h2>
+                        <div class="po-table-wrap">
+                            <table class="po-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Product</th>
+                                        <th class="po-num">Qty</th>
+                                        <th class="po-num">Bonus</th>
+                                        <th class="po-num">Cost</th>
+                                        <th class="po-num">Retail</th>
+                                        <th>Batch</th>
+                                        <th class="po-num">Amount</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @{
+                                        int i = 0;
+                                    }
+                                    @foreach (PurchaseOrderLineDto line in _detail.Lines)
+                                    {
+                                        i++;
+                                        long amount = (long)Math.Round(line.Quantity * line.PurchasePricePaisa, MidpointRounding.AwayFromZero);
+                                        <tr>
+                                            <td>@i</td>
+                                            <td>@(string.IsNullOrWhiteSpace(line.ProductName) ? line.ProductId.ToString("N")[..8] : line.ProductName)</td>
+                                            <td class="po-num">@line.Quantity.ToString("0.##", CultureInfo.InvariantCulture)</td>
+                                            <td class="po-num">@line.BonusQuantity.ToString("0.##", CultureInfo.InvariantCulture)</td>
+                                            <td class="po-num">@FormatRs(line.PurchasePricePaisa)</td>
+                                            <td class="po-num">@FormatRs(line.RetailPricePaisa)</td>
+                                            <td>@line.BatchNumber</td>
+                                            <td class="po-num">@FormatRs(amount)</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="po-card">
+                        <h2>Totals</h2>
+                        <div class="pov-totals">
+                            <div class="pov-totals-row">
+                                <span>Sub Total</span>
+                                <span>Rs @FormatRs(_detail.SubTotalPaisa)</span>
+                            </div>
+                            <div class="pov-totals-row">
+                                <span>Discount</span>
+                                <span>Rs @FormatRs(_detail.DiscountPaisa)</span>
+                            </div>
+                            <div class="pov-totals-row grand">
+                                <span>Grand Total</span>
+                                <span>Rs @FormatRs(_detail.NetPayablePaisa)</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pov-footer-actions">
+                        @if (_detail is { IsReceived: false })
+                        {
+                            <button type="button" class="po-btn po-btn-outline" disabled="@_busy" @onclick="() => EditAsync(_detail.Id)">Edit</button>
+                            <button type="button" class="po-btn po-btn-primary" disabled="@_busy" @onclick="() => ReceiveAsync(_detail.Id)">Receive</button>
+                        }
+                        <button type="button" class="po-btn" @onclick="BackToList">Back</button>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private const int PageSize = 10;
+
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public PurchaseIntakeApiClient IntakeService { get; set; } = default!;
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnMinimize { get; set; }
+    [Parameter] public EventCallback OnCreatePurchaseOrder { get; set; }
+    [Parameter] public EventCallback<Guid> OnEditPurchaseOrder { get; set; }
+    [Parameter] public EventCallback<Guid> OnReceivePurchaseOrder { get; set; }
+
+    private readonly List<PurchaseOrderSummaryDto> _orders = [];
+    private PurchaseOrderDetailDto? _detail;
+    private string? _error;
+    private bool _busy;
+    private bool _wasVisible;
+    private string _filter = string.Empty;
+    private string _statusFilter = "all";
+    private DateOnly? _dateFrom;
+    private DateOnly? _dateTo;
+    private int _page = 1;
+
+    private List<PurchaseOrderSummaryDto> FilteredList =>
+        _orders.Where(MatchesFilters).OrderByDescending(o => o.CreatedAt).ToList();
+
+    private int FilteredCount => FilteredList.Count;
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(FilteredCount / (double)PageSize));
+    private int FromIndex => FilteredCount == 0 ? 0 : ((_page - 1) * PageSize) + 1;
+    private int ToIndex => Math.Min(_page * PageSize, FilteredCount);
+    private List<PurchaseOrderSummaryDto> PageRows =>
+        FilteredList.Skip((_page - 1) * PageSize).Take(PageSize).ToList();
+
+    private bool MatchesFilters(PurchaseOrderSummaryDto o)
+    {
+        if (!string.IsNullOrWhiteSpace(_filter))
+        {
+            bool textMatch =
+                o.SupplierInvoiceNo.Contains(_filter, StringComparison.OrdinalIgnoreCase)
+                || (o.SupplierName?.Contains(_filter, StringComparison.OrdinalIgnoreCase) ?? false);
+            if (!textMatch)
+            {
+                return false;
+            }
+        }
+
+        if (_statusFilter == "open" && o.IsReceived)
+        {
+            return false;
+        }
+
+        if (_statusFilter == "received" && !o.IsReceived)
+        {
+            return false;
+        }
+
+        DateOnly created = DateOnly.FromDateTime(o.CreatedAt.ToLocalTime().DateTime);
+        if (_dateFrom is DateOnly from && created < from)
+        {
+            return false;
+        }
+
+        if (_dateTo is DateOnly to && created > to)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Visible && !_wasVisible)
+        {
+            _detail = null;
+            await RefreshAsync();
+        }
+
+        _wasVisible = Visible;
+    }
+
+    private void OnFilterChanged() => _page = 1;
+
+    private void ResetFilters()
+    {
+        _filter = string.Empty;
+        _statusFilter = "all";
+        _dateFrom = null;
+        _dateTo = null;
+        _page = 1;
+    }
+
+    private void GoPage(int page) => _page = Math.Clamp(page, 1, TotalPages);
+
+    private async Task RefreshAsync()
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            Result<IReadOnlyList<PurchaseOrderSummaryDto>> result =
+                await IntakeService.ListPurchasesAsync(100);
+            _orders.Clear();
+            if (!result.Success)
+            {
+                _error = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                    ? "Failed to load purchases."
+                    : result.ErrorMessage;
+                return;
+            }
+
+            _orders.AddRange(result.Data ?? []);
+            _page = Math.Clamp(_page, 1, TotalPages);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ViewAsync(Guid purchaseOrderId)
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            Result<PurchaseOrderDetailDto> result = await IntakeService.GetPurchaseAsync(purchaseOrderId);
+            if (!result.Success || result.Data is null)
+            {
+                _error = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                    ? "Failed to load order details."
+                    : result.ErrorMessage;
+                return;
+            }
+
+            _detail = result.Data;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task CreateNew()
+    {
+        if (OnCreatePurchaseOrder.HasDelegate)
+        {
+            await OnCreatePurchaseOrder.InvokeAsync();
+        }
+    }
+
+    private async Task EditAsync(Guid purchaseOrderId)
+    {
+        if (OnEditPurchaseOrder.HasDelegate)
+        {
+            await OnEditPurchaseOrder.InvokeAsync(purchaseOrderId);
+        }
+    }
+
+    private async Task ReceiveAsync(Guid purchaseOrderId)
+    {
+        if (OnReceivePurchaseOrder.HasDelegate)
+        {
+            await OnReceivePurchaseOrder.InvokeAsync(purchaseOrderId);
+            return;
+        }
+
+        await EditAsync(purchaseOrderId);
+    }
+
+    private void BackToList()
+    {
+        _detail = null;
+        _error = null;
+    }
+
+    private async Task Minimize()
+    {
+        if (OnMinimize.HasDelegate)
+        {
+            await OnMinimize.InvokeAsync();
+            return;
+        }
+
+        await Close();
+    }
+
+    private async Task Close()
+    {
+        _detail = null;
+        _error = null;
+        await OnClose.InvokeAsync();
+    }
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+}

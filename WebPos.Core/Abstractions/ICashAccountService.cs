@@ -63,9 +63,21 @@ public sealed class CashAccountCardDto
     /// <summary>Live drawer float when an OPEN shift exists on the till terminal.</summary>
     public long? DrawerExpectedCashPaisa { get; init; }
 
+    /// <summary>Blind physical count when recorded (never inferred from Expected).</summary>
+    public long? PhysicalBlindCashPaisa { get; init; }
+
+    public bool HasPhysicalCount => PhysicalBlindCashPaisa is not null;
+
     public Guid? OpenShiftId { get; init; }
 
     public bool HasOpenShift => OpenShiftId is not null;
+
+    /// <summary>Available to spend = min(GL, drawer) when live; else GL.</summary>
+    public long SpendablePaisa { get; init; }
+
+    public long UnreconciledCashInPaisa { get; init; }
+
+    public long UnreconciledCashOutPaisa { get; init; }
 }
 
 public sealed class CashBalancesSummaryDto
@@ -85,6 +97,30 @@ public sealed class CashBalancesSummaryDto
     public long InOwnerPaisa { get; init; }
 }
 
+public sealed class CashSpendableBalanceDto
+{
+    public required Guid AccountId { get; init; }
+
+    public required string AccountCode { get; init; }
+
+    public CashAccountType Type { get; init; }
+
+    public long GlBalancePaisa { get; init; }
+
+    public long? DrawerExpectedCashPaisa { get; init; }
+
+    public Guid? OpenShiftId { get; init; }
+
+    /// <summary>Amount that may leave this account without creating a phantom deficit.</summary>
+    public long SpendablePaisa { get; init; }
+
+    public long LedgerExceedsDrawerPaisa =>
+        Type == CashAccountType.Till
+        && DrawerExpectedCashPaisa is long drawer
+            ? Math.Max(0L, GlBalancePaisa - drawer)
+            : 0L;
+}
+
 public sealed class CashPaymentResolution
 {
     public required string AccountCode { get; init; }
@@ -99,6 +135,50 @@ public sealed class CashPaymentResolution
     /// When true, open-shift ExpectedCash should move with this payment account.
     /// </summary>
     public bool AffectsTillDrawer { get; init; }
+}
+
+public sealed class CashAccountLedgerEntryDto
+{
+    public required Guid Id { get; init; }
+
+    public required DateTimeOffset CreatedAt { get; init; }
+
+    public Guid? ShiftId { get; init; }
+
+    public Guid? TerminalId { get; init; }
+
+    public string? TerminalName { get; init; }
+
+    public required string TransactionType { get; init; }
+
+    public required string ReferenceNo { get; init; }
+
+    public required string ReferenceDetails { get; init; }
+
+    public long DebitPaisa { get; init; }
+
+    public long CreditPaisa { get; init; }
+
+    public long RunningBalancePaisa { get; init; }
+}
+
+public sealed class CashAccountLedgerDto
+{
+    public required string AccountCode { get; init; }
+
+    public string? AccountName { get; init; }
+
+    public Guid? CashAccountId { get; init; }
+
+    public DateTimeOffset From { get; init; }
+
+    public DateTimeOffset To { get; init; }
+
+    public long OpeningBalancePaisa { get; init; }
+
+    public long ClosingBalancePaisa { get; init; }
+
+    public required IReadOnlyList<CashAccountLedgerEntryDto> Entries { get; init; }
 }
 
 public interface ICashAccountService
@@ -126,15 +206,43 @@ public interface ICashAccountService
         DateTime? asOf = null,
         CancellationToken cancellationToken = default);
 
+    Task<long> GetAccountBalancePaisaByCodeAsync(
+        string accountCode,
+        DateTime? asOf = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Spendable cash for an account: GL for non-till; min(GL, open-shift ExpectedCash) for till.
+    /// </summary>
+    Task<CashSpendableBalanceDto> GetSpendableBalanceAsync(
+        Guid accountId,
+        Guid? shiftId = null,
+        CancellationToken cancellationToken = default);
+
     Task<CashBalancesSummaryDto> GetBalancesSummaryAsync(
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Resolves GL account for a payment: explicit CashAccountId wins over payment-method defaults.
+    /// Resolves GL account for a payment: AccountCode, then CashAccountId, then payment-method defaults.
     /// </summary>
     Task<CashPaymentResolution> ResolvePaymentAccountAsync(
         Guid? cashAccountId,
         string paymentMethod,
+        CancellationToken cancellationToken = default);
+
+    Task<CashPaymentResolution> ResolvePaymentAccountAsync(
+        Guid? cashAccountId,
+        string? accountCode,
+        string paymentMethod,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Line-by-line GL statement for a cash/asset account code with running balance.
+    /// </summary>
+    Task<CashAccountLedgerDto> GetLedgerByAccountCodeAsync(
+        string accountCode,
+        DateTimeOffset from,
+        DateTimeOffset to,
         CancellationToken cancellationToken = default);
 
     /// <summary>

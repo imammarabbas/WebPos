@@ -4,9 +4,9 @@ public sealed class SaleLineRequest
 {
     public required Guid ProductId { get; init; }
 
-    public required Guid BatchId { get; init; }
+    public Guid? BatchId { get; init; }
 
-    public required string BatchNumber { get; init; }
+    public string BatchNumber { get; init; } = string.Empty;
 
     public required string ProductName { get; init; }
 

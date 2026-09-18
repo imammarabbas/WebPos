@@ -52,14 +52,78 @@ public sealed class SalesApiClient(
         CancellationToken cancellationToken = default) =>
         ExecuteAsync(() => _apiClient.GetProductsForSaleAsync(cancellationToken));
 
+    public Task<Result<IReadOnlyList<SaleMasterDto>>> GetSaleMastersAsync(
+        CancellationToken cancellationToken = default) =>
+        ExecuteAsync(() => _apiClient.GetSaleMastersAsync(cancellationToken));
+
+    public Task<Result<IReadOnlyList<SaleQuickLinkDto>>> GetSaleQuickLinksAsync(
+        CancellationToken cancellationToken = default) =>
+        ExecuteAsync(() => _apiClient.GetSaleQuickLinksAsync(cancellationToken));
+
     public Task<Result<SalesProductDto>> GetProductByBarcodeAsync(
         string barcode,
         CancellationToken cancellationToken = default) =>
         ExecuteAsync(() => _apiClient.GetProductByBarcodeAsync(barcode, cancellationToken));
 
+    /// <summary>
+    /// Resolves a barcode to a sellable product, or a bulk master (409) needing variant pick.
+    /// </summary>
+    public async Task<Result<BarcodeScanOutcome>> ScanBarcodeAsync(
+        string barcode,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            SalesProductDto product = await _apiClient.GetProductByBarcodeAsync(barcode, cancellationToken)
+                .ConfigureAwait(false);
+            return Result<BarcodeScanOutcome>.Ok(BarcodeScanOutcome.ForProduct(product));
+        }
+        catch (WebPosClientException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            SaleMasterDto? master = TryDeserializeMaster(ex.ResponseBody);
+            if (master is null)
+            {
+                return Result<BarcodeScanOutcome>.Fail(ex.Message);
+            }
+
+            return Result<BarcodeScanOutcome>.Ok(BarcodeScanOutcome.ForMaster(master));
+        }
+        catch (WebPosClientException ex)
+        {
+            _logger.LogError(
+                ex,
+                "WebPos API failed ({StatusCode}) scanning barcode: {Message}",
+                ex.StatusCode,
+                ex.Message);
+            return Result<BarcodeScanOutcome>.Fail(ex.Message);
+        }
+    }
+
     public Task<Result<IReadOnlyList<SalesProductDto>>> GetProductsForReceiveAsync(
         CancellationToken cancellationToken = default) =>
         ExecuteAsync(() => _apiClient.GetProductsForReceiveAsync(cancellationToken));
+
+    private static SaleMasterDto? TryDeserializeMaster(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return null;
+        }
+
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<SaleMasterDto>(
+                body,
+                new System.Text.Json.JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
 
     public async Task<Result<CompleteSaleResult>> CompleteSaleAsync(
         SalesProductDto selectedProduct,
@@ -87,8 +151,8 @@ public sealed class SalesApiClient(
                 new SaleLineRequest
                 {
                     ProductId = selectedProduct.ProductId,
-                    BatchId = selectedProduct.BatchId,
-                    BatchNumber = selectedProduct.BatchNumber,
+                    BatchId = null,
+                    BatchNumber = string.Empty,
                     ProductName = selectedProduct.Name,
                     Quantity = quantity,
                     UnitPricePaisa = selectedProduct.UnitPricePaisa,
@@ -106,6 +170,7 @@ public sealed class SalesApiClient(
         Guid? customerId = null,
         long discountAmountPaisa = 0,
         string? discountReason = null,
+        string? invoiceNo = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(lines);
@@ -129,18 +194,22 @@ public sealed class SalesApiClient(
             saleLines.Add(new SaleLineRequest
             {
                 ProductId = line.Product.ProductId,
-                BatchId = line.Product.BatchId,
-                BatchNumber = line.Product.BatchNumber,
+                BatchId = null,
+                BatchNumber = string.Empty,
                 ProductName = line.Product.Name,
                 Quantity = line.Quantity,
-                UnitPricePaisa = line.Product.UnitPricePaisa,
+                UnitPricePaisa = line.EffectiveUnitPricePaisa,
                 DiscountAppliedPaisa = 0
             });
         }
 
+        string resolvedInvoice = string.IsNullOrWhiteSpace(invoiceNo)
+            ? $"POS-{DateTime.UtcNow:yyyyMMddHHmmssfff}"
+            : invoiceNo.Trim();
+
         CompleteSaleRequest request = new()
         {
-            InvoiceNo = $"POS-{DateTime.UtcNow:yyyyMMddHHmmssfff}",
+            InvoiceNo = resolvedInvoice,
             ShiftId = _sessionService.ShiftId,
             TerminalId = _sessionService.TerminalId,
             CashierId = _sessionService.CashierId,
@@ -172,6 +241,16 @@ public sealed class SalesApiClient(
                 ex.RequestPath,
                 ex.Message);
 
+            return Result<T>.Fail(ex.Message);
+        }
+        catch (ApiDeserializationException ex)
+        {
+            _logger.LogError(ex, "WebPos API response could not be read.");
+            return Result<T>.Fail(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected WebPos API client failure.");
             return Result<T>.Fail(ex.Message);
         }
     }

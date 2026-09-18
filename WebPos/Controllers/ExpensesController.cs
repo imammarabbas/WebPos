@@ -54,6 +54,7 @@ public sealed class ExpensesController(IExpenseService expenseService) : Control
                 ExpenseCategory = request.ExpenseCategory,
                 ReceiptReference = request.ReceiptReference ?? string.Empty,
                 PaymentMethod = request.PaymentMethod,
+                CashAccountId = request.CashAccountId,
                 AmountPaisa = request.AmountPaisa,
                 IsRecurring = request.IsRecurring
             },
@@ -82,6 +83,8 @@ public sealed class CreateExpenseApiRequest
     public string? ReceiptReference { get; init; }
 
     public required string PaymentMethod { get; init; }
+
+    public Guid? CashAccountId { get; init; }
 
     public long AmountPaisa { get; init; }
 

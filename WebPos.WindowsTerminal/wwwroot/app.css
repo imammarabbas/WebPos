@@ -99,3 +99,243 @@ h1:focus {
         padding-left: env(safe-area-inset-left);
     }
 }
+
+/* —— Global POS overlays (F5 / F6 / variant) — must be unscoped —— */
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgba(17, 24, 39, 0.45);
+}
+
+.sf-modal {
+    background: #ffffff;
+    color: #1a1a1a;
+    border-radius: 12px;
+    padding: 1rem 1.1rem;
+    width: min(36rem, 94vw);
+    max-height: 85vh;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    box-shadow: 0 20px 50px rgba(15, 23, 42, 0.35);
+}
+
+.sf-modal-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.sf-modal-head h2 {
+    margin: 0;
+    font-size: 1.05rem;
+    color: #111827;
+}
+
+.sf-modal .link-btn {
+    border: 0;
+    background: transparent;
+    color: #2563eb;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 0.2rem 0.35rem;
+}
+
+.sf-modal .link-btn:hover {
+    text-decoration: underline;
+}
+
+.sf-modal .scan-input {
+    width: 100%;
+    min-height: 2.75rem;
+    padding: 0.65rem 1rem;
+    font-size: 0.95rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    background: #fff;
+    color: #1a1a1a;
+    outline: none;
+}
+
+.sf-modal .scan-input:focus {
+    border-color: #9ca3af;
+    box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.08);
+}
+
+.sf-modal .muted {
+    margin: 0;
+    color: #6b7280;
+    font-size: 0.85rem;
+}
+
+.sf-variant-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.sf-variant-table th,
+.sf-variant-table td {
+    padding: 0.45rem 0.4rem;
+    border-bottom: 1px solid #e5e7eb;
+    text-align: left;
+    color: #1a1a1a;
+}
+
+.sf-variant-table thead th {
+    background: #f3f4f6;
+    font-weight: 700;
+}
+
+.sf-variant-table tbody tr {
+    cursor: pointer;
+}
+
+.sf-variant-table tbody tr:hover {
+    background: #eff6ff;
+}
+
+.sf-mini-btn {
+    border: 0;
+    background: #2563eb;
+    color: #fff;
+    border-radius: 6px;
+    padding: 0.25rem 0.55rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.sf-search-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 18rem;
+    overflow: auto;
+    width: 100%;
+}
+
+.sf-search-list li {
+    padding: 0.55rem 0.45rem;
+    border-bottom: 1px solid #e5e7eb;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    color: #1a1a1a;
+}
+
+.sf-search-list li.active,
+.sf-search-list li:hover {
+    background: #eff6ff;
+}
+
+.sf-search-list strong {
+    color: #111827;
+}
+
+.sf-search-list span {
+    font-size: 0.75rem;
+    color: #6b7280;
+}
+
+.sf-price-card h3 {
+    margin: 0 0 0.5rem;
+    color: #111827;
+}
+
+.sf-price-card dl {
+    display: grid;
+    gap: 0.35rem;
+    margin: 0;
+}
+
+.sf-price-card dl > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    font-size: 0.9rem;
+}
+
+.sf-price-card dt {
+    color: #6b7280;
+}
+
+.sf-price-card dd {
+    margin: 0;
+    font-weight: 700;
+    color: #1a1a1a;
+}
+
+.sf-price-variants {
+    margin: 0;
+    padding-left: 1.1rem;
+    color: #1a1a1a;
+}
+
+.sf-modal .mono {
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 0.78rem;
+}
+
+.sf-customer-modal {
+    max-width: 28rem;
+}
+
+.sf-calc-modal {
+    max-width: 18rem;
+}
+
+.sf-calc-display {
+    width: 100%;
+    min-height: 2.5rem;
+    margin-bottom: 0.55rem;
+    padding: 0.45rem 0.55rem;
+    border: 1px solid #6b7280;
+    background: #111827;
+    color: #f9fafb;
+    font-size: 1.35rem;
+    font-weight: 700;
+    text-align: right;
+    font-family: ui-monospace, Consolas, monospace;
+}
+
+.sf-calc-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.35rem;
+    width: 100%;
+}
+
+.sf-calc-key {
+    min-height: 2.4rem;
+    border: 1px solid #6b7280;
+    background: #e5e7eb;
+    border-radius: 4px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.sf-calc-key.accent {
+    background: #2563eb;
+    border-color: #1d4ed8;
+    color: #fff;
+}
+
+.sf-calc-grid .sf-calc-key:last-child {
+    grid-column: 1 / -1;
+}
+
+.sf-cat-master-row {
+    background: #f8fafc;
+}
+
+.sf-cat-master-row:hover {
+    background: #eef2ff;
+}

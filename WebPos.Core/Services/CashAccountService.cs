@@ -10,45 +10,54 @@ namespace WebPos.Core.Services;
 
 public sealed class CashAccountService : ICashAccountService
 {
-    private readonly WebPosDbContext _context;
+    private readonly IDbContextFactory<WebPosDbContext> _dbFactory;
+    private readonly IAmbientDbContextAccessor _ambient;
     private readonly ITenantService _tenantService;
 
-    public CashAccountService(WebPosDbContext context, ITenantService tenantService)
+    public CashAccountService(
+        IDbContextFactory<WebPosDbContext> dbFactory,
+        IAmbientDbContextAccessor ambient,
+        ITenantService tenantService)
     {
-        _context = context ?? throw new ArgumentNullException(nameof(context));
+        _dbFactory = dbFactory ?? throw new ArgumentNullException(nameof(dbFactory));
+        _ambient = ambient ?? throw new ArgumentNullException(nameof(ambient));
         _tenantService = tenantService
             ?? throw new ArgumentNullException(nameof(tenantService));
     }
 
-    public async Task<IReadOnlyList<CashAccountDto>> ListAsync(
+    public Task<IReadOnlyList<CashAccountDto>> ListAsync(
         bool includeInactive = false,
         CancellationToken cancellationToken = default)
     {
         EnsureTenantResolved();
         Guid tenantId = _tenantService.TenantId;
 
-        IQueryable<CashAccount> query = _context.CashAccounts
-            .AsNoTracking()
-            .Where(a => a.TenantId == tenantId);
-
-        if (!includeInactive)
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
-            query = query.Where(a => a.IsActive);
-        }
+            IQueryable<CashAccount> query = context.CashAccounts
+                .AsNoTracking()
+                .Where(a => a.TenantId == tenantId);
 
-        List<CashAccount> accounts = await query
-            .OrderBy(a => a.SortOrder)
-            .ThenBy(a => a.Name)
-            .ToListAsync(cancellationToken);
+            if (!includeInactive)
+            {
+                query = query.Where(a => a.IsActive);
+            }
 
-        Dictionary<Guid, string> terminalNames = await LoadTerminalNamesAsync(
-            accounts.Where(a => a.TerminalId.HasValue).Select(a => a.TerminalId!.Value),
-            cancellationToken);
+            List<CashAccount> accounts = await query
+                .OrderBy(a => a.SortOrder)
+                .ThenBy(a => a.Name)
+                .ToListAsync(ct);
 
-        return accounts.Select(a => MapDto(a, terminalNames)).ToList();
+            Dictionary<Guid, string> terminalNames = await LoadTerminalNamesAsync(
+                context,
+                accounts.Where(a => a.TerminalId.HasValue).Select(a => a.TerminalId!.Value),
+                ct);
+
+            return (IReadOnlyList<CashAccountDto>)accounts.Select(a => MapDto(a, terminalNames)).ToList();
+        }, cancellationToken);
     }
 
-    public async Task<CashAccountDto> CreateAsync(
+    public Task<CashAccountDto> CreateAsync(
         CreateCashAccountRequest request,
         CancellationToken cancellationToken = default)
     {
@@ -66,35 +75,38 @@ public sealed class CashAccountService : ICashAccountService
         string? paymentKey = SanitizePaymentMethodKey(request.PaymentMethodKey);
         Guid tenantId = _tenantService.TenantId;
 
-        bool conflict = await _context.CashAccounts.AnyAsync(
-            a => a.TenantId == tenantId && a.AccountCode == accountCode,
-            cancellationToken);
-        if (conflict)
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
-            throw new InvalidOperationException(
-                $"Account code '{accountCode}' is already registered for this store.");
-        }
+            bool conflict = await context.CashAccounts.AnyAsync(
+                a => a.TenantId == tenantId && a.AccountCode == accountCode,
+                ct);
+            if (conflict)
+            {
+                throw new InvalidOperationException(
+                    $"Account code '{accountCode}' is already registered for this store.");
+            }
 
-        CashAccount entity = new()
-        {
-            Id = Guid.NewGuid(),
-            TenantId = tenantId,
-            Name = name,
-            Type = request.Type,
-            AccountCode = accountCode,
-            TerminalId = null,
-            IsActive = true,
-            IsSystem = false,
-            SortOrder = request.SortOrder,
-            PaymentMethodKey = paymentKey
-        };
+            CashAccount entity = new()
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                Name = name,
+                Type = request.Type,
+                AccountCode = accountCode,
+                TerminalId = null,
+                IsActive = true,
+                IsSystem = false,
+                SortOrder = request.SortOrder,
+                PaymentMethodKey = paymentKey
+            };
 
-        await _context.CashAccounts.AddAsync(entity, cancellationToken);
-        await _context.SaveChangesAsync(cancellationToken);
-        return MapDto(entity, new Dictionary<Guid, string>());
+            await context.CashAccounts.AddAsync(entity, ct);
+            await context.SaveChangesAsync(ct);
+            return MapDto(entity, new Dictionary<Guid, string>());
+        }, cancellationToken);
     }
 
-    public async Task<CashAccountDto> UpdateAsync(
+    public Task<CashAccountDto> UpdateAsync(
         Guid accountId,
         UpdateCashAccountRequest request,
         CancellationToken cancellationToken = default)
@@ -107,26 +119,29 @@ public sealed class CashAccountService : ICashAccountService
             throw new ArgumentException("Account id is required.", nameof(accountId));
         }
 
-        CashAccount entity = await _context.CashAccounts.FirstOrDefaultAsync(
-            a => a.Id == accountId && a.TenantId == _tenantService.TenantId,
-            cancellationToken)
-            ?? throw new KeyNotFoundException("Cash account was not found.");
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
+        {
+            CashAccount entity = await context.CashAccounts.FirstOrDefaultAsync(
+                a => a.Id == accountId && a.TenantId == _tenantService.TenantId,
+                ct)
+                ?? throw new KeyNotFoundException("Cash account was not found.");
 
-        entity.Name = RequireName(request.Name);
-        entity.IsActive = request.IsActive;
-        entity.SortOrder = request.SortOrder;
-        entity.PaymentMethodKey = SanitizePaymentMethodKey(request.PaymentMethodKey);
+            entity.Name = RequireName(request.Name);
+            entity.IsActive = request.IsActive;
+            entity.SortOrder = request.SortOrder;
+            entity.PaymentMethodKey = SanitizePaymentMethodKey(request.PaymentMethodKey);
 
-        await _context.SaveChangesAsync(cancellationToken);
+            await context.SaveChangesAsync(ct);
 
-        Dictionary<Guid, string> terminalNames = entity.TerminalId is Guid tid
-            ? await LoadTerminalNamesAsync([tid], cancellationToken)
-            : [];
+            Dictionary<Guid, string> terminalNames = entity.TerminalId is Guid tid
+                ? await LoadTerminalNamesAsync(context, [tid], ct)
+                : [];
 
-        return MapDto(entity, terminalNames);
+            return MapDto(entity, terminalNames);
+        }, cancellationToken);
     }
 
-    public async Task<CashAccountDto> EnsureTillAccountsAsync(
+    public Task<CashAccountDto> EnsureTillAccountsAsync(
         Guid terminalId,
         string terminalName,
         CancellationToken cancellationToken = default)
@@ -148,295 +163,578 @@ public sealed class CashAccountService : ICashAccountService
 
         string accountCode = CashAccountSeeder.BuildTillAccountCode(terminalId);
 
-        CashAccount? existing = await _context.CashAccounts.FirstOrDefaultAsync(
-            a => a.TenantId == tenantId
-                 && (a.TerminalId == terminalId || a.AccountCode == accountCode),
-            cancellationToken);
-
-        if (existing is not null)
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
-            if (!existing.IsActive)
+            CashAccount? existing = await context.CashAccounts.FirstOrDefaultAsync(
+                a => a.TenantId == tenantId
+                     && (a.TerminalId == terminalId || a.AccountCode == accountCode),
+                ct);
+
+            if (existing is not null)
             {
-                existing.IsActive = true;
+                if (!existing.IsActive)
+                {
+                    existing.IsActive = true;
+                }
+
+                if (!string.Equals(existing.Name, name, StringComparison.Ordinal)
+                    && !string.IsNullOrWhiteSpace(terminalName))
+                {
+                    existing.Name = name;
+                }
+
+                await context.SaveChangesAsync(ct);
+                Dictionary<Guid, string> names = await LoadTerminalNamesAsync(context, [terminalId], ct);
+                return MapDto(existing, names);
             }
 
-            if (!string.Equals(existing.Name, name, StringComparison.Ordinal)
-                && !string.IsNullOrWhiteSpace(terminalName))
+            Terminal terminal = await context.Terminals.FirstOrDefaultAsync(
+                t => t.Id == terminalId && t.TenantId == tenantId,
+                ct)
+                ?? throw new KeyNotFoundException("Terminal was not found for till account creation.");
+
+            int maxSort = await context.CashAccounts
+                .Where(a => a.TenantId == tenantId && a.Type == CashAccountType.Till)
+                .Select(a => (int?)a.SortOrder)
+                .MaxAsync(ct) ?? 90;
+
+            CashAccount created = new()
             {
-                existing.Name = name;
-            }
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                Name = string.IsNullOrWhiteSpace(terminalName)
+                    ? $"Till - {terminal.TerminalName}"
+                    : name,
+                Type = CashAccountType.Till,
+                AccountCode = accountCode,
+                TerminalId = terminalId,
+                IsActive = true,
+                IsSystem = true,
+                SortOrder = maxSort + 10,
+                PaymentMethodKey = "CASH"
+            };
 
-            await _context.SaveChangesAsync(cancellationToken);
-            Dictionary<Guid, string> names = await LoadTerminalNamesAsync([terminalId], cancellationToken);
-            return MapDto(existing, names);
-        }
+            await context.CashAccounts.AddAsync(created, ct);
+            await context.SaveChangesAsync(ct);
 
-        Terminal terminal = await _context.Terminals.FirstOrDefaultAsync(
-            t => t.Id == terminalId && t.TenantId == tenantId,
-            cancellationToken)
-            ?? throw new KeyNotFoundException("Terminal was not found for till account creation.");
-
-        int maxSort = await _context.CashAccounts
-            .Where(a => a.TenantId == tenantId && a.Type == CashAccountType.Till)
-            .Select(a => (int?)a.SortOrder)
-            .MaxAsync(cancellationToken) ?? 90;
-
-        CashAccount created = new()
-        {
-            Id = Guid.NewGuid(),
-            TenantId = tenantId,
-            Name = string.IsNullOrWhiteSpace(terminalName)
-                ? $"Till - {terminal.TerminalName}"
-                : name,
-            Type = CashAccountType.Till,
-            AccountCode = accountCode,
-            TerminalId = terminalId,
-            IsActive = true,
-            IsSystem = true,
-            SortOrder = maxSort + 10,
-            PaymentMethodKey = "CASH"
-        };
-
-        await _context.CashAccounts.AddAsync(created, cancellationToken);
-        await _context.SaveChangesAsync(cancellationToken);
-
-        Dictionary<Guid, string> terminalNames =
-            await LoadTerminalNamesAsync([terminalId], cancellationToken);
-        return MapDto(created, terminalNames);
+            Dictionary<Guid, string> terminalNames =
+                await LoadTerminalNamesAsync(context, [terminalId], ct);
+            return MapDto(created, terminalNames);
+        }, cancellationToken);
     }
 
-    public async Task<long> GetAccountBalancePaisaAsync(
+    public Task<long> GetAccountBalancePaisaAsync(
         Guid accountId,
         DateTime? asOf = null,
         CancellationToken cancellationToken = default)
     {
         EnsureTenantResolved();
-        CashAccount account = await LoadAccountAsync(accountId, cancellationToken);
-        return await SumGlBalanceAsync(account.AccountCode, asOf, cancellationToken);
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
+        {
+            CashAccount account = await LoadAccountAsync(context, accountId, ct);
+            if (asOf is null)
+            {
+                return account.BalancePaisa;
+            }
+
+            return await SumGlBalanceAsync(context, account.AccountCode, asOf, ct);
+        }, cancellationToken);
     }
 
-    public async Task<CashBalancesSummaryDto> GetBalancesSummaryAsync(
+    public Task<long> GetAccountBalancePaisaByCodeAsync(
+        string accountCode,
+        DateTime? asOf = null,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureTenantResolved();
+        string code = NormalizeFundingAccountCode(accountCode);
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
+            await SumGlBalanceAsync(context, code, asOf, ct), cancellationToken);
+    }
+
+    public Task<CashSpendableBalanceDto> GetSpendableBalanceAsync(
+        Guid accountId,
+        Guid? shiftId = null,
         CancellationToken cancellationToken = default)
     {
         EnsureTenantResolved();
         Guid tenantId = _tenantService.TenantId;
 
-        List<CashAccount> accounts = await _context.CashAccounts
-            .AsNoTracking()
-            .Where(a => a.TenantId == tenantId && a.IsActive)
-            .OrderBy(a => a.SortOrder)
-            .ThenBy(a => a.Name)
-            .ToListAsync(cancellationToken);
-
-        Dictionary<Guid, string> terminalNames = await LoadTerminalNamesAsync(
-            accounts.Where(a => a.TerminalId.HasValue).Select(a => a.TerminalId!.Value),
-            cancellationToken);
-
-        DateTime todayStart = DateTime.UtcNow.Date;
-        DateTime todayEnd = todayStart.AddDays(1);
-
-        // Match GL rows case-insensitively so legacy + sanitized codes both resolve.
-        List<string> codes = accounts
-            .Select(a => a.AccountCode.ToUpperInvariant())
-            .Distinct()
-            .ToList();
-
-        var glRows = await _context.GeneralLedgerEntries
-            .AsNoTracking()
-            .Where(e => e.TenantId == tenantId)
-            .Select(e => new
-            {
-                Code = e.AccountCode.ToUpper(),
-                e.DebitPaisa,
-                e.CreditPaisa,
-                e.CreatedAt
-            })
-            .Where(e => codes.Contains(e.Code))
-            .ToListAsync(cancellationToken);
-
-        Dictionary<string, (long Balance, long TodayIn, long TodayOut)> glByCode =
-            codes.ToDictionary(
-                c => c,
-                _ => (0L, 0L, 0L),
-                StringComparer.Ordinal);
-
-        foreach (var row in glRows)
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
-            (long balance, long todayIn, long todayOut) = glByCode[row.Code];
-            balance += row.DebitPaisa - row.CreditPaisa;
-            DateTime createdUtc = row.CreatedAt.UtcDateTime;
-            if (createdUtc >= todayStart && createdUtc < todayEnd)
+            CashAccount account = await LoadAccountAsync(context, accountId, ct);
+            long gl = account.BalancePaisa;
+
+            if (account.Type != CashAccountType.Till)
             {
-                todayIn += row.DebitPaisa;
-                todayOut += row.CreditPaisa;
+                return new CashSpendableBalanceDto
+                {
+                    AccountId = account.Id,
+                    AccountCode = SanitizeAccountCode(account.AccountCode),
+                    Type = account.Type,
+                    GlBalancePaisa = gl,
+                    DrawerExpectedCashPaisa = null,
+                    OpenShiftId = null,
+                    SpendablePaisa = CashSpendable.ForNonTill(gl)
+                };
             }
 
-            glByCode[row.Code] = (balance, todayIn, todayOut);
-        }
+            if (account.TerminalId is not Guid terminalId)
+            {
+                throw new InvalidOperationException(
+                    $"Till account '{account.Name}' is missing a terminal link.");
+            }
 
-        List<Guid> terminalIds = accounts
-            .Where(a => a.Type == CashAccountType.Till && a.TerminalId.HasValue)
-            .Select(a => a.TerminalId!.Value)
-            .Distinct()
-            .ToList();
+            CashierShift? shift = null;
+            if (shiftId is Guid sid)
+            {
+                shift = await context.CashierShifts.AsNoTracking().FirstOrDefaultAsync(
+                    s => s.Id == sid
+                         && s.TenantId == tenantId
+                         && s.Status == "OPEN"
+                         && s.TerminalId == terminalId,
+                    ct);
+            }
 
-        Dictionary<Guid, CashierShift> openShiftsByTerminal = [];
-        if (terminalIds.Count > 0)
-        {
-            List<CashierShift> openShifts = await _context.CashierShifts
-                .AsNoTracking()
+            shift ??= await context.CashierShifts.AsNoTracking()
                 .Where(s =>
                     s.TenantId == tenantId
                     && s.Status == "OPEN"
-                    && terminalIds.Contains(s.TerminalId))
-                .ToListAsync(cancellationToken);
+                    && s.TerminalId == terminalId)
+                .OrderByDescending(s => s.OpenedAt)
+                .FirstOrDefaultAsync(ct);
 
-            foreach (CashierShift shift in openShifts)
+            long drawer = shift?.ExpectedCashPaisa ?? 0L;
+            return new CashSpendableBalanceDto
             {
-                openShiftsByTerminal[shift.TerminalId] = shift;
-            }
-        }
-
-        List<CashAccountCardDto> cards = [];
-        long inTills = 0, inBank = 0, inPetty = 0, inMobile = 0, inOwner = 0, other = 0;
-
-        foreach (CashAccount account in accounts)
-        {
-            string codeKey = account.AccountCode.ToUpperInvariant();
-            (long balance, long todayIn, long todayOut) = glByCode[codeKey];
-            long? drawer = null;
-            Guid? openShiftId = null;
-            if (account.Type == CashAccountType.Till
-                && account.TerminalId is Guid tid
-                && openShiftsByTerminal.TryGetValue(tid, out CashierShift? shift))
-            {
-                drawer = shift.ExpectedCashPaisa;
-                openShiftId = shift.Id;
-            }
-
-            cards.Add(new CashAccountCardDto
-            {
-                Account = MapDto(account, terminalNames),
-                DerivedGlBalancePaisa = balance,
-                TodayInPaisa = todayIn,
-                TodayOutPaisa = todayOut,
-                DrawerExpectedCashPaisa = drawer,
-                OpenShiftId = openShiftId
-            });
-
-            switch (account.Type)
-            {
-                case CashAccountType.Till:
-                    // Prefer live drawer for till KPI when open; else GL.
-                    inTills += drawer ?? balance;
-                    break;
-                case CashAccountType.Bank:
-                    inBank += balance;
-                    break;
-                case CashAccountType.Petty:
-                    inPetty += balance;
-                    break;
-                case CashAccountType.Mobile:
-                    inMobile += balance;
-                    break;
-                case CashAccountType.Owner:
-                    inOwner += balance;
-                    break;
-                default:
-                    other += balance;
-                    break;
-            }
-        }
-
-        return new CashBalancesSummaryDto
-        {
-            Accounts = cards,
-            TotalLiquidityPaisa = inTills + inBank + inPetty + inMobile + inOwner + other,
-            InTillsPaisa = inTills,
-            InBankPaisa = inBank,
-            InPettyPaisa = inPetty,
-            InMobilePaisa = inMobile,
-            InOwnerPaisa = inOwner
-        };
+                AccountId = account.Id,
+                AccountCode = SanitizeAccountCode(account.AccountCode),
+                Type = account.Type,
+                GlBalancePaisa = gl,
+                DrawerExpectedCashPaisa = shift is null ? null : drawer,
+                OpenShiftId = shift?.Id,
+                SpendablePaisa = shift is null
+                    ? 0L
+                    : CashSpendable.ForTill(gl, drawer)
+            };
+        }, cancellationToken);
     }
 
-    public async Task<CashPaymentResolution> ResolvePaymentAccountAsync(
+    public Task<CashBalancesSummaryDto> GetBalancesSummaryAsync(
+        CancellationToken cancellationToken = default)
+    {
+        EnsureTenantResolved();
+        Guid tenantId = _tenantService.TenantId;
+
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
+        {
+            List<CashAccount> accounts = await context.CashAccounts
+                .AsNoTracking()
+                .Where(a => a.TenantId == tenantId && a.IsActive)
+                .OrderBy(a => a.SortOrder)
+                .ThenBy(a => a.Name)
+                .ToListAsync(ct);
+
+            Dictionary<Guid, string> terminalNames = await LoadTerminalNamesAsync(
+                context,
+                accounts.Where(a => a.TerminalId.HasValue).Select(a => a.TerminalId!.Value),
+                ct);
+
+            DateTime todayStart = DateTime.UtcNow.Date;
+            DateTime todayEnd = todayStart.AddDays(1);
+
+            // Match GL rows case-insensitively so legacy + sanitized codes both resolve.
+            List<string> codes = accounts
+                .Select(a => a.AccountCode.ToUpperInvariant())
+                .Distinct()
+                .ToList();
+
+            var glRows = await context.GeneralLedgerEntries
+                .AsNoTracking()
+                .Where(e => e.TenantId == tenantId)
+                .Select(e => new
+                {
+                    Code = e.AccountCode.ToUpper(),
+                    e.DebitPaisa,
+                    e.CreditPaisa,
+                    e.CreatedAt
+                })
+                .Where(e => codes.Contains(e.Code))
+                .ToListAsync(ct);
+
+            Dictionary<string, (long Balance, long TodayIn, long TodayOut)> glByCode =
+                codes.ToDictionary(
+                    c => c,
+                    _ => (0L, 0L, 0L),
+                    StringComparer.Ordinal);
+
+            foreach (var row in glRows)
+            {
+                (long balance, long todayIn, long todayOut) = glByCode[row.Code];
+                balance += row.DebitPaisa - row.CreditPaisa;
+                DateTime createdUtc = row.CreatedAt.UtcDateTime;
+                if (createdUtc >= todayStart && createdUtc < todayEnd)
+                {
+                    todayIn += row.DebitPaisa;
+                    todayOut += row.CreditPaisa;
+                }
+
+                glByCode[row.Code] = (balance, todayIn, todayOut);
+            }
+
+            List<Guid> terminalIds = accounts
+                .Where(a => a.Type == CashAccountType.Till && a.TerminalId.HasValue)
+                .Select(a => a.TerminalId!.Value)
+                .Distinct()
+                .ToList();
+
+            Dictionary<Guid, CashierShift> openShiftsByTerminal = [];
+            Dictionary<Guid, long?> lastClosedBlindByTerminal = [];
+            if (terminalIds.Count > 0)
+            {
+                List<CashierShift> openShifts = await context.CashierShifts
+                    .AsNoTracking()
+                    .Where(s =>
+                        s.TenantId == tenantId
+                        && s.Status == "OPEN"
+                        && terminalIds.Contains(s.TerminalId))
+                    .ToListAsync(ct);
+
+                foreach (CashierShift shift in openShifts)
+                {
+                    openShiftsByTerminal[shift.TerminalId] = shift;
+                }
+
+                List<CashierShift> closedWithBlind = await context.CashierShifts
+                    .AsNoTracking()
+                    .Where(s =>
+                        s.TenantId == tenantId
+                        && s.Status == "CLOSED"
+                        && terminalIds.Contains(s.TerminalId)
+                        && s.ActualBlindCashPaisa != null)
+                    .OrderByDescending(s => s.ClosedAt ?? s.OpenedAt)
+                    .ToListAsync(ct);
+
+                foreach (CashierShift shift in closedWithBlind)
+                {
+                    if (!lastClosedBlindByTerminal.ContainsKey(shift.TerminalId))
+                    {
+                        lastClosedBlindByTerminal[shift.TerminalId] = shift.ActualBlindCashPaisa;
+                    }
+                }
+            }
+
+            List<Guid> openShiftIds = openShiftsByTerminal.Values.Select(s => s.Id).Distinct().ToList();
+            Dictionary<Guid, (long In, long Out)> unrecByShift = [];
+            if (openShiftIds.Count > 0)
+            {
+                var movementRows = await context.ShiftCashMovements.AsNoTracking()
+                    .Where(m =>
+                        m.TenantId == tenantId
+                        && openShiftIds.Contains(m.ShiftId)
+                        && m.Status == ShiftCashMovementStatuses.Unreconciled)
+                    .Select(m => new { m.ShiftId, m.Direction, m.AmountPaisa, m.Reason })
+                    .ToListAsync(ct);
+
+                foreach (var row in movementRows)
+                {
+                    unrecByShift.TryGetValue(row.ShiftId, out (long In, long Out) agg);
+                    if (string.Equals(row.Direction, ShiftCashMovementDirections.In, StringComparison.OrdinalIgnoreCase))
+                    {
+                        agg.In += row.AmountPaisa;
+                    }
+                    else if (string.Equals(row.Reason, "Cash Shortage", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // shortage tracked separately via Out bucket for visibility on card
+                        agg.Out += row.AmountPaisa;
+                    }
+                    else
+                    {
+                        agg.Out += row.AmountPaisa;
+                    }
+
+                    unrecByShift[row.ShiftId] = agg;
+                }
+            }
+
+            List<CashAccountCardDto> cards = [];
+            long inTills = 0, inBank = 0, inPetty = 0, inMobile = 0, inOwner = 0, other = 0;
+
+            foreach (CashAccount account in accounts)
+            {
+                string codeKey = account.AccountCode.ToUpperInvariant();
+                (long balance, long todayIn, long todayOut) = glByCode[codeKey];
+                long? drawer = null;
+                long? physicalBlind = null;
+                Guid? openShiftId = null;
+                long unrecIn = 0;
+                long unrecOut = 0;
+                if (account.Type == CashAccountType.Till && account.TerminalId is Guid tid)
+                {
+                    if (openShiftsByTerminal.TryGetValue(tid, out CashierShift? shift))
+                    {
+                        drawer = shift.ExpectedCashPaisa;
+                        openShiftId = shift.Id;
+                        physicalBlind = shift.ActualBlindCashPaisa;
+                        if (unrecByShift.TryGetValue(shift.Id, out (long In, long Out) u))
+                        {
+                            unrecIn = u.In;
+                            unrecOut = u.Out;
+                        }
+                    }
+                    else if (lastClosedBlindByTerminal.TryGetValue(tid, out long? closedBlind))
+                    {
+                        physicalBlind = closedBlind;
+                    }
+                }
+
+                long spendable = account.Type == CashAccountType.Till && drawer is long d
+                    ? CashSpendable.ForTill(balance, d)
+                    : CashSpendable.ForNonTill(balance);
+
+                cards.Add(new CashAccountCardDto
+                {
+                    Account = MapDto(account, terminalNames),
+                    DerivedGlBalancePaisa = balance,
+                    TodayInPaisa = todayIn,
+                    TodayOutPaisa = todayOut,
+                    DrawerExpectedCashPaisa = drawer,
+                    PhysicalBlindCashPaisa = physicalBlind,
+                    OpenShiftId = openShiftId,
+                    SpendablePaisa = spendable,
+                    UnreconciledCashInPaisa = unrecIn,
+                    UnreconciledCashOutPaisa = unrecOut
+                });
+
+                switch (account.Type)
+                {
+                    case CashAccountType.Till:
+                        // Prefer live drawer for till KPI when open; else GL.
+                        inTills += drawer ?? balance;
+                        break;
+                    case CashAccountType.Bank:
+                        inBank += balance;
+                        break;
+                    case CashAccountType.Petty:
+                        inPetty += balance;
+                        break;
+                    case CashAccountType.Mobile:
+                        inMobile += balance;
+                        break;
+                    case CashAccountType.Owner:
+                        inOwner += balance;
+                        break;
+                    default:
+                        other += balance;
+                        break;
+                }
+            }
+
+            return new CashBalancesSummaryDto
+            {
+                Accounts = cards,
+                TotalLiquidityPaisa = inTills + inBank + inPetty + inMobile + inOwner + other,
+                InTillsPaisa = inTills,
+                InBankPaisa = inBank,
+                InPettyPaisa = inPetty,
+                InMobilePaisa = inMobile,
+                InOwnerPaisa = inOwner
+            };
+        }, cancellationToken);
+    }
+
+    public Task<CashPaymentResolution> ResolvePaymentAccountAsync(
         Guid? cashAccountId,
+        string paymentMethod,
+        CancellationToken cancellationToken = default) =>
+        ResolvePaymentAccountAsync(cashAccountId, accountCode: null, paymentMethod, cancellationToken);
+
+    public Task<CashPaymentResolution> ResolvePaymentAccountAsync(
+        Guid? cashAccountId,
+        string? accountCode,
         string paymentMethod,
         CancellationToken cancellationToken = default)
     {
         EnsureTenantResolved();
 
-        if (cashAccountId is Guid accountId)
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
-            if (accountId == Guid.Empty)
+            if (!string.IsNullOrWhiteSpace(accountCode))
             {
-                throw new ArgumentException("Cash account id is invalid.", nameof(cashAccountId));
+                string code = NormalizeFundingAccountCode(accountCode);
+                CashAccount account = await context.CashAccounts.AsNoTracking().FirstOrDefaultAsync(
+                    a => a.TenantId == _tenantService.TenantId
+                         && a.IsActive
+                         && a.AccountCode.ToUpper() == code,
+                    ct)
+                    ?? throw new KeyNotFoundException(
+                        $"Cash account with code '{code}' was not found or is inactive.");
+
+                return ToPaymentResolution(account);
             }
 
-            CashAccount account = await _context.CashAccounts.AsNoTracking().FirstOrDefaultAsync(
-                a => a.Id == accountId && a.TenantId == _tenantService.TenantId,
-                cancellationToken)
-                ?? throw new KeyNotFoundException("Cash account was not found.");
-
-            if (!account.IsActive)
+            if (cashAccountId is Guid accountId)
             {
-                throw new InvalidOperationException(
-                    $"Cash account '{account.Name}' is inactive.");
+                if (accountId == Guid.Empty)
+                {
+                    throw new ArgumentException("Cash account id is invalid.", nameof(cashAccountId));
+                }
+
+                CashAccount account = await context.CashAccounts.AsNoTracking().FirstOrDefaultAsync(
+                    a => a.Id == accountId && a.TenantId == _tenantService.TenantId,
+                    ct)
+                    ?? throw new KeyNotFoundException("Cash account was not found.");
+
+                if (!account.IsActive)
+                {
+                    throw new InvalidOperationException(
+                        $"Cash account '{account.Name}' is inactive.");
+                }
+
+                return ToPaymentResolution(account);
             }
 
-            string code = SanitizeAccountCode(account.AccountCode);
+            if (string.IsNullOrWhiteSpace(paymentMethod))
+            {
+                throw new ArgumentException("Payment method is required when cash account is not specified.");
+            }
+
+            string method = paymentMethod.Trim().ToUpperInvariant();
+            string fallback = SanitizeAccountCode(LedgerAccounts.PaymentMethodToAccount(method));
+
+            // Prefer a seeded/custom account with matching PaymentMethodKey when unique-ish.
+            CashAccount? mapped = await context.CashAccounts
+                .AsNoTracking()
+                .Where(a =>
+                    a.TenantId == _tenantService.TenantId
+                    && a.IsActive
+                    && a.PaymentMethodKey == method
+                    && a.Type != CashAccountType.Till)
+                .OrderBy(a => a.SortOrder)
+                .FirstOrDefaultAsync(ct);
+
+            if (mapped is not null)
+            {
+                return ToPaymentResolution(mapped);
+            }
+
             return new CashPaymentResolution
             {
-                AccountCode = code,
-                CashAccountId = account.Id,
-                TerminalId = account.TerminalId,
-                Type = account.Type,
-                AffectsTillDrawer = account.Type == CashAccountType.Till
-                    || LedgerAccounts.IsCashAccount(code)
+                AccountCode = fallback,
+                CashAccountId = null,
+                TerminalId = null,
+                Type = null,
+                AffectsTillDrawer = LedgerAccounts.IsCashAccount(fallback)
             };
+        }, cancellationToken);
+    }
+
+    public Task<CashAccountLedgerDto> GetLedgerByAccountCodeAsync(
+        string accountCode,
+        DateTimeOffset from,
+        DateTimeOffset to,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureTenantResolved();
+
+        if (to < from)
+        {
+            throw new ArgumentException("Query 'to' must be on or after 'from'.");
         }
 
-        if (string.IsNullOrWhiteSpace(paymentMethod))
+        string code = NormalizeFundingAccountCode(accountCode);
+        Guid tenantId = _tenantService.TenantId;
+
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
-            throw new ArgumentException("Payment method is required when cash account is not specified.");
-        }
+            CashAccount? account = await context.CashAccounts.AsNoTracking().FirstOrDefaultAsync(
+                a => a.TenantId == tenantId && a.AccountCode.ToUpper() == code,
+                ct);
 
-        string method = paymentMethod.Trim().ToUpperInvariant();
-        string fallback = SanitizeAccountCode(LedgerAccounts.PaymentMethodToAccount(method));
+            IQueryable<GeneralLedgerEntry> baseQuery = context.GeneralLedgerEntries
+                .AsNoTracking()
+                .Where(e => e.TenantId == tenantId && e.AccountCode.ToUpper() == code);
 
-        // Prefer a seeded/custom account with matching PaymentMethodKey when unique-ish.
-        CashAccount? mapped = await _context.CashAccounts
-            .AsNoTracking()
-            .Where(a =>
-                a.TenantId == _tenantService.TenantId
-                && a.IsActive
-                && a.PaymentMethodKey == method
-                && a.Type != CashAccountType.Till)
-            .OrderBy(a => a.SortOrder)
-            .FirstOrDefaultAsync(cancellationToken);
+            long? openDebits = await baseQuery
+                .Where(e => e.CreatedAt < from)
+                .SumAsync(e => (long?)e.DebitPaisa, ct);
+            long? openCredits = await baseQuery
+                .Where(e => e.CreatedAt < from)
+                .SumAsync(e => (long?)e.CreditPaisa, ct);
+            long opening = (openDebits ?? 0L) - (openCredits ?? 0L);
 
-        if (mapped is not null)
-        {
-            string code = SanitizeAccountCode(mapped.AccountCode);
-            return new CashPaymentResolution
+            List<GeneralLedgerEntry> rows = await baseQuery
+                .Where(e => e.CreatedAt >= from && e.CreatedAt <= to)
+                .OrderBy(e => e.CreatedAt)
+                .ThenBy(e => e.Id)
+                .ToListAsync(ct);
+
+            HashSet<Guid> shiftIds = rows
+                .Where(r => r.ShiftId is Guid)
+                .Select(r => r.ShiftId!.Value)
+                .ToHashSet();
+
+            Dictionary<Guid, Guid> shiftTerminals = shiftIds.Count == 0
+                ? []
+                : await context.CashierShifts.AsNoTracking()
+                    .Where(s => shiftIds.Contains(s.Id))
+                    .ToDictionaryAsync(s => s.Id, s => s.TerminalId, ct);
+
+            HashSet<Guid> terminalIds = shiftTerminals.Values.ToHashSet();
+            if (account?.TerminalId is Guid accountTerminalId)
+            {
+                terminalIds.Add(accountTerminalId);
+            }
+
+            Dictionary<Guid, string> terminalNames =
+                await LoadTerminalNamesAsync(context, terminalIds, ct);
+
+            long running = opening;
+            List<CashAccountLedgerEntryDto> entries = new(rows.Count);
+            foreach (GeneralLedgerEntry row in rows)
+            {
+                running += row.DebitPaisa - row.CreditPaisa;
+                Guid? terminalId = null;
+                string? terminalName = null;
+                if (row.ShiftId is Guid sid && shiftTerminals.TryGetValue(sid, out Guid tid))
+                {
+                    terminalId = tid;
+                    terminalNames.TryGetValue(tid, out terminalName);
+                }
+                else if (account?.TerminalId is Guid atid)
+                {
+                    terminalId = atid;
+                    terminalNames.TryGetValue(atid, out terminalName);
+                }
+
+                entries.Add(new CashAccountLedgerEntryDto
+                {
+                    Id = row.Id,
+                    CreatedAt = row.CreatedAt,
+                    ShiftId = row.ShiftId,
+                    TerminalId = terminalId,
+                    TerminalName = terminalName,
+                    TransactionType = row.TransactionType,
+                    ReferenceNo = row.ReferenceNo,
+                    ReferenceDetails = row.ReferenceDetails,
+                    DebitPaisa = row.DebitPaisa,
+                    CreditPaisa = row.CreditPaisa,
+                    RunningBalancePaisa = running
+                });
+            }
+
+            return new CashAccountLedgerDto
             {
                 AccountCode = code,
-                CashAccountId = mapped.Id,
-                TerminalId = mapped.TerminalId,
-                Type = mapped.Type,
-                AffectsTillDrawer = false
+                AccountName = account?.Name,
+                CashAccountId = account?.Id,
+                From = from,
+                To = to,
+                OpeningBalancePaisa = opening,
+                ClosingBalancePaisa = running,
+                Entries = entries
             };
-        }
-
-        return new CashPaymentResolution
-        {
-            AccountCode = fallback,
-            CashAccountId = null,
-            TerminalId = null,
-            Type = null,
-            AffectsTillDrawer = LedgerAccounts.IsCashAccount(fallback)
-        };
+        }, cancellationToken);
     }
 
     public async Task<CashPaymentResolution> ResolveTillAccountForTerminalAsync(
@@ -460,13 +758,14 @@ public sealed class CashAccountService : ICashAccountService
     }
 
     private async Task<long> SumGlBalanceAsync(
+        WebPosDbContext context,
         string accountCode,
         DateTime? asOf,
         CancellationToken cancellationToken)
     {
         Guid tenantId = _tenantService.TenantId;
         string code = accountCode.ToUpperInvariant();
-        IQueryable<GeneralLedgerEntry> query = _context.GeneralLedgerEntries
+        IQueryable<GeneralLedgerEntry> query = context.GeneralLedgerEntries
             .AsNoTracking()
             .Where(e => e.TenantId == tenantId && e.AccountCode.ToUpper() == code);
 
@@ -481,20 +780,24 @@ public sealed class CashAccountService : ICashAccountService
         return (debits ?? 0L) - (credits ?? 0L);
     }
 
-    private async Task<CashAccount> LoadAccountAsync(Guid accountId, CancellationToken cancellationToken)
+    private async Task<CashAccount> LoadAccountAsync(
+        WebPosDbContext context,
+        Guid accountId,
+        CancellationToken cancellationToken)
     {
         if (accountId == Guid.Empty)
         {
             throw new ArgumentException("Account id is required.", nameof(accountId));
         }
 
-        return await _context.CashAccounts.AsNoTracking().FirstOrDefaultAsync(
+        return await context.CashAccounts.AsNoTracking().FirstOrDefaultAsync(
             a => a.Id == accountId && a.TenantId == _tenantService.TenantId,
             cancellationToken)
             ?? throw new KeyNotFoundException("Cash account was not found.");
     }
 
     private async Task<Dictionary<Guid, string>> LoadTerminalNamesAsync(
+        WebPosDbContext context,
         IEnumerable<Guid> terminalIds,
         CancellationToken cancellationToken)
     {
@@ -504,7 +807,7 @@ public sealed class CashAccountService : ICashAccountService
             return [];
         }
 
-        return await _context.Terminals
+        return await context.Terminals
             .AsNoTracking()
             .Where(t => ids.Contains(t.Id))
             .ToDictionaryAsync(t => t.Id, t => t.TerminalName, cancellationToken);
@@ -544,6 +847,33 @@ public sealed class CashAccountService : ICashAccountService
         }
 
         return sanitized;
+    }
+
+    internal static string NormalizeFundingAccountCode(string? accountCode)
+    {
+        string code = SanitizeAccountCode(accountCode);
+        return code switch
+        {
+            "OWNER_SAFE" => "OWNER_CASH",
+            "CASH:MAIN" => "BANK",
+            "MAIN_BANK" => "BANK",
+            _ => code
+        };
+    }
+
+    private static CashPaymentResolution ToPaymentResolution(CashAccount account)
+    {
+        string code = SanitizeAccountCode(account.AccountCode);
+        bool till = account.Type == CashAccountType.Till
+            || code.StartsWith("CASH:TILL:", StringComparison.OrdinalIgnoreCase);
+        return new CashPaymentResolution
+        {
+            AccountCode = code,
+            CashAccountId = account.Id,
+            TerminalId = account.TerminalId,
+            Type = account.Type,
+            AffectsTillDrawer = till
+        };
     }
 
     private static string RequireName(string? name)

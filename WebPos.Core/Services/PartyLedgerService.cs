@@ -9,16 +9,16 @@ namespace WebPos.Core.Services;
 
 public class PartyLedgerService : IPartyLedgerService
 {
-    private readonly WebPosDbContext _context;
+    private readonly IDbContextFactory<WebPosDbContext> _dbFactory;
     private readonly ITransactionService _transactionService;
     private readonly ITenantService _tenantService;
 
     public PartyLedgerService(
-        WebPosDbContext context,
+        IDbContextFactory<WebPosDbContext> dbFactory,
         ITransactionService transactionService,
         ITenantService tenantService)
     {
-        _context = context ?? throw new ArgumentNullException(nameof(context));
+        _dbFactory = dbFactory ?? throw new ArgumentNullException(nameof(dbFactory));
         _transactionService = transactionService
             ?? throw new ArgumentNullException(nameof(transactionService));
         _tenantService = tenantService
@@ -45,7 +45,7 @@ public class PartyLedgerService : IPartyLedgerService
             },
             cancellationToken);
 
-    public async Task<Guid> RecordPartyTransactionAsync(
+    public Task<Guid> RecordPartyTransactionAsync(
         Guid partyId,
         long amountPaisa,
         string transactionType,
@@ -60,147 +60,153 @@ public class PartyLedgerService : IPartyLedgerService
             throw new ArgumentException("Amount must be greater than zero Paisa.");
         }
 
-        Party? party = await _context.Parties.FirstOrDefaultAsync(
-            p => p.Id == partyId && p.TenantId == _tenantService.TenantId,
-            cancellationToken);
-        if (party is null)
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
-            throw new KeyNotFoundException("Party profile not found in system storage.");
-        }
-
-        long oldBalance = party.CurrentBalancePaisa;
-        long newBalance = oldBalance;
-
-        string typeUpper = transactionType.ToUpperInvariant();
-        string methodUpper = paymentMethod.ToUpperInvariant();
-        string partyTypeUpper = party.PartyType?.ToUpperInvariant() ?? PartyTypes.Customer;
-
-        // Balance follows transaction type (not only CREDIT payment method),
-        // so cash/bank settlements correctly reduce AR/AP.
-        if (typeUpper == "ADJUSTMENT")
-        {
-            // DEBIT increases due; CREDIT (default) decreases due.
-            newBalance = methodUpper == "DEBIT"
-                ? oldBalance + amountPaisa
-                : oldBalance - amountPaisa;
-        }
-        else if (partyTypeUpper == PartyTypes.Customer)
-        {
-            if (typeUpper == "SALE" && methodUpper == "CREDIT")
+            Party? party = await context.Parties.FirstOrDefaultAsync(
+                p => p.Id == partyId && p.TenantId == _tenantService.TenantId,
+                ct);
+            if (party is null)
             {
-                newBalance = oldBalance + amountPaisa;
+                throw new KeyNotFoundException("Party profile not found in system storage.");
             }
-            else if (typeUpper is "CUSTOMER_RETURN" or "PAYMENT")
+
+            long oldBalance = party.CurrentBalancePaisa;
+            long newBalance = oldBalance;
+
+            string typeUpper = transactionType.ToUpperInvariant();
+            string methodUpper = paymentMethod.ToUpperInvariant();
+            string partyTypeUpper = party.PartyType?.ToUpperInvariant() ?? PartyTypes.Customer;
+
+            // Balance follows transaction type (not only CREDIT payment method),
+            // so cash/bank settlements correctly reduce AR/AP.
+            if (typeUpper == "ADJUSTMENT")
             {
-                newBalance = oldBalance - amountPaisa;
+                // DEBIT increases due; CREDIT (default) decreases due.
+                newBalance = methodUpper == "DEBIT"
+                    ? oldBalance + amountPaisa
+                    : oldBalance - amountPaisa;
             }
-        }
-        else if (partyTypeUpper == PartyTypes.Supplier)
-        {
-            if (typeUpper == "PURCHASE")
+            else if (partyTypeUpper == PartyTypes.Customer)
             {
-                newBalance = oldBalance + amountPaisa;
+                if (typeUpper == "SALE" && methodUpper == "CREDIT")
+                {
+                    newBalance = oldBalance + amountPaisa;
+                }
+                else if (typeUpper is "CUSTOMER_RETURN" or "PAYMENT")
+                {
+                    newBalance = oldBalance - amountPaisa;
+                }
             }
-            else if (typeUpper is "SUPPLIER_RETURN" or "PAYMENT")
+            else if (partyTypeUpper == PartyTypes.Supplier)
             {
-                newBalance = oldBalance - amountPaisa;
+                if (typeUpper == "PURCHASE")
+                {
+                    newBalance = oldBalance + amountPaisa;
+                }
+                else if (typeUpper is "SUPPLIER_RETURN" or "PAYMENT")
+                {
+                    newBalance = oldBalance - amountPaisa;
+                }
             }
-        }
 
-        party.CurrentBalancePaisa = newBalance;
+            party.CurrentBalancePaisa = newBalance;
 
-        string? invoiceNo = typeUpper is "SALE" or "CUSTOMER_RETURN" ? referenceNo : null;
+            string? invoiceNo = typeUpper is "SALE" or "CUSTOMER_RETURN" ? referenceNo : null;
 
-        Guid? purchaseOrderId = null;
-        if (typeUpper is "PURCHASE" or "SUPPLIER_RETURN"
-            && Guid.TryParse(referenceNo, out Guid parsedGuid))
-        {
-            purchaseOrderId = parsedGuid;
-        }
+            Guid? purchaseOrderId = null;
+            if (typeUpper is "PURCHASE" or "SUPPLIER_RETURN"
+                && Guid.TryParse(referenceNo, out Guid parsedGuid))
+            {
+                purchaseOrderId = parsedGuid;
+            }
 
-        (long debitPaisa, long creditPaisa) = ResolveDebitCredit(oldBalance, newBalance, amountPaisa);
+            (long debitPaisa, long creditPaisa) = ResolveDebitCredit(oldBalance, newBalance, amountPaisa);
 
-        PartyLedger ledgerEntry = new()
-        {
-            Id = Guid.NewGuid(),
-            TenantId = _tenantService.TenantId,
-            PartyId = partyId,
-            InvoiceNo = invoiceNo,
-            PurchaseOrderId = purchaseOrderId,
-            Type = typeUpper,
-            PaymentMethod = methodUpper,
-            OldBalancePaisa = oldBalance,
-            TransactionAmountPaisa = amountPaisa,
-            DebitPaisa = debitPaisa,
-            CreditPaisa = creditPaisa,
-            NewBalancePaisa = newBalance,
-            ReferenceDetails = referenceNo ?? string.Empty,
-            CreatedAt = DateTime.UtcNow
-        };
+            PartyLedger ledgerEntry = new()
+            {
+                Id = Guid.NewGuid(),
+                TenantId = _tenantService.TenantId,
+                PartyId = partyId,
+                InvoiceNo = invoiceNo,
+                PurchaseOrderId = purchaseOrderId,
+                Type = typeUpper,
+                PaymentMethod = methodUpper,
+                OldBalancePaisa = oldBalance,
+                TransactionAmountPaisa = amountPaisa,
+                DebitPaisa = debitPaisa,
+                CreditPaisa = creditPaisa,
+                NewBalancePaisa = newBalance,
+                ReferenceDetails = referenceNo ?? string.Empty,
+                CreatedAt = DateTime.UtcNow
+            };
 
-        await _context.PartyLedgers.AddAsync(ledgerEntry, cancellationToken);
-        return ledgerEntry.Id;
+            await context.PartyLedgers.AddAsync(ledgerEntry, ct);
+            return ledgerEntry.Id;
+        }, cancellationToken);
     }
 
-    public async Task InitializeSupplierLedgerAsync(
+    public Task InitializeSupplierLedgerAsync(
         Guid partyId,
         CancellationToken cancellationToken = default)
     {
         EnsureTenantResolved();
 
-        Party party = await _context.Parties.FirstOrDefaultAsync(
-            candidate =>
-                candidate.Id == partyId
-                && candidate.TenantId == _tenantService.TenantId,
-            cancellationToken)
-            ?? throw new KeyNotFoundException(
-                "Supplier party was not found for ledger initialization.");
-
-        if (!string.Equals(
-                party.PartyType,
-                PartyTypes.Supplier,
-                StringComparison.OrdinalIgnoreCase))
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
-            throw new InvalidOperationException(
-                "Ledger auto-initialization is only allowed for SUPPLIER parties.");
-        }
+            Party party = await context.Parties.FirstOrDefaultAsync(
+                candidate =>
+                    candidate.Id == partyId
+                    && candidate.TenantId == _tenantService.TenantId,
+                ct)
+                ?? throw new KeyNotFoundException(
+                    "Supplier party was not found for ledger initialization.");
 
-        bool alreadyInitialized = await _context.PartyLedgers.AnyAsync(
-            entry =>
-                entry.PartyId == partyId
-                && entry.TenantId == _tenantService.TenantId
-                && entry.Type == "OPENING",
-            cancellationToken);
-
-        if (alreadyInitialized)
-        {
-            return;
-        }
-
-        party.CurrentBalancePaisa = 0;
-
-        await _context.PartyLedgers.AddAsync(
-            new PartyLedger
+            if (!string.Equals(
+                    party.PartyType,
+                    PartyTypes.Supplier,
+                    StringComparison.OrdinalIgnoreCase))
             {
-                Id = Guid.NewGuid(),
-                TenantId = _tenantService.TenantId,
-                PartyId = partyId,
-                InvoiceNo = null,
-                PurchaseOrderId = null,
-                Type = "OPENING",
-                PaymentMethod = "CREDIT",
-                OldBalancePaisa = 0,
-                TransactionAmountPaisa = 0,
-                DebitPaisa = 0,
-                CreditPaisa = 0,
-                NewBalancePaisa = 0,
-                ReferenceDetails = "SUPPLIER_INIT",
-                CreatedAt = DateTime.UtcNow
-            },
-            cancellationToken);
+                throw new InvalidOperationException(
+                    "Ledger auto-initialization is only allowed for SUPPLIER parties.");
+            }
+
+            bool alreadyInitialized = await context.PartyLedgers.AnyAsync(
+                entry =>
+                    entry.PartyId == partyId
+                    && entry.TenantId == _tenantService.TenantId
+                    && entry.Type == "OPENING",
+                ct);
+
+            if (alreadyInitialized)
+            {
+                return;
+            }
+
+            party.CurrentBalancePaisa = 0;
+
+            await context.PartyLedgers.AddAsync(
+                new PartyLedger
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = _tenantService.TenantId,
+                    PartyId = partyId,
+                    InvoiceNo = null,
+                    PurchaseOrderId = null,
+                    Type = "OPENING",
+                    PaymentMethod = "CREDIT",
+                    OldBalancePaisa = 0,
+                    TransactionAmountPaisa = 0,
+                    DebitPaisa = 0,
+                    CreditPaisa = 0,
+                    NewBalancePaisa = 0,
+                    ReferenceDetails = "SUPPLIER_INIT",
+                    CreatedAt = DateTime.UtcNow
+                },
+                ct);
+        }, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<PartyLedgerEntryDto>> ListByPartyAsync(
+    public Task<IReadOnlyList<PartyLedgerEntryDto>> ListByPartyAsync(
         Guid partyId,
         int limit = 50,
         DateTimeOffset? from = null,
@@ -213,38 +219,43 @@ public class PartyLedgerService : IPartyLedgerService
             throw new ArgumentException("Party id is required.", nameof(partyId));
         }
 
-        Party party = await LoadPartyAsync(partyId, cancellationToken);
-        int take = Math.Clamp(limit, 1, 500);
-
-        IQueryable<PartyLedger> query = _context.PartyLedgers
-            .AsNoTracking()
-            .Where(e => e.PartyId == partyId && e.TenantId == _tenantService.TenantId);
-
-        if (from is DateTimeOffset fromValue)
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
-            DateTime fromUtc = fromValue.UtcDateTime;
-            query = query.Where(e => e.CreatedAt >= fromUtc);
-        }
+            Party party = await LoadPartyAsync(context, partyId, ct);
+            int take = Math.Clamp(limit, 1, 500);
 
-        if (to is DateTimeOffset toValue)
-        {
-            DateTime toUtc = toValue.UtcDateTime;
-            query = query.Where(e => e.CreatedAt <= toUtc);
-        }
+            IQueryable<PartyLedger> query = context.PartyLedgers
+                .AsNoTracking()
+                .Where(e => e.PartyId == partyId && e.TenantId == _tenantService.TenantId);
 
-        bool chronological = from is not null || to is not null;
-        query = chronological
-            ? query.OrderBy(e => e.CreatedAt).ThenBy(e => e.Id)
-            : query.OrderByDescending(e => e.CreatedAt).ThenByDescending(e => e.Id);
+            if (from is DateTimeOffset fromValue)
+            {
+                DateTime fromUtc = fromValue.UtcDateTime;
+                query = query.Where(e => e.CreatedAt >= fromUtc);
+            }
 
-        List<PartyLedger> entries = await query
-            .Take(take)
-            .ToListAsync(cancellationToken);
+            if (to is DateTimeOffset toValue)
+            {
+                DateTime toUtc = toValue.UtcDateTime;
+                query = query.Where(e => e.CreatedAt <= toUtc);
+            }
 
-        return entries.Select(e => MapEntry(e, party.PartyType)).ToList();
+            bool chronological = from is not null || to is not null;
+            query = chronological
+                ? query.OrderBy(e => e.CreatedAt).ThenBy(e => e.Id)
+                : query.OrderByDescending(e => e.CreatedAt).ThenByDescending(e => e.Id);
+
+            List<PartyLedger> entries = await query
+                .Take(take)
+                .ToListAsync(ct);
+
+            return (IReadOnlyList<PartyLedgerEntryDto>)entries
+                .Select(e => MapEntry(e, party.PartyType))
+                .ToList();
+        }, cancellationToken);
     }
 
-    public async Task<PartyLedgerSlipDto> GetSlipAsync(
+    public Task<PartyLedgerSlipDto> GetSlipAsync(
         Guid partyId,
         int year,
         int month,
@@ -261,114 +272,121 @@ public class PartyLedgerService : IPartyLedgerService
             throw new ArgumentException("Year/month must be a valid calendar month.");
         }
 
-        Party party = await LoadPartyAsync(partyId, cancellationToken);
-
-        DateTime periodStart = new(year, month, 1, 0, 0, 0, DateTimeKind.Utc);
-        DateTime periodEnd = periodStart.AddMonths(1);
-
-        long openingBalance = await _context.PartyLedgers
-            .AsNoTracking()
-            .Where(e =>
-                e.PartyId == partyId
-                && e.TenantId == _tenantService.TenantId
-                && e.CreatedAt < periodStart)
-            .OrderByDescending(e => e.CreatedAt)
-            .ThenByDescending(e => e.Id)
-            .Select(e => (long?)e.NewBalancePaisa)
-            .FirstOrDefaultAsync(cancellationToken) ?? 0L;
-
-        List<PartyLedger> entries = await _context.PartyLedgers
-            .AsNoTracking()
-            .Where(e =>
-                e.PartyId == partyId
-                && e.TenantId == _tenantService.TenantId
-                && e.CreatedAt >= periodStart
-                && e.CreatedAt < periodEnd)
-            .OrderBy(e => e.CreatedAt)
-            .ThenBy(e => e.Id)
-            .ToListAsync(cancellationToken);
-
-        List<PartyLedgerEntryDto> mapped = entries
-            .Select(e => MapEntry(e, party.PartyType))
-            .ToList();
-
-        long closingBalance = mapped.Count > 0
-            ? mapped[^1].NewBalancePaisa
-            : openingBalance;
-
-        return new PartyLedgerSlipDto
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
-            PartyId = party.Id,
-            PartyName = party.Name,
-            PartyType = party.PartyType,
-            Year = year,
-            Month = month,
-            OpeningBalancePaisa = openingBalance,
-            ClosingBalancePaisa = closingBalance,
-            TotalDebitPaisa = mapped.Sum(e => e.DebitPaisa),
-            TotalCreditPaisa = mapped.Sum(e => e.CreditPaisa),
-            Entries = mapped
-        };
+            Party party = await LoadPartyAsync(context, partyId, ct);
+
+            DateTime periodStart = new(year, month, 1, 0, 0, 0, DateTimeKind.Utc);
+            DateTime periodEnd = periodStart.AddMonths(1);
+
+            long openingBalance = await context.PartyLedgers
+                .AsNoTracking()
+                .Where(e =>
+                    e.PartyId == partyId
+                    && e.TenantId == _tenantService.TenantId
+                    && e.CreatedAt < periodStart)
+                .OrderByDescending(e => e.CreatedAt)
+                .ThenByDescending(e => e.Id)
+                .Select(e => (long?)e.NewBalancePaisa)
+                .FirstOrDefaultAsync(ct) ?? 0L;
+
+            List<PartyLedger> entries = await context.PartyLedgers
+                .AsNoTracking()
+                .Where(e =>
+                    e.PartyId == partyId
+                    && e.TenantId == _tenantService.TenantId
+                    && e.CreatedAt >= periodStart
+                    && e.CreatedAt < periodEnd)
+                .OrderBy(e => e.CreatedAt)
+                .ThenBy(e => e.Id)
+                .ToListAsync(ct);
+
+            List<PartyLedgerEntryDto> mapped = entries
+                .Select(e => MapEntry(e, party.PartyType))
+                .ToList();
+
+            long closingBalance = mapped.Count > 0
+                ? mapped[^1].NewBalancePaisa
+                : openingBalance;
+
+            return new PartyLedgerSlipDto
+            {
+                PartyId = party.Id,
+                PartyName = party.Name,
+                PartyType = party.PartyType,
+                Year = year,
+                Month = month,
+                OpeningBalancePaisa = openingBalance,
+                ClosingBalancePaisa = closingBalance,
+                TotalDebitPaisa = mapped.Sum(e => e.DebitPaisa),
+                TotalCreditPaisa = mapped.Sum(e => e.CreditPaisa),
+                Entries = mapped
+            };
+        }, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<OpenPartySlipDto>> ListOpenSlipsAsync(
+    public Task<IReadOnlyList<OpenPartySlipDto>> ListOpenSlipsAsync(
         Guid partyId,
         CancellationToken cancellationToken = default)
     {
         EnsureTenantResolved();
-        Party party = await LoadPartyAsync(partyId, cancellationToken);
-        Guid tenantId = _tenantService.TenantId;
 
-        if (string.Equals(party.PartyType, PartyTypes.Customer, StringComparison.OrdinalIgnoreCase))
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
-            return await _context.SalesInvoices
-                .AsNoTracking()
-                .Where(i =>
-                    i.TenantId == tenantId
-                    && i.CustomerId == partyId
-                    && i.PaymentMethod == "CREDIT"
-                    && i.AmountPaidPaisa < i.TotalAmountPaisa)
-                .OrderBy(i => i.CreatedAt)
-                .Select(i => new OpenPartySlipDto
-                {
-                    InvoiceNo = i.InvoiceNo,
-                    PurchaseOrderId = null,
-                    Reference = i.InvoiceNo,
-                    CreatedAt = i.CreatedAt,
-                    TotalPaisa = i.TotalAmountPaisa,
-                    AmountPaidPaisa = i.AmountPaidPaisa,
-                    OutstandingPaisa = i.TotalAmountPaisa - i.AmountPaidPaisa
-                })
-                .ToListAsync(cancellationToken);
-        }
+            Party party = await LoadPartyAsync(context, partyId, ct);
+            Guid tenantId = _tenantService.TenantId;
 
-        if (string.Equals(party.PartyType, PartyTypes.Supplier, StringComparison.OrdinalIgnoreCase))
-        {
-            return await _context.PurchaseOrders
-                .AsNoTracking()
-                .Where(o =>
-                    o.TenantId == tenantId
-                    && o.SupplierId == partyId
-                    && o.IsReceived
-                    && o.AmountPaidPaisa < o.NetPayablePaisa)
-                .OrderBy(o => o.CreatedAt)
-                .Select(o => new OpenPartySlipDto
-                {
-                    InvoiceNo = null,
-                    PurchaseOrderId = o.Id,
-                    Reference = o.SupplierInvoiceNo,
-                    CreatedAt = o.CreatedAt,
-                    TotalPaisa = o.NetPayablePaisa,
-                    AmountPaidPaisa = o.AmountPaidPaisa,
-                    OutstandingPaisa = o.NetPayablePaisa - o.AmountPaidPaisa
-                })
-                .ToListAsync(cancellationToken);
-        }
+            if (string.Equals(party.PartyType, PartyTypes.Customer, StringComparison.OrdinalIgnoreCase))
+            {
+                return (IReadOnlyList<OpenPartySlipDto>)await context.SalesInvoices
+                    .AsNoTracking()
+                    .Where(i =>
+                        i.TenantId == tenantId
+                        && i.CustomerId == partyId
+                        && i.PaymentMethod == "CREDIT"
+                        && i.AmountPaidPaisa < i.TotalAmountPaisa)
+                    .OrderBy(i => i.CreatedAt)
+                    .Select(i => new OpenPartySlipDto
+                    {
+                        InvoiceNo = i.InvoiceNo,
+                        PurchaseOrderId = null,
+                        Reference = i.InvoiceNo,
+                        CreatedAt = i.CreatedAt,
+                        TotalPaisa = i.TotalAmountPaisa,
+                        AmountPaidPaisa = i.AmountPaidPaisa,
+                        OutstandingPaisa = i.TotalAmountPaisa - i.AmountPaidPaisa
+                    })
+                    .ToListAsync(ct);
+            }
 
-        return [];
+            if (string.Equals(party.PartyType, PartyTypes.Supplier, StringComparison.OrdinalIgnoreCase))
+            {
+                return (IReadOnlyList<OpenPartySlipDto>)await context.PurchaseOrders
+                    .AsNoTracking()
+                    .Where(o =>
+                        o.TenantId == tenantId
+                        && o.SupplierId == partyId
+                        && o.IsReceived
+                        && o.AmountPaidPaisa < o.NetPayablePaisa)
+                    .OrderBy(o => o.CreatedAt)
+                    .Select(o => new OpenPartySlipDto
+                    {
+                        InvoiceNo = null,
+                        PurchaseOrderId = o.Id,
+                        Reference = o.SupplierInvoiceNo,
+                        CreatedAt = o.CreatedAt,
+                        TotalPaisa = o.NetPayablePaisa,
+                        AmountPaidPaisa = o.AmountPaidPaisa,
+                        OutstandingPaisa = o.NetPayablePaisa - o.AmountPaidPaisa
+                    })
+                    .ToListAsync(ct);
+            }
+
+            return (IReadOnlyList<OpenPartySlipDto>)[];
+        }, cancellationToken);
     }
 
-    public async Task<PartyFinanceKpisDto> GetPartyFinanceKpisAsync(
+    public Task<PartyFinanceKpisDto> GetPartyFinanceKpisAsync(
         string role,
         CancellationToken cancellationToken = default)
     {
@@ -385,70 +403,73 @@ public class PartyLedgerService : IPartyLedgerService
         DateTime overdueCutoff = DateTime.UtcNow.AddDays(-30);
         DateTime weekCutoff = DateTime.UtcNow.AddDays(-7);
 
-        List<Party> parties = await _context.Parties
-            .AsNoTracking()
-            .Where(p => p.TenantId == tenantId && p.PartyType == roleNorm)
-            .ToListAsync(cancellationToken);
-
-        long duePositive = parties.Where(p => p.CurrentBalancePaisa > 0).Sum(p => p.CurrentBalancePaisa);
-        long advance = parties.Where(p => p.CurrentBalancePaisa < 0).Sum(p => -p.CurrentBalancePaisa);
-
-        long todayPayments = await _context.PartyLedgers
-            .AsNoTracking()
-            .Where(e =>
-                e.TenantId == tenantId
-                && e.Type == "PAYMENT"
-                && e.CreatedAt >= todayStart
-                && e.CreatedAt < todayEnd
-                && _context.Parties.Any(p =>
-                    p.Id == e.PartyId
-                    && p.TenantId == tenantId
-                    && p.PartyType == roleNorm))
-            .SumAsync(e => (long?)e.TransactionAmountPaisa, cancellationToken) ?? 0L;
-
-        if (roleNorm == PartyTypes.Customer)
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
-            long overdue30 = await _context.SalesInvoices
+            List<Party> parties = await context.Parties
                 .AsNoTracking()
-                .Where(i =>
-                    i.TenantId == tenantId
-                    && i.PaymentMethod == "CREDIT"
-                    && i.AmountPaidPaisa < i.TotalAmountPaisa
-                    && i.CreatedAt < overdueCutoff
-                    && i.CustomerId != null)
+                .Where(p => p.TenantId == tenantId && p.PartyType == roleNorm)
+                .ToListAsync(ct);
+
+            long duePositive = parties.Where(p => p.CurrentBalancePaisa > 0).Sum(p => p.CurrentBalancePaisa);
+            long advance = parties.Where(p => p.CurrentBalancePaisa < 0).Sum(p => -p.CurrentBalancePaisa);
+
+            long todayPayments = await context.PartyLedgers
+                .AsNoTracking()
+                .Where(e =>
+                    e.TenantId == tenantId
+                    && e.Type == "PAYMENT"
+                    && e.CreatedAt >= todayStart
+                    && e.CreatedAt < todayEnd
+                    && context.Parties.Any(p =>
+                        p.Id == e.PartyId
+                        && p.TenantId == tenantId
+                        && p.PartyType == roleNorm))
+                .SumAsync(e => (long?)e.TransactionAmountPaisa, ct) ?? 0L;
+
+            if (roleNorm == PartyTypes.Customer)
+            {
+                long overdue30 = await context.SalesInvoices
+                    .AsNoTracking()
+                    .Where(i =>
+                        i.TenantId == tenantId
+                        && i.PaymentMethod == "CREDIT"
+                        && i.AmountPaidPaisa < i.TotalAmountPaisa
+                        && i.CreatedAt < overdueCutoff
+                        && i.CustomerId != null)
+                    .SumAsync(
+                        i => (long?)(i.TotalAmountPaisa - i.AmountPaidPaisa),
+                        ct) ?? 0L;
+
+                return new PartyFinanceKpisDto
+                {
+                    Role = roleNorm,
+                    TotalReceivablePaisa = duePositive,
+                    Overdue30PlusPaisa = overdue30,
+                    AdvanceReceivedPaisa = advance,
+                    TodayCollectionPaisa = todayPayments
+                };
+            }
+
+            long dueThisWeek = await context.PurchaseOrders
+                .AsNoTracking()
+                .Where(o =>
+                    o.TenantId == tenantId
+                    && o.IsReceived
+                    && o.AmountPaidPaisa < o.NetPayablePaisa
+                    && o.CreatedAt >= weekCutoff)
                 .SumAsync(
-                    i => (long?)(i.TotalAmountPaisa - i.AmountPaidPaisa),
-                    cancellationToken) ?? 0L;
+                    o => (long?)(o.NetPayablePaisa - o.AmountPaidPaisa),
+                    ct) ?? 0L;
 
             return new PartyFinanceKpisDto
             {
                 Role = roleNorm,
-                TotalReceivablePaisa = duePositive,
-                Overdue30PlusPaisa = overdue30,
-                AdvanceReceivedPaisa = advance,
-                TodayCollectionPaisa = todayPayments
+                TotalPayablePaisa = duePositive,
+                DueThisWeekPaisa = dueThisWeek,
+                AdvancePaidPaisa = advance,
+                TodayPaidPaisa = todayPayments
             };
-        }
-
-        long dueThisWeek = await _context.PurchaseOrders
-            .AsNoTracking()
-            .Where(o =>
-                o.TenantId == tenantId
-                && o.IsReceived
-                && o.AmountPaidPaisa < o.NetPayablePaisa
-                && o.CreatedAt >= weekCutoff)
-            .SumAsync(
-                o => (long?)(o.NetPayablePaisa - o.AmountPaidPaisa),
-                cancellationToken) ?? 0L;
-
-        return new PartyFinanceKpisDto
-        {
-            Role = roleNorm,
-            TotalPayablePaisa = duePositive,
-            DueThisWeekPaisa = dueThisWeek,
-            AdvancePaidPaisa = advance,
-            TodayPaidPaisa = todayPayments
-        };
+        }, cancellationToken);
     }
 
     public async Task<PartyAgeingDto> GetAgeingAsync(
@@ -491,7 +512,7 @@ public class PartyLedgerService : IPartyLedgerService
         };
     }
 
-    public async Task<IReadOnlyList<RecentPartyPaymentDto>> ListRecentPaymentsAsync(
+    public Task<IReadOnlyList<RecentPartyPaymentDto>> ListRecentPaymentsAsync(
         string role,
         DateTimeOffset? from = null,
         DateTimeOffset? to = null,
@@ -506,77 +527,81 @@ public class PartyLedgerService : IPartyLedgerService
         }
 
         Guid tenantId = _tenantService.TenantId;
-        IQueryable<PartyLedger> query =
-            from e in _context.PartyLedgers.AsNoTracking()
-            join p in _context.Parties.AsNoTracking() on e.PartyId equals p.Id
-            where e.TenantId == tenantId
-                  && p.TenantId == tenantId
-                  && p.PartyType == roleNorm
-                  && e.Type == "PAYMENT"
-            select e;
 
-        if (from is DateTimeOffset fromValue)
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
-            DateTime fromUtc = fromValue.UtcDateTime;
-            query = query.Where(e => e.CreatedAt >= fromUtc);
-        }
-
-        if (to is DateTimeOffset toValue)
-        {
-            DateTime toUtc = toValue.UtcDateTime;
-            query = query.Where(e => e.CreatedAt <= toUtc);
-        }
-
-        string? searchTrim = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
-        if (searchTrim is not null)
-        {
-            string pattern = $"%{searchTrim}%";
-            query =
-                from e in query
-                join p in _context.Parties.AsNoTracking() on e.PartyId equals p.Id
-                where EF.Functions.ILike(p.Name, pattern)
-                      || EF.Functions.ILike(e.ReferenceDetails, pattern)
-                      || EF.Functions.ILike(e.PaymentMethod, pattern)
+            IQueryable<PartyLedger> query =
+                from e in context.PartyLedgers.AsNoTracking()
+                join p in context.Parties.AsNoTracking() on e.PartyId equals p.Id
+                where e.TenantId == tenantId
+                      && p.TenantId == tenantId
+                      && p.PartyType == roleNorm
+                      && e.Type == "PAYMENT"
                 select e;
-        }
 
-        List<PartyLedger> entries = await query
-            .OrderByDescending(e => e.CreatedAt)
-            .ThenByDescending(e => e.Id)
-            .Take(100)
-            .ToListAsync(cancellationToken);
-
-        HashSet<Guid> partyIds = entries.Select(e => e.PartyId).ToHashSet();
-        Dictionary<Guid, Party> partyMap = await _context.Parties
-            .AsNoTracking()
-            .Where(p => partyIds.Contains(p.Id) && p.TenantId == tenantId)
-            .ToDictionaryAsync(p => p.Id, cancellationToken);
-
-        return entries
-            .Where(e => partyMap.ContainsKey(e.PartyId))
-            .Select(e =>
+            if (from is DateTimeOffset fromValue)
             {
-                Party party = partyMap[e.PartyId];
-                bool isAdvance = e.ReferenceDetails.StartsWith(
-                    "ADV-",
-                    StringComparison.OrdinalIgnoreCase);
-                return new RecentPartyPaymentDto
+                DateTime fromUtc = fromValue.UtcDateTime;
+                query = query.Where(e => e.CreatedAt >= fromUtc);
+            }
+
+            if (to is DateTimeOffset toValue)
+            {
+                DateTime toUtc = toValue.UtcDateTime;
+                query = query.Where(e => e.CreatedAt <= toUtc);
+            }
+
+            string? searchTrim = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
+            if (searchTrim is not null)
+            {
+                string pattern = $"%{searchTrim}%";
+                query =
+                    from e in query
+                    join p in context.Parties.AsNoTracking() on e.PartyId equals p.Id
+                    where EF.Functions.ILike(p.Name, pattern)
+                          || EF.Functions.ILike(e.ReferenceDetails, pattern)
+                          || EF.Functions.ILike(e.PaymentMethod, pattern)
+                    select e;
+            }
+
+            List<PartyLedger> entries = await query
+                .OrderByDescending(e => e.CreatedAt)
+                .ThenByDescending(e => e.Id)
+                .Take(100)
+                .ToListAsync(ct);
+
+            HashSet<Guid> partyIds = entries.Select(e => e.PartyId).ToHashSet();
+            Dictionary<Guid, Party> partyMap = await context.Parties
+                .AsNoTracking()
+                .Where(p => partyIds.Contains(p.Id) && p.TenantId == tenantId)
+                .ToDictionaryAsync(p => p.Id, ct);
+
+            return (IReadOnlyList<RecentPartyPaymentDto>)entries
+                .Where(e => partyMap.ContainsKey(e.PartyId))
+                .Select(e =>
                 {
-                    Id = e.Id,
-                    PartyId = e.PartyId,
-                    PartyName = party.Name,
-                    PartyType = party.PartyType,
-                    AmountPaisa = e.TransactionAmountPaisa,
-                    PaymentMethod = e.PaymentMethod,
-                    ReferenceDetails = e.ReferenceDetails,
-                    IsAdvance = isAdvance,
-                    CreatedAt = e.CreatedAt
-                };
-            })
-            .ToList();
+                    Party party = partyMap[e.PartyId];
+                    bool isAdvance = e.ReferenceDetails.StartsWith(
+                        "ADV-",
+                        StringComparison.OrdinalIgnoreCase);
+                    return new RecentPartyPaymentDto
+                    {
+                        Id = e.Id,
+                        PartyId = e.PartyId,
+                        PartyName = party.Name,
+                        PartyType = party.PartyType,
+                        AmountPaisa = e.TransactionAmountPaisa,
+                        PaymentMethod = e.PaymentMethod,
+                        ReferenceDetails = e.ReferenceDetails,
+                        IsAdvance = isAdvance,
+                        CreatedAt = e.CreatedAt
+                    };
+                })
+                .ToList();
+        }, cancellationToken);
     }
 
-    public async Task<PartyLedgerDashboardDto> GetLedgerDashboardAsync(
+    public Task<PartyLedgerDashboardDto> GetLedgerDashboardAsync(
         Guid partyId,
         DateTimeOffset from,
         DateTimeOffset to,
@@ -593,80 +618,86 @@ public class PartyLedgerService : IPartyLedgerService
             throw new ArgumentException("End date must be on or after start date.");
         }
 
-        Party party = await LoadPartyAsync(partyId, cancellationToken);
-        DateTime fromUtc = from.UtcDateTime;
-        DateTime toUtc = to.UtcDateTime;
-
-        long openingBalance = await _context.PartyLedgers
-            .AsNoTracking()
-            .Where(e =>
-                e.PartyId == partyId
-                && e.TenantId == _tenantService.TenantId
-                && e.CreatedAt < fromUtc)
-            .OrderByDescending(e => e.CreatedAt)
-            .ThenByDescending(e => e.Id)
-            .Select(e => (long?)e.NewBalancePaisa)
-            .FirstOrDefaultAsync(cancellationToken) ?? 0L;
-
-        List<PartyLedger> entries = await _context.PartyLedgers
-            .AsNoTracking()
-            .Where(e =>
-                e.PartyId == partyId
-                && e.TenantId == _tenantService.TenantId
-                && e.CreatedAt >= fromUtc
-                && e.CreatedAt <= toUtc)
-            .OrderBy(e => e.CreatedAt)
-            .ThenBy(e => e.Id)
-            .ToListAsync(cancellationToken);
-
-        List<PartyLedgerEntryDto> mapped = entries
-            .Select(e => MapEntry(e, party.PartyType))
-            .ToList();
-
-        bool isCustomer = string.Equals(
-            party.PartyType,
-            PartyTypes.Customer,
-            StringComparison.OrdinalIgnoreCase);
-
-        long salesOrPurchases = entries
-            .Where(e => e.Type == (isCustomer ? "SALE" : "PURCHASE"))
-            .Sum(e => e.TransactionAmountPaisa);
-        long paid = entries.Where(e => e.Type == "PAYMENT").Sum(e => e.TransactionAmountPaisa);
-        long returns = entries
-            .Where(e => e.Type == (isCustomer ? "CUSTOMER_RETURN" : "SUPPLIER_RETURN"))
-            .Sum(e => e.TransactionAmountPaisa);
-        long discounts = entries
-            .Where(e =>
-                e.Type == "ADJUSTMENT"
-                && e.ReferenceDetails.Contains("DISCOUNT", StringComparison.OrdinalIgnoreCase))
-            .Sum(e => e.TransactionAmountPaisa);
-        long adjustments = entries
-            .Where(e =>
-                e.Type == "ADJUSTMENT"
-                && !e.ReferenceDetails.Contains("DISCOUNT", StringComparison.OrdinalIgnoreCase))
-            .Sum(e => e.TransactionAmountPaisa);
-
-        long closing = mapped.Count > 0 ? mapped[^1].NewBalancePaisa : openingBalance;
-
-        return new PartyLedgerDashboardDto
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
-            PartyId = party.Id,
-            PartyName = party.Name,
-            PartyType = party.PartyType,
-            OpeningBalancePaisa = openingBalance,
-            SalesOrPurchasesPaisa = salesOrPurchases,
-            PaidPaisa = paid,
-            ReturnsPaisa = returns,
-            DiscountsPaisa = discounts,
-            AdjustmentsPaisa = adjustments,
-            ClosingBalancePaisa = closing,
-            Entries = mapped
-        };
+            Party party = await LoadPartyAsync(context, partyId, ct);
+            DateTime fromUtc = from.UtcDateTime;
+            DateTime toUtc = to.UtcDateTime;
+
+            long openingBalance = await context.PartyLedgers
+                .AsNoTracking()
+                .Where(e =>
+                    e.PartyId == partyId
+                    && e.TenantId == _tenantService.TenantId
+                    && e.CreatedAt < fromUtc)
+                .OrderByDescending(e => e.CreatedAt)
+                .ThenByDescending(e => e.Id)
+                .Select(e => (long?)e.NewBalancePaisa)
+                .FirstOrDefaultAsync(ct) ?? 0L;
+
+            List<PartyLedger> entries = await context.PartyLedgers
+                .AsNoTracking()
+                .Where(e =>
+                    e.PartyId == partyId
+                    && e.TenantId == _tenantService.TenantId
+                    && e.CreatedAt >= fromUtc
+                    && e.CreatedAt <= toUtc)
+                .OrderBy(e => e.CreatedAt)
+                .ThenBy(e => e.Id)
+                .ToListAsync(ct);
+
+            List<PartyLedgerEntryDto> mapped = entries
+                .Select(e => MapEntry(e, party.PartyType))
+                .ToList();
+
+            bool isCustomer = string.Equals(
+                party.PartyType,
+                PartyTypes.Customer,
+                StringComparison.OrdinalIgnoreCase);
+
+            long salesOrPurchases = entries
+                .Where(e => e.Type == (isCustomer ? "SALE" : "PURCHASE"))
+                .Sum(e => e.TransactionAmountPaisa);
+            long paid = entries.Where(e => e.Type == "PAYMENT").Sum(e => e.TransactionAmountPaisa);
+            long returns = entries
+                .Where(e => e.Type == (isCustomer ? "CUSTOMER_RETURN" : "SUPPLIER_RETURN"))
+                .Sum(e => e.TransactionAmountPaisa);
+            long discounts = entries
+                .Where(e =>
+                    e.Type == "ADJUSTMENT"
+                    && e.ReferenceDetails.Contains("DISCOUNT", StringComparison.OrdinalIgnoreCase))
+                .Sum(e => e.TransactionAmountPaisa);
+            long adjustments = entries
+                .Where(e =>
+                    e.Type == "ADJUSTMENT"
+                    && !e.ReferenceDetails.Contains("DISCOUNT", StringComparison.OrdinalIgnoreCase))
+                .Sum(e => e.TransactionAmountPaisa);
+
+            long closing = mapped.Count > 0 ? mapped[^1].NewBalancePaisa : openingBalance;
+
+            return new PartyLedgerDashboardDto
+            {
+                PartyId = party.Id,
+                PartyName = party.Name,
+                PartyType = party.PartyType,
+                OpeningBalancePaisa = openingBalance,
+                SalesOrPurchasesPaisa = salesOrPurchases,
+                PaidPaisa = paid,
+                ReturnsPaisa = returns,
+                DiscountsPaisa = discounts,
+                AdjustmentsPaisa = adjustments,
+                ClosingBalancePaisa = closing,
+                Entries = mapped
+            };
+        }, cancellationToken);
     }
 
-    private async Task<Party> LoadPartyAsync(Guid partyId, CancellationToken cancellationToken)
+    private async Task<Party> LoadPartyAsync(
+        WebPosDbContext context,
+        Guid partyId,
+        CancellationToken cancellationToken)
     {
-        return await _context.Parties.AsNoTracking().FirstOrDefaultAsync(
+        return await context.Parties.AsNoTracking().FirstOrDefaultAsync(
             p => p.Id == partyId && p.TenantId == _tenantService.TenantId,
             cancellationToken)
             ?? throw new KeyNotFoundException("Party profile not found in system storage.");

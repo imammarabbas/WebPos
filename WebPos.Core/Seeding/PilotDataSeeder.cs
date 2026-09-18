@@ -771,6 +771,29 @@ public static class PilotDataSeeder
             RackLocation = rack,
             CreatedAt = now
         });
+
+        Product? product = await context.Products
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(p => p.Id == productId, cancellationToken);
+        if (product is not null)
+        {
+            decimal oldQty = product.StockQty;
+            decimal newQty = oldQty + qty;
+            if (newQty > 0)
+            {
+                product.CostPricePaisa = (long)Math.Round(
+                    ((oldQty * product.CostPricePaisa) + (qty * costPricePaisa)) / newQty,
+                    MidpointRounding.AwayFromZero);
+            }
+            else
+            {
+                product.CostPricePaisa = costPricePaisa;
+            }
+
+            product.StockQty = newQty;
+            product.RetailPricePaisa = retailPricePaisa;
+            product.UpdatedAt = now;
+        }
     }
 
     private static async Task EnsurePilotCustomerAsync(

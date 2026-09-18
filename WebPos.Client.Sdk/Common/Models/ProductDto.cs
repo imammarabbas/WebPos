@@ -26,5 +26,23 @@ public sealed class ProductDto
 
     public bool ShowOnWebshop { get; init; }
 
+    public bool ShowOnPosQuick { get; init; }
+
+    public int PosQuickSort { get; init; }
+
     public decimal MinStockQty { get; init; }
+
+    public decimal StockQty { get; init; }
+
+    public long CostPricePaisa { get; init; }
+
+    public long RetailPricePaisa { get; init; }
+
+    public decimal DefaultMarginPercent { get; init; } = 20m;
+
+    public bool IsBulk { get; init; }
+
+    public Guid? ParentProductId { get; init; }
+
+    public decimal? DeductionMultiplier { get; init; }
 }

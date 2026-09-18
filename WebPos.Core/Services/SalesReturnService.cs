@@ -8,16 +8,19 @@ namespace WebPos.Core.Services;
 
 public sealed class SalesReturnService : ISalesReturnService
 {
-    private readonly WebPosDbContext _context;
+    private readonly IDbContextFactory<WebPosDbContext> _dbFactory;
+    private readonly IAmbientDbContextAccessor _ambient;
     private readonly ITransactionService _transactionService;
     private readonly IPartyLedgerService _partyLedgerService;
 
     public SalesReturnService(
-        WebPosDbContext context,
+        IDbContextFactory<WebPosDbContext> dbFactory,
+        IAmbientDbContextAccessor ambient,
         ITransactionService transactionService,
         IPartyLedgerService partyLedgerService)
     {
-        _context = context ?? throw new ArgumentNullException(nameof(context));
+        _dbFactory = dbFactory ?? throw new ArgumentNullException(nameof(dbFactory));
+        _ambient = ambient ?? throw new ArgumentNullException(nameof(ambient));
         _transactionService = transactionService ?? throw new ArgumentNullException(nameof(transactionService));
         _partyLedgerService = partyLedgerService ?? throw new ArgumentNullException(nameof(partyLedgerService));
     }
@@ -28,6 +31,7 @@ public sealed class SalesReturnService : ISalesReturnService
         _transactionService.ExecuteInTransactionAsync(async ct =>
         {
             ArgumentNullException.ThrowIfNull(request);
+            WebPosDbContext context = _ambient.Required;
 
             if (string.IsNullOrWhiteSpace(request.OriginalInvoiceNo))
             {
@@ -39,23 +43,23 @@ public sealed class SalesReturnService : ISalesReturnService
                 throw new ArgumentException("At least one return line is required.", nameof(request));
             }
 
-            SalesInvoice invoice = await _context.SalesInvoices
+            SalesInvoice invoice = await context.SalesInvoices
                 .Include(i => i.Items)
                 .FirstOrDefaultAsync(i => i.InvoiceNo == request.OriginalInvoiceNo, ct)
                 ?? throw new InvalidOperationException($"Invoice '{request.OriginalInvoiceNo}' was not found.");
 
-            CashierShift shift = await _context.CashierShifts
+            CashierShift shift = await context.CashierShifts
                 .FirstOrDefaultAsync(s => s.Id == invoice.ShiftId, ct)
                 ?? throw new InvalidOperationException("The original invoice shift was not found.");
 
             List<SalesReturnItem> priorReturnItems = await (
-                from ri in _context.SalesReturnItems
-                join sr in _context.SalesReturns on ri.SalesReturnId equals sr.Id
+                from ri in context.SalesReturnItems
+                join sr in context.SalesReturns on ri.SalesReturnId equals sr.Id
                 where sr.OriginalInvoiceNo == request.OriginalInvoiceNo
                 select ri).ToListAsync(ct);
 
             long refundGrossPaisa = 0;
-            List<(ReturnLineRequest Line, SalesItem SoldItem, ProductBatch Batch)> resolved = [];
+            List<(ReturnLineRequest Line, SalesItem SoldItem, decimal RestoreQty, Guid StockProductId)> resolved = [];
 
             foreach (ReturnLineRequest line in request.Items)
             {
@@ -65,16 +69,23 @@ public sealed class SalesReturnService : ISalesReturnService
                 }
 
                 SalesItem? soldItem = invoice.Items.FirstOrDefault(i =>
-                    i.ProductId == line.ProductId && i.BatchId == line.BatchId);
+                    i.ProductId == line.ProductId
+                    && (line.BatchId is null
+                        || i.BatchId is null
+                        || i.BatchId == line.BatchId));
 
                 if (soldItem is null)
                 {
                     throw new InvalidOperationException(
-                        $"Product/batch was not found on invoice '{request.OriginalInvoiceNo}'.");
+                        $"Product was not found on invoice '{request.OriginalInvoiceNo}'.");
                 }
 
                 decimal alreadyReturned = priorReturnItems
-                    .Where(r => r.ProductId == line.ProductId && r.BatchId == line.BatchId)
+                    .Where(r =>
+                        r.ProductId == line.ProductId
+                        && (line.BatchId is null
+                            || r.BatchId is null
+                            || r.BatchId == line.BatchId))
                     .Sum(r => r.Quantity);
 
                 decimal returnable = soldItem.Quantity - alreadyReturned;
@@ -84,15 +95,27 @@ public sealed class SalesReturnService : ISalesReturnService
                         $"Cannot return {line.Quantity}; only {returnable} remaining for this line.");
                 }
 
-                ProductBatch batch = await _context.ProductBatches
-                    .FirstOrDefaultAsync(b => b.Id == line.BatchId, ct)
-                    ?? throw new InvalidOperationException($"Batch {line.BatchId} was not found.");
+                decimal restoreQty = soldItem.ParentQtyDeducted > 0
+                    ? soldItem.ParentQtyDeducted * (line.Quantity / soldItem.Quantity)
+                    : line.Quantity;
+
+                Guid stockProductId = soldItem.ProductId;
+                if (soldItem.ParentQtyDeducted > 0)
+                {
+                    Product product = await context.Products
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(p => p.Id == soldItem.ProductId, ct)
+                        ?? throw new InvalidOperationException("Sold product was not found.");
+                    stockProductId = product.ParentProductId
+                        ?? throw new InvalidOperationException(
+                            "Alias sale is missing ParentProductId for stock restore.");
+                }
 
                 long lineGross = (long)Math.Round(
                     line.Quantity * soldItem.UnitPricePaisa,
                     MidpointRounding.AwayFromZero);
                 refundGrossPaisa += lineGross;
-                resolved.Add((line, soldItem, batch));
+                resolved.Add((line, soldItem, restoreQty, stockProductId));
             }
 
             long originalGrossPaisa = invoice.Items.Sum(i =>
@@ -112,7 +135,7 @@ public sealed class SalesReturnService : ISalesReturnService
                 throw new InvalidOperationException("Refund net amount must be greater than zero.");
             }
 
-            List<GeneralLedgerEntry> originalLedger = await _context.GeneralLedgerEntries
+            List<GeneralLedgerEntry> originalLedger = await context.GeneralLedgerEntries
                 .Where(e => e.ReferenceNo == invoice.ReceiptNumber && e.TransactionType == "SALE")
                 .ToListAsync(ct);
 
@@ -123,7 +146,6 @@ public sealed class SalesReturnService : ISalesReturnService
             }
 
             Guid originalGroupId = originalLedger[0].TransactionGroupId;
-            // Reverse against the original SALE payment account (till-specific when applicable).
             string paymentAccount = originalLedger
                 .Where(e =>
                     e.DebitPaisa > 0
@@ -171,11 +193,11 @@ public sealed class SalesReturnService : ISalesReturnService
                 TotalRefundPaisa = refundNetPaisa,
                 CreatedAt = now
             };
-            _context.SalesReturns.Add(salesReturn);
+            context.SalesReturns.Add(salesReturn);
 
-            foreach ((ReturnLineRequest line, SalesItem soldItem, ProductBatch batch) in resolved)
+            foreach ((ReturnLineRequest line, SalesItem soldItem, decimal restoreQty, Guid stockProductId) in resolved)
             {
-                _context.SalesReturnItems.Add(new SalesReturnItem
+                context.SalesReturnItems.Add(new SalesReturnItem
                 {
                     Id = Guid.NewGuid(),
                     SalesReturnId = salesReturnId,
@@ -188,7 +210,11 @@ public sealed class SalesReturnService : ISalesReturnService
                         : line.ReturnCondition.ToUpperInvariant()
                 });
 
-                batch.CurrentQty += line.Quantity;
+                Product? stockProduct = await context.Products
+                    .FirstOrDefaultAsync(p => p.Id == stockProductId, ct)
+                    ?? throw new InvalidOperationException("Stock product was not found for return.");
+                stockProduct.StockQty += restoreQty;
+                stockProduct.UpdatedAt = now;
             }
 
             await _transactionService.PostBalancedEntriesAsync(

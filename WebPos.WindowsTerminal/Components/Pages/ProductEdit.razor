@@ -1,0 +1,703 @@
+@page "/products/new"
+@page "/products/{ProductId:guid}"
+@using System.Globalization
+@using System.Text.RegularExpressions
+@using Common.Models
+@implements IDisposable
+@inject ProductAdminApiClient ProductApi
+@inject ISessionService SessionService
+@inject NavigationManager Navigation
+
+<PageTitle>@(IsEdit ? "Edit product" : "New product")</PageTitle>
+
+<div class="page-shell party-page pc-page po-page po-detail">
+    <PosTopMenu />
+
+    <div class="po-page-header">
+        <div class="po-page-header-left">
+            <div class="po-icon-tile" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M4 7h16v12H4zM8 7V5h8v2" stroke-linecap="round" />
+                </svg>
+            </div>
+            <div>
+                <h1>@(IsEdit ? "Edit product" : "New product")</h1>
+                <p>Independent · Parent (bulk) · Child pack</p>
+            </div>
+        </div>
+        <a class="po-btn po-btn-outline" href="products">Back to Products</a>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="po-alert">@_error</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(_success))
+    {
+        <div class="cpo-ok" role="status">@_success</div>
+    }
+
+    <div class="po-card pc-card">
+        <div class="pc-kind-row">
+            <button type="button" class="pc-kind @(_kind == CatalogKind.Independent ? "active" : null)" @onclick="() => SetKind(CatalogKind.Independent)">Independent</button>
+            <button type="button" class="pc-kind @(_kind == CatalogKind.Parent ? "active" : null)" @onclick="() => SetKind(CatalogKind.Parent)">Parent (bulk)</button>
+            <button type="button" class="pc-kind @(_kind == CatalogKind.Child ? "active" : null)" @onclick="() => SetKind(CatalogKind.Child)">Child pack</button>
+        </div>
+    </div>
+
+    @if (_kind == CatalogKind.Child)
+    {
+        <div class="po-card pc-card pc-card-panel">
+            <h2>1 · Parent and pack</h2>
+            <div class="pc-field">
+                <label class="pc-label">Bulk parent</label>
+                <input class="pc-input"
+                       placeholder="Select parent… (search by name or SKU)"
+                       value="@_parentSearch"
+                       @oninput="OnParentSearchInput"
+                       disabled="@_saving" />
+            </div>
+            <div class="pc-field">
+                <select class="pc-input" @bind="_parentIdText" disabled="@_saving">
+                    <option value="">Select parent…</option>
+                    @foreach (ProductDto parent in _bulkParents)
+                    {
+                        <option value="@parent.Id.ToString("D")">@parent.Name · @parent.BaseUnit</option>
+                    }
+                </select>
+            </div>
+            <div class="pc-field">
+                <label class="pc-label">Pack size</label>
+                <div class="pc-chips">
+                    @foreach (string chip in PackChips)
+                    {
+                        <button type="button" class="pc-chip @(_packSize == chip ? "active" : null)" @onclick="() => _packSize = chip">@chip</button>
+                    }
+                </div>
+            </div>
+            <div class="pc-field">
+                <input class="pc-input" placeholder="@PackPlaceholder" @bind="_packSize" @bind:event="oninput" disabled="@_saving" />
+                @if (TryPack(out decimal mult, out string? packErr))
+                {
+                    <p class="pc-hint">Deducts @mult.ToString("0.###") @SelectedParentUnit per pack sold.</p>
+                }
+                else if (!string.IsNullOrWhiteSpace(_packSize) && packErr is not null)
+                {
+                    <p class="field-error">@packErr</p>
+                }
+            </div>
+        </div>
+
+        <div class="po-card pc-card">
+            <h2>2 · Identity</h2>
+            <div class="pc-field">
+                <label class="pc-label" for="pc-barcode">
+                    Barcode <span class="pc-req">*</span>
+                    <span class="pc-scanner-pill">Scanner Input • Focused First</span>
+                </label>
+                <div class="pc-input-action">
+                    <input id="pc-barcode"
+                           class="pc-input pc-barcode"
+                           @ref="_barcodeInput"
+                           placeholder="Scan or type barcode"
+                           @bind="_barcode"
+                           @bind:event="oninput"
+                           disabled="@_saving"
+                           @onkeydown="OnBarcodeKeyDown" />
+                    <button type="button" class="pc-gen" disabled="@_saving" @onclick="GenerateBarcode" title="Generate barcode (Ctrl+G)">Generate</button>
+                </div>
+                <p class="pc-hint">Supports EAN-13, UPC-A, Code128 • Scanner sends Enter automatically</p>
+            </div>
+
+            <div class="pc-field">
+                <label class="pc-label" for="pc-name">
+                    Product Name <span class="pc-req">*</span>
+                </label>
+                <input id="pc-name"
+                       class="pc-input"
+                       @ref="_nameInput"
+                       placeholder="e.g. DAL MASH 500G"
+                       @bind="_name"
+                       @bind:event="oninput"
+                       disabled="@_saving" />
+            </div>
+
+            <div class="pc-row">
+                <div class="pc-field">
+                    <label class="pc-label">Short code</label>
+                    <div class="pc-input-action">
+                        <input class="pc-input" placeholder="e.g. DM500" @bind="_shortCode" @bind:event="oninput" disabled="@_saving" />
+                        <button type="button" class="pc-gen-sm" disabled="@_saving" @onclick="GenerateShortCode" title="Generate short code">Gen</button>
+                    </div>
+                </div>
+                <div class="pc-field">
+                    <label class="pc-label">SKU</label>
+                    <div class="pc-input-action">
+                        <input class="pc-input" placeholder="Auto" @bind="_sku" @bind:event="oninput" disabled="@_saving" />
+                        <button type="button" class="pc-gen-sm" disabled="@_saving" @onclick="GenerateSku" title="Generate SKU">Gen</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pc-field">
+                <label class="pc-label">Category</label>
+                <select class="pc-input" @bind="_categoryIdText" disabled="@_saving">
+                    <option value="">—</option>
+                    @foreach (CategoryDto c in _categories)
+                    {
+                        <option value="@c.Id.ToString("D")">@c.Name</option>
+                    }
+                </select>
+            </div>
+        </div>
+
+        <div class="po-card pc-card">
+            <h2>3 · Sell price</h2>
+            <div class="pc-field">
+                <label class="pc-label">Retail (Rs) <span class="pc-req">*</span></label>
+                <input class="pc-input" inputmode="decimal" @bind="_retailRsText" @bind:event="oninput" disabled="@_saving" />
+            </div>
+            <label class="pc-check">
+                <input type="checkbox" @bind="_showOnPosQuick" disabled="@_saving" />
+                <span>Show on POS Quick Links</span>
+            </label>
+            @if (_showOnPosQuick)
+            {
+                <div class="pc-field" style="max-width:8rem;">
+                    <label class="pc-label">Quick sort</label>
+                    <input class="pc-input" type="number" @bind="_posQuickSort" disabled="@_saving" />
+                </div>
+            }
+            <div class="pov-footer-actions">
+                <button type="button" class="po-btn po-btn-primary" disabled="@_saving" @onclick="SaveAsync">@(_saving ? "Saving…" : "Save")</button>
+                <button type="button" class="po-btn" disabled="@_saving" @onclick="Cancel">Cancel</button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="po-card pc-card">
+            <h2>Product details</h2>
+            <div class="pc-field">
+                <label class="pc-label" for="pc-barcode">
+                    Barcode <span class="pc-req">*</span>
+                    <span class="pc-scanner-pill">Scanner Input • Focused First</span>
+                </label>
+                <div class="pc-input-action">
+                    <input id="pc-barcode"
+                           class="pc-input pc-barcode"
+                           @ref="_barcodeInput"
+                           placeholder="Scan or type barcode"
+                           @bind="_barcode"
+                           @bind:event="oninput"
+                           disabled="@_saving"
+                           @onkeydown="OnBarcodeKeyDown" />
+                    <button type="button" class="pc-gen" disabled="@_saving" @onclick="GenerateBarcode" title="Generate barcode (Ctrl+G)">Generate</button>
+                </div>
+                <p class="pc-hint">Supports EAN-13, UPC-A, Code128 • Scanner sends Enter automatically</p>
+            </div>
+
+            <div class="pc-field">
+                <label class="pc-label" for="pc-name">
+                    Product Name <span class="pc-req">*</span>
+                </label>
+                <input id="pc-name"
+                       class="pc-input"
+                       @ref="_nameInput"
+                       placeholder="e.g. DAL MASH 500G"
+                       @bind="_name"
+                       @bind:event="oninput"
+                       disabled="@_saving" />
+            </div>
+
+            <div class="pc-row">
+                <div class="pc-field">
+                    <label class="pc-label">Short code</label>
+                    <div class="pc-input-action">
+                        <input class="pc-input" placeholder="e.g. DM500" @bind="_shortCode" @bind:event="oninput" disabled="@_saving" />
+                        <button type="button" class="pc-gen-sm" disabled="@_saving" @onclick="GenerateShortCode" title="Generate short code">Gen</button>
+                    </div>
+                </div>
+                <div class="pc-field">
+                    <label class="pc-label">SKU</label>
+                    <div class="pc-input-action">
+                        <input class="pc-input" placeholder="Auto" @bind="_sku" @bind:event="oninput" disabled="@_saving" />
+                        <button type="button" class="pc-gen-sm" disabled="@_saving" @onclick="GenerateSku" title="Generate SKU">Gen</button>
+                    </div>
+                </div>
+                @if (_kind != CatalogKind.Parent)
+                {
+                    <div class="pc-field">
+                        <label class="pc-label">Sell price (Rs) <span class="pc-req">*</span></label>
+                        <input class="pc-input" inputmode="decimal" @bind="_retailRsText" @bind:event="oninput" disabled="@_saving" />
+                    </div>
+                }
+                else
+                {
+                    <div class="pc-field">
+                        <label class="pc-label">Default child margin %</label>
+                        <input class="pc-input" inputmode="decimal" @bind="_marginText" @bind:event="oninput" disabled="@_saving" />
+                    </div>
+                }
+            </div>
+
+            <div class="pc-field">
+                <label class="pc-label">Category</label>
+                <select class="pc-input" @bind="_categoryIdText" disabled="@_saving">
+                    <option value="">—</option>
+                    @foreach (CategoryDto c in _categories)
+                    {
+                        <option value="@c.Id.ToString("D")">@c.Name</option>
+                    }
+                </select>
+            </div>
+
+            <div class="pc-row">
+                <div class="pc-field">
+                    <label class="pc-label">Stock unit</label>
+                    <select class="pc-input" @bind="_baseUnit" disabled="@_saving">
+                        @foreach (string u in UnitChoices)
+                        {
+                            <option value="@u">@u</option>
+                        }
+                    </select>
+                </div>
+                <div class="pc-field">
+                    <label class="pc-label">Purchase unit</label>
+                    <select class="pc-input" @bind="_purchaseUnit" disabled="@_saving">
+                        <option value="">Same as stock</option>
+                        @foreach (string u in PurchaseUnits)
+                        {
+                            <option value="@u">@u</option>
+                        }
+                    </select>
+                </div>
+                <div class="pc-field">
+                    <label class="pc-label">Stock per purchase unit</label>
+                    <input class="pc-input" type="number" min="1" @bind="_conversionMultiplier" @bind:event="oninput" disabled="@_saving" />
+                    <p class="pc-hint">@PurchaseConversionHelper</p>
+                </div>
+            </div>
+
+            <div class="pc-field">
+                <label class="pc-label">Cost (Rs)</label>
+                <input class="pc-input" inputmode="decimal" @bind="_costRsText" @bind:event="oninput" disabled="@_saving" />
+            </div>
+
+            <label class="pc-check">
+                <input type="checkbox" @bind="_showOnPosQuick" disabled="@_saving" />
+                <span>Show on POS Quick Links</span>
+            </label>
+            @if (_showOnPosQuick)
+            {
+                <div class="pc-field" style="max-width:8rem;">
+                    <label class="pc-label">Quick sort</label>
+                    <input class="pc-input" type="number" @bind="_posQuickSort" disabled="@_saving" />
+                </div>
+            }
+
+            <div class="pov-footer-actions">
+                <button type="button" class="po-btn po-btn-primary" disabled="@_saving" @onclick="SaveAsync">@(_saving ? "Saving…" : "Save")</button>
+                <button type="button" class="po-btn" disabled="@_saving" @onclick="Cancel">Cancel</button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private enum CatalogKind { Independent, Parent, Child }
+
+    [Parameter] public Guid? ProductId { get; set; }
+
+    private bool IsEdit => ProductId is Guid id && id != Guid.Empty;
+
+    private IReadOnlyList<ProductDto> _bulkParents = [];
+    private IReadOnlyList<CategoryDto> _categories = [];
+    private CatalogKind _kind = CatalogKind.Independent;
+    private string _name = string.Empty;
+    private string _barcode = string.Empty;
+    private string _shortCode = string.Empty;
+    private string _sku = string.Empty;
+    private string _categoryIdText = string.Empty;
+    private string _baseUnit = "PCS";
+    private string _purchaseUnit = string.Empty;
+    private int _conversionMultiplier = 1;
+    private string _costRsText = string.Empty;
+    private string _retailRsText = string.Empty;
+    private string _marginText = "20";
+    private string _parentIdText = string.Empty;
+    private string _parentSearch = string.Empty;
+    private string _packSize = string.Empty;
+    private bool _showOnPosQuick;
+    private int _posQuickSort;
+    private string? _error;
+    private string? _success;
+    private bool _saving;
+    private bool _focusBarcode;
+    private ElementReference _barcodeInput;
+    private ElementReference _nameInput;
+    private CancellationTokenSource? _parentSearchCts;
+
+    private static readonly string[] UnitChoices = ["PCS", "kg", "dozens"];
+    private static readonly string[] PurchaseUnits = ["PCS", "kg", "g", "dozens", "Bag", "Piece"];
+
+    private string SelectedParentUnit
+    {
+        get
+        {
+            if (!Guid.TryParse(_parentIdText, out Guid id))
+            {
+                return "kg";
+            }
+
+            return _bulkParents.FirstOrDefault(p => p.Id == id)?.BaseUnit ?? "kg";
+        }
+    }
+
+    private string PurchaseConversionHelper
+    {
+        get
+        {
+            string stock = string.IsNullOrWhiteSpace(_baseUnit) ? "PCS" : _baseUnit.Trim();
+            string purchase = string.IsNullOrWhiteSpace(_purchaseUnit) ? stock : _purchaseUnit.Trim();
+            int mult = Math.Max(1, _conversionMultiplier);
+            return $"1 {purchase} = {mult} {stock}";
+        }
+    }
+
+    private IReadOnlyList<string> PackChips
+    {
+        get
+        {
+            string u = SelectedParentUnit.Trim().ToLowerInvariant();
+            if (u is "pcs" or "pc" or "piece" or "pieces")
+            {
+                return ["1", "2", "6", "12", "1dozen"];
+            }
+
+            if (u is "doz" or "dozen" or "dozens")
+            {
+                return ["1", "2", "3", "6", "12"];
+            }
+
+            return ["50g", "100g", "250g", "500g", "1kg"];
+        }
+    }
+
+    private string PackPlaceholder =>
+        SelectedParentUnit.Trim().ToLowerInvariant() switch
+        {
+            "pcs" or "pc" or "piece" or "pieces" => "e.g. 12 or 1dozen",
+            "doz" or "dozen" or "dozens" => "e.g. 1 or 2",
+            _ => "50g or 1kg"
+        };
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!SessionService.IsActive)
+        {
+            Navigation.NavigateTo("/start-shift");
+            return;
+        }
+
+        await LoadCategoriesAsync();
+        if (IsEdit)
+        {
+            await LoadExistingAsync(ProductId!.Value);
+        }
+        else
+        {
+            _focusBarcode = true;
+            if (_kind == CatalogKind.Child)
+            {
+                await LoadBulkParentsAsync();
+            }
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_focusBarcode)
+        {
+            return;
+        }
+
+        _focusBarcode = false;
+        try
+        {
+            await _barcodeInput.FocusAsync();
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private async Task LoadCategoriesAsync()
+    {
+        Result<IReadOnlyList<CategoryDto>> cats = await ProductApi.ListCategoriesAsync();
+        if (cats.Success && cats.Data is not null)
+        {
+            _categories = cats.Data;
+        }
+    }
+
+    private async Task LoadBulkParentsAsync(Guid? includeId = null)
+    {
+        Result<IReadOnlyList<ProductDto>> result = await ProductApi.ListBulkParentsAsync(
+            _parentSearch,
+            take: 50,
+            includeId: includeId);
+        if (result.Success && result.Data is not null)
+        {
+            _bulkParents = result.Data;
+        }
+    }
+
+    private async Task OnParentSearchInput(ChangeEventArgs e)
+    {
+        _parentSearch = e.Value?.ToString() ?? string.Empty;
+        _parentSearchCts?.Cancel();
+        _parentSearchCts?.Dispose();
+        _parentSearchCts = new CancellationTokenSource();
+        CancellationToken token = _parentSearchCts.Token;
+        try
+        {
+            await Task.Delay(250, token);
+            await LoadBulkParentsAsync(Guid.TryParse(_parentIdText, out Guid id) ? id : null);
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    private async Task LoadExistingAsync(Guid id)
+    {
+        Result<ProductDto> result = await ProductApi.GetAsync(id);
+        if (!result.Success || result.Data is null)
+        {
+            _error = result.ErrorMessage ?? "Product not found.";
+            return;
+        }
+
+        await ApplyProductAsync(result.Data);
+    }
+
+    private async Task ApplyProductAsync(ProductDto p)
+    {
+        _kind = p.ParentProductId is not null
+            ? CatalogKind.Child
+            : p.IsBulk ? CatalogKind.Parent : CatalogKind.Independent;
+        _name = p.Name;
+        _barcode = p.Barcode;
+        _shortCode = p.ShortCode;
+        _sku = p.Sku;
+        _categoryIdText = p.CategoryId?.ToString("D") ?? string.Empty;
+        _baseUnit = string.IsNullOrWhiteSpace(p.BaseUnit) ? "PCS" : p.BaseUnit;
+        _purchaseUnit = p.PurchaseUnit ?? string.Empty;
+        _conversionMultiplier = p.ConversionMultiplier <= 0 ? 1 : p.ConversionMultiplier;
+        _costRsText = p.ParentProductId is null ? (p.CostPricePaisa / 100m).ToString("0.##", CultureInfo.InvariantCulture) : string.Empty;
+        _retailRsText = p.IsBulk ? string.Empty : (p.RetailPricePaisa / 100m).ToString("0.##", CultureInfo.InvariantCulture);
+        _marginText = p.DefaultMarginPercent.ToString("0.##", CultureInfo.InvariantCulture);
+        _parentIdText = p.ParentProductId?.ToString("D") ?? string.Empty;
+        _showOnPosQuick = p.ShowOnPosQuick;
+        _posQuickSort = p.PosQuickSort;
+        if (_kind == CatalogKind.Child)
+        {
+            await LoadBulkParentsAsync(p.ParentProductId);
+            _packSize = p.DeductionMultiplier is decimal d
+                ? TerminalPackSizeParser.Format(d, SelectedParentUnit)
+                : string.Empty;
+        }
+    }
+
+    private void Cancel() => Navigation.NavigateTo("/products");
+
+    private async Task SetKind(CatalogKind kind)
+    {
+        _kind = kind;
+        if (kind != CatalogKind.Child)
+        {
+            _parentIdText = string.Empty;
+            _packSize = string.Empty;
+            _focusBarcode = true;
+            return;
+        }
+
+        await LoadBulkParentsAsync();
+        _focusBarcode = true;
+    }
+
+    private void GenerateBarcode() =>
+        _barcode = $"2{DateTime.UtcNow:yyMMddHHmmss}";
+
+    private void GenerateSku()
+    {
+        string source = string.IsNullOrWhiteSpace(_name) ? _barcode : _name;
+        string slug = Regex.Replace(source.Trim().ToUpperInvariant(), @"[^A-Z0-9]+", "-").Trim('-');
+        if (slug.Length > 40)
+        {
+            slug = slug[..40].Trim('-');
+        }
+
+        _sku = string.IsNullOrWhiteSpace(slug) ? $"SKU-{Guid.NewGuid():N}"[..16] : slug;
+    }
+
+    private void GenerateShortCode()
+    {
+        string digits = new string((_barcode ?? string.Empty).Where(char.IsDigit).ToArray());
+        _shortCode = digits.Length >= 4
+            ? digits[^4..]
+            : Random.Shared.Next(1000, 9999).ToString();
+    }
+
+    private async Task OnBarcodeKeyDown(KeyboardEventArgs e)
+    {
+        if (e.CtrlKey && e.Key.Equals("g", StringComparison.OrdinalIgnoreCase))
+        {
+            GenerateBarcode();
+            return;
+        }
+
+        if (e.Key is not ("Enter" or "NumpadEnter"))
+        {
+            return;
+        }
+
+        try
+        {
+            await _nameInput.FocusAsync();
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private bool TryPack(out decimal multiplier, out string? error) =>
+        TerminalPackSizeParser.TryParse(_packSize, SelectedParentUnit, out multiplier, out error);
+
+    private async Task SaveAsync()
+    {
+        _error = null;
+        _success = null;
+        if (string.IsNullOrWhiteSpace(_name))
+        {
+            _error = "Name is required.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_sku))
+        {
+            GenerateSku();
+        }
+
+        Guid? categoryId = Guid.TryParse(_categoryIdText, out Guid cid) ? cid : null;
+        Guid? parentId = null;
+        decimal? deduction = null;
+        bool isBulk = _kind == CatalogKind.Parent;
+
+        if (_kind == CatalogKind.Child)
+        {
+            if (!Guid.TryParse(_parentIdText, out Guid pid))
+            {
+                _error = "Select a bulk parent.";
+                return;
+            }
+
+            parentId = pid;
+            if (!TryPack(out decimal packMult, out string? packErr))
+            {
+                _error = packErr ?? "Invalid pack size.";
+                return;
+            }
+
+            deduction = packMult;
+        }
+
+        long? costPaisa = null;
+        if (_kind != CatalogKind.Child && TryParseRs(_costRsText, out long cost))
+        {
+            costPaisa = cost;
+        }
+
+        long retailPaisa = 0;
+        if (_kind != CatalogKind.Parent)
+        {
+            if (!TryParseRs(_retailRsText, out retailPaisa) || retailPaisa <= 0)
+            {
+                _error = "Enter a retail price.";
+                return;
+            }
+        }
+
+        decimal margin = 20m;
+        _ = decimal.TryParse(_marginText, NumberStyles.Number, CultureInfo.InvariantCulture, out margin);
+
+        var request = new UpsertProductRequest
+        {
+            Name = _name.Trim(),
+            Sku = _sku.Trim(),
+            Barcode = _barcode.Trim(),
+            ShortCode = _shortCode.Trim(),
+            CategoryId = categoryId,
+            BaseUnit = parentId is null
+                ? (string.IsNullOrWhiteSpace(_baseUnit) ? "PCS" : _baseUnit.Trim())
+                : SelectedParentUnit,
+            PurchaseUnit = parentId is null ? (_purchaseUnit?.Trim() ?? string.Empty) : string.Empty,
+            ConversionMultiplier = parentId is null ? Math.Max(1, _conversionMultiplier) : 1,
+            ShowOnPosQuick = _showOnPosQuick,
+            PosQuickSort = _posQuickSort,
+            IsBulk = isBulk,
+            DefaultMarginPercent = isBulk ? margin : 20m,
+            ParentProductId = parentId,
+            DeductionMultiplier = deduction,
+            OpeningRetailPricePaisa = !IsEdit ? retailPaisa : null,
+            OpeningCostPricePaisa = !IsEdit && parentId is null ? costPaisa : null,
+            CostPricePaisa = parentId is null ? costPaisa : null,
+            RetailPricePaisa = retailPaisa
+        };
+
+        _saving = true;
+        try
+        {
+            Result<ProductDto> result = IsEdit
+                ? await ProductApi.UpdateAsync(ProductId!.Value, request)
+                : await ProductApi.CreateAsync(request);
+
+            if (!result.Success)
+            {
+                _error = result.ErrorMessage;
+                return;
+            }
+
+            Navigation.NavigateTo("/products");
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static bool TryParseRs(string? text, out long paisa)
+    {
+        paisa = 0;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        if (!decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal rupees)
+            || rupees < 0)
+        {
+            return false;
+        }
+
+        paisa = (long)Math.Round(rupees * 100m, MidpointRounding.AwayFromZero);
+        return true;
+    }
+
+    public void Dispose()
+    {
+        _parentSearchCts?.Cancel();
+        _parentSearchCts?.Dispose();
+    }
+}

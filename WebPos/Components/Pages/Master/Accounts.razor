@@ -1,0 +1,144 @@
+@page "/master/accounts"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using WebPos.Core.Abstractions
+@using WebPos.Core.Constants
+@inject ICashAccountService CashAccounts
+@inject NavigationManager Navigation
+
+<PageTitle>Accounts · Cone Mart</PageTitle>
+
+<div class="mm-page">
+    <div class="mm-page-header">
+        <div>
+            <h1>Accounts</h1>
+            <p>Every balance is traceable — click an account to view its ledger</p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+
+    @if (_summary is not null)
+    {
+        @foreach (var group in GroupedAccounts)
+        {
+            <div class="cm-section-head"><h2>@group.Key</h2></div>
+            <div class="mm-table-wrap">
+                <table class="mm-table">
+                    <thead>
+                        <tr>
+                            <th>Account</th>
+                            <th>Type</th>
+                            <th>Balance (GL)</th>
+                            <th>Available</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (CashAccountCardDto card in group)
+                        {
+                            <tr>
+                                <td><strong>@card.Account.Name</strong></td>
+                                <td>@CashAccountTypes.ToStored(card.Account.Type)</td>
+                                <td>Rs @FormatRs(card.DerivedGlBalancePaisa)</td>
+                                <td>Rs @FormatRs(card.SpendablePaisa)</td>
+                                <td>
+                                    <button type="button" class="mm-btn" @onclick="() => OpenLedger(card)">Ledger →</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        <div class="cm-section-head" style="margin-top:1.5rem;"><h2>Equity &amp; liabilities (GL)</h2></div>
+        <div class="mm-table-wrap">
+            <table class="mm-table">
+                <tbody>
+                    <tr>
+                        <td>Owner Capital</td>
+                        <td>Equity</td>
+                        <td>Rs @FormatRs(_ownerCapital)</td>
+                        <td>—</td>
+                        <td><button type="button" class="mm-btn" @onclick='() => OpenCode(LedgerAccounts.OwnerCapital)'>Ledger →</button></td>
+                    </tr>
+                    <tr>
+                        <td>Loan Payable</td>
+                        <td>Liability</td>
+                        <td>Rs @FormatRs(_loanPayable)</td>
+                        <td>—</td>
+                        <td><button type="button" class="mm-btn" @onclick='() => OpenCode(LedgerAccounts.LoanPayable)'>Ledger →</button></td>
+                    </tr>
+                    <tr>
+                        <td>Unregistered Cash</td>
+                        <td>Liability</td>
+                        <td>Rs @FormatRs(_unregisteredCash)</td>
+                        <td>—</td>
+                        <td><button type="button" class="mm-btn" @onclick='() => OpenCode(LedgerAccounts.UnregisteredCash)'>Ledger →</button></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@code {
+    private CashBalancesSummaryDto? _summary;
+    private long _ownerCapital;
+    private long _loanPayable;
+    private long _unregisteredCash;
+    private string? _error;
+
+    private IEnumerable<IGrouping<string, CashAccountCardDto>> GroupedAccounts =>
+        (_summary?.Accounts ?? [])
+            .Where(a => a.Account.IsActive)
+            .GroupBy(a => GroupName(a.Account.Type))
+            .OrderBy(g => GroupOrder(g.Key));
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _summary = await CashAccounts.GetBalancesSummaryAsync();
+            _ownerCapital = await CashAccounts.GetAccountBalancePaisaByCodeAsync(LedgerAccounts.OwnerCapital);
+            _loanPayable = await CashAccounts.GetAccountBalancePaisaByCodeAsync(LedgerAccounts.LoanPayable);
+            _unregisteredCash = await CashAccounts.GetAccountBalancePaisaByCodeAsync(LedgerAccounts.UnregisteredCash);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private void OpenLedger(CashAccountCardDto card) =>
+        Navigation.NavigateTo($"/master/account-ledger?code={Uri.EscapeDataString(card.Account.AccountCode)}&name={Uri.EscapeDataString(card.Account.Name)}");
+
+    private void OpenCode(string code) =>
+        Navigation.NavigateTo($"/master/account-ledger?code={Uri.EscapeDataString(code)}&name={Uri.EscapeDataString(code)}");
+
+    private static string GroupName(CashAccountType type) => type switch
+    {
+        CashAccountType.Till or CashAccountType.Owner or CashAccountType.Petty => "Cash",
+        CashAccountType.Bank => "Bank",
+        CashAccountType.Mobile => "Mobile / Wallets",
+        _ => "Other"
+    };
+
+    private static int GroupOrder(string name) => name switch
+    {
+        "Cash" => 0,
+        "Bank" => 1,
+        "Mobile / Wallets" => 2,
+        _ => 3
+    };
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+}

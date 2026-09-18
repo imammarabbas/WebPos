@@ -1,4 +1,4 @@
-@page "/sales"
+﻿@page "/sales"
 @using System.Globalization
 @using Common.Models
 @using Microsoft.Extensions.Logging
@@ -15,55 +15,19 @@
 @inject ShiftStatusApiClient ShiftStatus
 @inject LastSaleReceiptStore LastSaleReceiptStore
 @inject CartHoldService CartHoldService
+@inject LoginApiClient Login
 @inject NavigationManager Navigation
+@inject IJSRuntime Js
 @inject ILogger<SalesTerminal> Logger
 
 <PageTitle>Cone Mart POS</PageTitle>
 
-<div class="pos-shell" @onkeydown="OnKeyDown">
-    <header class="pos-header">
-        <div class="pos-title-block">
-            <span class="pos-version">TERMINAL POS v2.0</span>
-            <h1 class="pos-store">@TerminalBranding.PosDisplayName</h1>
-        </div>
-
-        <div class="scan-bar">
-            <input id="scanInput"
-                   class="scan-input"
-                   type="search"
-                   placeholder="Scan barcode or type short code — try 1001"
-                   autocomplete="off"
-                   @ref="_scanInput"
-                   @bind="_scanText"
-                   @bind:event="oninput"
-                   disabled="@_isBusy" />
-            <button type="button" class="add-btn" disabled="@_isBusy" @onclick="AddFromScanAsync">
-                ADD
-            </button>
-            <button type="button"
-                    class="secondary-btn receive-goods-btn"
-                    disabled="@_isBusy"
-                    title="F9"
-                    @onclick="OpenReceiveGoods">
-                F9 · Receive
-            </button>
-        </div>
-
-        <div class="pos-meta">
-            <div class="header-badges">
-                @if (SessionService.IsActive)
-                {
-                    <span class="header-badge shift-open">Shift OPEN</span>
-                }
-                <span class="header-badge cash-drawer">
-                    Cash Rs @FormatRs(ShiftStatus.ExpectedCashPaisa)
-                </span>
-            </div>
-            <span class="lane-badge">LANE 01</span>
-            <span class="clock">@_now.ToString("HH:mm:ss")</span>
-            <span class="clock-date">@_now.ToString("dd MMM")</span>
-        </div>
-    </header>
+<div class="pos-shell sf-shell smart-pos" @onkeydown="OnKeyDown" tabindex="0">
+    <PosTopMenu OnPurchaseOrders="OpenPurchaseOrdersAsync"
+                OnCreatePurchaseOrder="OpenCreatePurchaseOrder"
+                OnLockRequested="LockTerminal"
+                OnHold="HoldCart"
+                OnRetrieve="ResumeHeldCart" />
 
     @if (!string.IsNullOrWhiteSpace(_errorMessage))
     {
@@ -75,394 +39,259 @@
         <div class="success-toast" role="status" aria-live="polite">@_successMessage</div>
     }
 
-    <div class="pos-layout">
-        <section class="products-panel">
-            <div class="panel-head">
-                <h2>Products</h2>
-                <span class="item-count">@VisibleProducts.Count() items</span>
-            </div>
-
-            <input class="grid-search"
-                   type="search"
-                   placeholder="Search products…"
-                   @bind="_gridSearch"
-                   @bind:event="oninput"
-                   disabled="@_isBusy" />
-
-            <div class="category-pills" role="tablist" aria-label="Categories">
-                @foreach (string category in CategoryFilters)
-                {
+    <div class="sf-body sp-body">
+        <section class="sf-main sp-main">
+            <header class="sp-search-bar">
+                <div class="sp-search-wrap">
+                    <input id="scanInput"
+                           class="sp-search-input"
+                           type="text"
+                           placeholder="Enter item code, description or barcode..."
+                           autocomplete="off"
+                           inputmode="search"
+                           @ref="_scanInput"
+                           value="@_scanText"
+                           @oninput="OnScanInput"
+                           @onkeydown="OnScanKeyDown"
+                           @onfocus="OnScanFocus"
+                           disabled="@(_isBusy || ModalOpen)" />
                     <button type="button"
-                            class="pill @(string.Equals(_categoryFilter, category, StringComparison.Ordinal) ? "active" : string.Empty)"
-                            @onclick="() => SelectCategory(category)">
-                        @category
+                            class="sp-search-mode @(_broadSearch ? "active" : null)"
+                            title="@(_broadSearch ? "Fast mode: barcode & short code only" : "Include name / SKU search")"
+                            disabled="@(_isBusy || ModalOpen)"
+                            @onclick="ToggleBroadSearch">
+                        @(_broadSearch ? "All" : "Code")
                     </button>
-                }
-            </div>
-
-            @if (_isLoadingProducts)
-            {
-                <p class="loading-text">Loading products…</p>
-            }
-            else if (!VisibleProducts.Any())
-            {
-                <p class="loading-text">No products match this filter.</p>
-            }
-            else
-            {
-                <div class="product-grid">
-                    @foreach (SalesProductDto product in VisibleProducts)
+                    <span class="sp-search-icon" aria-hidden="true"></span>
+                    @if (_showScanDropdown && ScanHits.Count > 0)
                     {
-                        <div class="product-card @(product.IsLoose ? "loose" : string.Empty)">
-                            <span class="stock-badge @(product.AvailableStock <= 5m ? "low" : string.Empty)">
-                                @(product.AvailableStock <= 5m
-                                    ? $"Low · {product.AvailableStock:0.##}"
-                                    : $"{product.AvailableStock:0.##} in stock")
-                            </span>
-                            <span class="code-badge">@product.ShortCode</span>
-                            <span class="product-name">@product.Name</span>
-                            <span class="product-category">@DisplayCategory(product)</span>
-                            <div class="product-footer">
-                                <span class="product-price">Rs @FormatRs(product.UnitPricePaisa)</span>
-                                <button type="button"
-                                        class="add-circle"
-                                        disabled="@_isBusy"
-                                        aria-label="@($"Add {product.Name}")"
-                                        @onclick="() => AddProductToCart(product)">
-                                    +
-                                </button>
-                            </div>
-                        </div>
+                        <ul class="sf-scan-dropdown" role="listbox">
+                            @foreach ((object hit, int i) in ScanHits.Select((h, i) => (h, i)))
+                            {
+                                <li class="@(i == _scanHighlight ? "active" : null)"
+                                    role="option"
+                                    @onmousedown:preventDefault
+                                    @onclick="() => ChooseScanHitAsync(hit)">
+                                    @if (hit is SalesProductDto p)
+                                    {
+                                        <strong>@p.Name</strong>
+                                        <span>@(string.IsNullOrWhiteSpace(p.ShortCode) ? p.Barcode : p.ShortCode) · Rs @FormatRs(p.UnitPricePaisa)</span>
+                                    }
+                                    else if (hit is SaleMasterDto m)
+                                    {
+                                        <strong>@m.Name</strong>
+                                        <span>Master · @(m.ShortCode ?? "—") · @((m.Children?.Count) ?? 0) pack(s)</span>
+                                    }
+                                </li>
+                            }
+                        </ul>
                     }
                 </div>
-            }
-        </section>
-
-        <aside class="cart-panel">
-            <div class="cart-header">
-                <h2>Cart <span class="cart-count">@CartService.Lines.Count</span></h2>
-                <button type="button"
-                        class="link-btn"
-                        disabled="@(CartService.IsEmpty || _isBusy)"
-                        @onclick="ClearCart">
-                    Clear
-                </button>
-            </div>
-
-            <div class="customer-toggle">
-                <button type="button"
-                        class="customer-pill @(_useWalkInCustomer ? "active" : string.Empty)"
-                        @onclick="SelectWalkInCustomer">
-                    Walk-in
-                </button>
-                <button type="button"
-                        class="customer-pill @(!_useWalkInCustomer ? "active" : string.Empty)"
-                        @onclick="SelectRegisteredCustomerMode">
-                    Registered
-                </button>
-            </div>
-
-            @if (!_useWalkInCustomer)
-            {
-                <div class="customer-lookup">
-                    @if (_selectedCustomer is not null)
-                    {
-                        <div class="customer-chip">
-                            <div>
-                                <strong>@_selectedCustomer.Name</strong>
-                                <span>@_selectedCustomer.PhoneNumber</span>
-                                <span class="customer-balance">Balance Rs @FormatRs(_selectedCustomer.CurrentBalancePaisa)</span>
-                            </div>
-                            <button type="button" class="link-btn" @onclick="ClearSelectedCustomer">Clear</button>
-                        </div>
-                    }
-                    else
-                    {
-                        <input class="customer-search"
-                               type="search"
-                               placeholder="Search by name or phone…"
-                               autocomplete="off"
-                               @ref="_customerSearchInput"
-                               @bind="_customerSearch"
-                               @bind:event="oninput"
-                               @onkeydown="OnCustomerSearchKeyDown"
-                               disabled="@_isBusy" />
-
-                        @if (_isLoadingCustomers)
-                        {
-                            <p class="loading-text small">Loading customers…</p>
-                        }
-                        else if (!string.IsNullOrWhiteSpace(_customerLoadError))
-                        {
-                            <p class="field-error">@_customerLoadError</p>
-                        }
-                        else
-                        {
-                            <ul class="typeahead customer-dropdown">
-                                @foreach (PartyDto customer in FilteredCustomers.Take(12))
-                                {
-                                    <li>
-                                        <button type="button" @onclick="() => BindCustomer(customer)">
-                                            <strong>@customer.Name</strong>
-                                            <span>@customer.PhoneNumber · Bal Rs @FormatRs(customer.CurrentBalancePaisa)</span>
-                                        </button>
-                                    </li>
-                                }
-                                @if (!FilteredCustomers.Any())
-                                {
-                                    <li class="typeahead-empty">No match</li>
-                                }
-                            </ul>
-                        }
-                    }
+                <div class="sp-qty-chip" title="Line count">
+                    <span>QUANTITY</span>
+                    <strong>@CartService.Lines.Count</strong>
                 </div>
-            }
+                <div class="sp-till-chip" title="Till drawer expected cash">
+                    <span>DRAWER</span>
+                    <strong>Rs @FormatRs(ShiftStatus.ExpectedCashPaisa)</strong>
+                </div>
+                <div class="sp-invoice">
+                    <span class="sp-invoice-icon" aria-hidden="true"></span>
+                    <strong>Invoice #@_draftInvoiceNo</strong>
+                </div>
+            </header>
 
-            @if (CartService.IsEmpty)
-            {
-                <div class="empty-cart">Scan or tap a product to start.</div>
-            }
-            else
-            {
-                <ul class="cart-lines">
-                    @foreach (CartLine line in CartService.Lines)
-                    {
-                        <li class="cart-line">
-                            <div class="line-info">
-                                <strong>@line.Product.Name</strong>
-                                <span>Rs @FormatRs(line.Product.UnitPricePaisa) × @FormatQty(line)</span>
-                            </div>
-                            <div class="line-actions">
-                                @if (line.Product.IsLoose)
+            <div class="sp-grid-wrap">
+                <table class="sp-grid">
+                    <thead>
+                        <tr>
+                            <th class="col-sr">Sr. #</th>
+                            <th class="col-code">Item Code</th>
+                            <th class="col-desc">Description</th>
+                            <th class="col-pack">Packing</th>
+                            <th class="col-qty">Qty</th>
+                            <th class="col-price">Price</th>
+                            <th class="col-total">Total Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @{
+                            IReadOnlyList<CartLine> cartLines = CartService.Lines;
+                            for (int row = 0; row < 12; row++)
+                            {
+                                if (row < cartLines.Count)
                                 {
-                                    <input type="number"
-                                           class="qty-input loose"
-                                           inputmode="decimal"
-                                           step="0.01"
-                                           min="0.01"
-                                           max="@line.Product.AvailableStock.ToString(CultureInfo.InvariantCulture)"
-                                           aria-label="@($"Quantity for {line.Product.Name}")"
-                                           value="@GetLooseQtyText(line)"
-                                           @onchange="e => OnLooseQtyChanged(line, e)" />
+                                    CartLine line = cartLines[row];
+                                    bool selected = row == _selectedLineIndex;
+                                    <tr class="@(selected ? "selected" : null) @(row % 2 == 1 ? "zebra" : null)" @onclick="() => _selectedLineIndex = row">
+                                        <td class="col-sr">@(row + 1)</td>
+                                        <td class="col-code">@ItemCode(line.Product)</td>
+                                        <td class="col-desc">@(line.Product.Name ?? string.Empty)</td>
+                                        <td class="col-pack">@(string.IsNullOrWhiteSpace(line.Product.PackingSize) ? "—" : line.Product.PackingSize)</td>
+                                        <td class="col-qty">
+                                            <input id="@($"pos-qty-{row}")"
+                                                   class="sf-cell-input"
+                                                   type="text"
+                                                   inputmode="decimal"
+                                                   value="@GetQtyText(line)"
+                                                   @oninput="e => OnQtyChanged(line, e)"
+                                                   @onfocus="() => _selectedLineIndex = row"
+                                                   @onkeydown="e => OnQtyKeyDown(e, row)"
+                                                   disabled="@_isBusy" />
+                                        </td>
+                                        <td class="col-price">
+                                            <input class="sf-cell-input"
+                                                   type="text"
+                                                   inputmode="decimal"
+                                                   value="@GetPriceText(line)"
+                                                   @oninput="e => OnPriceChanged(line, e)"
+                                                   disabled="@_isBusy" />
+                                        </td>
+                                        <td class="col-total">@FormatRs(line.LineTotalPaisa)</td>
+                                    </tr>
                                 }
                                 else
                                 {
-                                    <button type="button" class="qty-btn" @onclick="() => ChangeQty(line, -1m)">−</button>
-                                    <span class="line-qty">@line.Quantity.ToString("0")</span>
-                                    <button type="button" class="qty-btn" @onclick="() => ChangeQty(line, 1m)">+</button>
+                                    <tr class="sp-empty-row @(row % 2 == 1 ? "zebra" : null)">
+                                        <td class="col-sr">@(row + 1)</td>
+                                        <td></td>
+                                        <td></td>
+                                        <td></td>
+                                        <td></td>
+                                        <td></td>
+                                        <td></td>
+                                    </tr>
                                 }
-                                <span class="line-total">Rs @FormatRs(line.LineTotalPaisa)</span>
-                                <button type="button" class="remove-btn" @onclick="() => RemoveLine(line)">×</button>
-                            </div>
-                        </li>
-                    }
-                </ul>
-            }
-
-            <div class="payment-section">
-                <div class="payment-methods">
-                    <button type="button"
-                            class="payment-btn @(_paymentMode == PaymentUiMode.Cash ? "active" : string.Empty)"
-                            @onclick="SelectCashMode">
-                        Cash
-                    </button>
-                    <button type="button"
-                            class="payment-btn @(_paymentMode == PaymentUiMode.Online ? "active" : string.Empty)"
-                            @onclick="SelectOnlineMode">
-                        Online
-                    </button>
-                    @if (_selectedCustomer is not null)
-                    {
-                        <button type="button"
-                                class="payment-btn @(_paymentMode == PaymentUiMode.Credit ? "active" : string.Empty)"
-                                @onclick="SelectCreditMode">
-                            Credit
-                        </button>
-                    }
-                </div>
-
-                @if (_paymentMode == PaymentUiMode.Cash)
-                {
-                    <label class="field-label" for="cashGiven">Cash given (Rs)</label>
-                    <input id="cashGiven"
-                           class="cash-given-input"
-                           type="number"
-                           inputmode="decimal"
-                           min="0"
-                           step="0.01"
-                           @bind="_cashGivenText"
-                           @bind:event="oninput"
-                           disabled="@_isBusy" />
-                    <div class="change-box">
-                        Change: <strong>Rs @FormatRs(ChangePaisa)</strong>
-                    </div>
-                }
-                else if (_paymentMode == PaymentUiMode.Online)
-                {
-                    <div class="online-channels">
-                        @foreach (CheckoutPaymentOption channel in CheckoutPaymentMethods.OnlineChannels)
-                        {
-                            <button type="button"
-                                    class="channel-pill @(string.Equals(_onlineChannel, channel.Method, StringComparison.Ordinal) ? "active" : string.Empty)"
-                                    @onclick="() => _onlineChannel = channel.Method">
-                                @channel.Label
-                            </button>
+                            }
                         }
-                    </div>
-                    <label class="field-label" for="txnRef">Txn ref</label>
-                    <input id="txnRef"
-                           class="txn-ref-input"
-                           type="text"
-                           placeholder="Transaction / reference ID"
-                           @bind="_onlineTxnRef"
-                           @bind:event="oninput"
-                           disabled="@_isBusy" />
-                }
-                else if (_paymentMode == PaymentUiMode.Credit && _selectedCustomer is not null)
-                {
-                    <button type="button"
-                            class="pay-btn"
-                            disabled="@(CartService.IsEmpty || _isBusy || !CanPay)"
-                            @onclick="PayNowAsync">
-                        @if (_isBusy)
-                        {
-                            <span>Processing…</span>
-                        }
-                        else
-                        {
-                            <span>Charge account · Bal Rs @FormatRs(_selectedCustomer.CurrentBalancePaisa)</span>
-                        }
-                    </button>
-                }
+                    </tbody>
+                </table>
             </div>
 
-            <div class="totals">
-                <div class="total-row">
-                    <span>Subtotal</span>
-                    <span>Rs @FormatRs(CartService.SubtotalPaisa)</span>
+            <div class="sp-totals">
+                <div class="sp-tot">
+                    <span>Sub Total</span>
+                    <strong>@FormatRs(CartService.SubtotalPaisa)</strong>
                 </div>
-                @if (DiscountAmountPaisa > 0)
-                {
-                    <div class="total-row">
-                        <span>Discount</span>
-                        <span>− Rs @FormatRs(DiscountAmountPaisa)</span>
+                <div class="sp-tot">
+                    <span>Previous Due</span>
+                    <strong>@FormatRs(PreviousDuePaisa)</strong>
+                </div>
+                <div class="sp-tot sp-tot-disc">
+                    <span>Discount</span>
+                    <div class="sp-disc-row">
+                        <input type="text" inputmode="decimal" title="Discount %" placeholder="0.00 %" value="@_discountPctText" @oninput="OnDiscountPctInput" disabled="@_isBusy" />
+                        <strong>@FormatRs(DiscountPaisa)</strong>
                     </div>
-                }
-                <div class="total-row grand">
-                    <span>Total</span>
-                    <span>Rs @FormatRs(PayablePaisa)</span>
+                </div>
+                <div class="sp-tot sp-tot-pay">
+                    <span>Payment</span>
+                    <input type="text" inputmode="decimal" @bind="_cashGivenText" @bind:event="oninput" disabled="@(_isBusy || _paymentMode != PaymentUiMode.Cash)" />
+                    <div class="sp-pay-modes">
+                        <button type="button" class="sp-pay-link @(_paymentMode == PaymentUiMode.Cash ? "active" : null)" @onclick="SelectCashMode">Cash</button>
+                        <button type="button" class="sp-pay-link @(_paymentMode == PaymentUiMode.Online ? "active" : null)" @onclick="SelectOnlineMode">Online</button>
+                        <button type="button" class="sp-pay-link @(_paymentMode == PaymentUiMode.Credit ? "active" : null)" disabled="@(_selectedCustomer is null)" @onclick="SelectCreditMode">Credit</button>
+                    </div>
+                    @if (_paymentMode == PaymentUiMode.Online)
+                    {
+                        <div class="sf-online-row">
+                            @foreach (CheckoutPaymentOption channel in CheckoutPaymentMethods.OnlineChannels)
+                            {
+                                <button type="button"
+                                        class="channel-pill @(string.Equals(_onlineChannel, channel.Method, StringComparison.Ordinal) ? "active" : string.Empty)"
+                                        @onclick="() => _onlineChannel = channel.Method">
+                                    @channel.Label
+                                </button>
+                            }
+                            <input class="txn-ref-input" placeholder="Txn ref" @bind="_onlineTxnRef" @bind:event="oninput" disabled="@_isBusy" />
+                        </div>
+                    }
+                </div>
+                <div class="sp-tot sp-tot-balance">
+                    <span>Balance</span>
+                    <strong>@FormatRs(SaleBalancePaisa)</strong>
                 </div>
             </div>
 
             @if (!string.IsNullOrWhiteSpace(_checkoutError))
             {
-                <p class="field-error" role="alert">@_checkoutError</p>
+                <p class="field-error sf-checkout-error" role="alert">@_checkoutError</p>
             }
 
-            @if (_paymentMode != PaymentUiMode.Credit)
-            {
+            <div class="sp-fkey-bar" role="toolbar" aria-label="POS shortcuts">
+                <button type="button" class="sp-fkey" disabled="@ModalOpen" @onclick="OpenSearchCustomerAsync">
+                    <span class="sp-fkey-badge">F3</span>
+                    <span class="sp-ico sp-ico-cust-search" aria-hidden="true"></span>
+                    <span class="sp-fkey-label">Search Customer</span>
+                </button>
+                <button type="button" class="sp-fkey" disabled="@ModalOpen" @onclick="OpenAddCustomer">
+                    <span class="sp-fkey-badge">F4</span>
+                    <span class="sp-ico sp-ico-cust-add" aria-hidden="true"></span>
+                    <span class="sp-fkey-label">Add Customer</span>
+                </button>
+                <button type="button" class="sp-fkey" disabled="@_isBusy" @onclick="NewSale">
+                    <span class="sp-fkey-badge">F5</span>
+                    <span class="sp-ico sp-ico-doc" aria-hidden="true"></span>
+                    <span class="sp-fkey-label">Form Reset</span>
+                </button>
                 <button type="button"
-                        class="pay-btn"
-                        disabled="@(CartService.IsEmpty || _isBusy || !CanPay)"
-                        @onclick="PayNowAsync">
-                    @if (_isBusy)
+                        class="sp-fkey @(_whatsAppReceipt ? "sp-fkey-on" : null)"
+                        disabled="@ModalOpen"
+                        title="Toggle WhatsApp invoice after save"
+                        @onclick="ToggleWhatsAppInvoice">
+                    <span class="sp-fkey-badge">F6</span>
+                    <span class="sp-ico sp-ico-wa" aria-hidden="true"></span>
+                    <span class="sp-fkey-label">WhatsApp Invoice</span>
+                </button>
+                <button type="button"
+                        class="sp-fkey @(_printOnPrinter ? "sp-fkey-on" : null)"
+                        disabled="@ModalOpen"
+                        title="Toggle print invoice after save"
+                        @onclick="TogglePrintInvoice">
+                    <span class="sp-fkey-badge">F7</span>
+                    <span class="sp-ico sp-ico-print" aria-hidden="true"></span>
+                    <span class="sp-fkey-label">Print Invoice</span>
+                </button>
+                <button type="button"
+                        class="sp-fkey sp-fkey-cust @(!_useWalkInCustomer ? "sp-fkey-on-red" : null)"
+                        disabled="@ModalOpen"
+                        title="Select regular customer"
+                        @onclick="SelectRegisteredCustomerMode">
+                    <span class="sp-fkey-badge">F8</span>
+                    <span class="sp-ico sp-ico-person" aria-hidden="true"></span>
+                    @if (!_useWalkInCustomer && _selectedCustomer is not null)
                     {
-                        <span>Processing…</span>
+                        <span class="sp-fkey-cust-name">@_selectedCustomer.Name</span>
+                        <span class="sp-fkey-cust-code">@DisplayCodeFor(_selectedCustomer)</span>
                     }
                     else
                     {
-                        <span>Pay Now · Rs @FormatRs(PayablePaisa)</span>
+                        <span class="sp-fkey-label">Regular Customer</span>
                     }
                 </button>
-            }
-
-            @if (LastSaleReceiptStore.Current is not null)
-            {
                 <button type="button"
-                        class="whatsapp-btn"
-                        disabled="@_isBusy"
-                        @onclick="WhatsAppOrPrintAsync">
-                    WhatsApp / Print
+                        class="sp-fkey sp-fkey-cust @(_useWalkInCustomer ? "sp-fkey-on-red" : null)"
+                        disabled="@ModalOpen"
+                        title="Use walk-in customer"
+                        @onclick="SelectWalkInCustomer">
+                    <span class="sp-fkey-badge">F9</span>
+                    <span class="sp-ico sp-ico-walk" aria-hidden="true"></span>
+                    <span class="sp-fkey-label">Walk In Customer</span>
                 </button>
-            }
-
-            <div class="utility-row">
-                <a class="utility-btn" href="returns">Return</a>
-                <button type="button"
-                        class="utility-btn"
-                        disabled="@(CartService.IsEmpty || _isBusy)"
-                        @onclick="HoldCart">
-                    Hold
-                </button>
-                @if (CartHoldService.HasHeldCart)
-                {
-                    <button type="button"
-                            class="utility-btn"
-                            disabled="@_isBusy"
-                            @onclick="ResumeHeldCart">
-                        Resume
-                    </button>
-                }
-                <button type="button"
-                        class="utility-btn @(_showDiscountInput ? "active" : string.Empty)"
-                        disabled="@_isBusy"
-                        @onclick="ToggleDiscount">
-                    Discount
+                <button type="button" class="sp-save" disabled="@(CartService.IsEmpty || _isBusy || !CanPay)" @onclick="PayNowAsync">
+                    <span class="sp-save-keys">
+                        <span>(Insert)</span>
+                        <span>Ctrl + Enter</span>
+                        <span>F12</span>
+                    </span>
+                    <span class="sp-save-main">
+                        <span class="sp-ico sp-ico-save" aria-hidden="true"></span>
+                        <span class="sp-save-label">Save Invoice</span>
+                    </span>
                 </button>
             </div>
-
-            @if (_showDiscountInput)
-            {
-                <label class="field-label" for="discountRs">Discount (Rs)</label>
-                <input id="discountRs"
-                       class="discount-input"
-                       type="number"
-                       inputmode="decimal"
-                       min="0"
-                       step="0.01"
-                       placeholder="0.00"
-                       @bind="_discountRsText"
-                       @bind:event="oninput"
-                       disabled="@_isBusy" />
-            }
-
-            <a class="close-shift-link" href="close-shift">Close shift</a>
-        </aside>
+        </section>
     </div>
-
-    <section class="recent-bills-strip" aria-label="Recent bills">
-        <div class="recent-bills-head">
-            <h2>Recent bills</h2>
-            <a class="view-all-link" href="recent-bills">View all →</a>
-        </div>
-
-        @if (_isLoadingRecentBills)
-        {
-            <p class="loading-text small">Loading recent bills…</p>
-        }
-        else if (_recentBills.Count == 0)
-        {
-            <p class="loading-text small">No bills yet this shift.</p>
-        }
-        else
-        {
-            <div class="bill-mini-grid">
-                @foreach (SalesInvoiceSummaryDto bill in _recentBills)
-                {
-                    <article class="bill-mini-card">
-                        <div class="bill-mini-top">
-                            <strong>#@ShortId(bill.InvoiceNo)</strong>
-                            <span>@bill.CreatedAt.ToLocalTime().ToString("HH:mm")</span>
-                        </div>
-                        <div class="bill-mini-total">Rs @FormatRs(bill.TotalAmountPaisa)</div>
-                        <div class="bill-mini-meta">
-                            @bill.ItemCount items · @bill.PaymentMethod
-                        </div>
-                    </article>
-                }
-            </div>
-        }
-    </section>
 </div>
 
 @if (_showPhonePrompt)
@@ -478,28 +307,103 @@
                    placeholder="03xxxxxxxxx"
                    @bind="_whatsAppPhone"
                    @bind:event="oninput" />
-
             @if (!string.IsNullOrWhiteSpace(_whatsAppError))
             {
                 <p class="field-error">@_whatsAppError</p>
             }
-
             <div class="checkout-actions">
                 <button type="button" class="secondary-btn" @onclick="ClosePhonePrompt">Cancel</button>
-                <button type="button" class="pay-btn" @onclick="ConfirmWhatsAppPhoneAsync">
-                    Send
-                </button>
+                <button type="button" class="pay-btn" @onclick="ConfirmWhatsAppPhoneAsync">Send</button>
             </div>
         </div>
     </div>
 }
 
-<ReceiveGoodsModal Visible="_showReceiveGoods"
-                   IntakeService="PurchaseIntake"
-                   Products="_receiveProducts"
-                   ReceiverId="SessionService.CashierId"
-                   OnClose="CloseReceiveGoods"
-                   OnReceived="OnGoodsReceivedAsync" />
+<SelectVariantModal Master="@_variantMaster"
+                    OnClose="CloseVariant"
+                    OnSelected="OnVariantSelected" />
+
+<CategoryPickModal CategoryName="@_categoryPickName"
+                   Products="@_products"
+                   Masters="@_masters"
+                   OnClose="CloseCategoryPick"
+                   OnProductSelected="OnCategoryProductSelected"
+                   OnMasterSelected="OnCategoryMasterSelected" />
+
+<ItemSearchModal Visible="@_showItemSearch"
+                 InitialQuery="@_itemSearchSeed"
+                 Products="@_products"
+                 Masters="@_masters"
+                 OnClose="CloseItemSearch"
+                 OnProductSelected="OnSearchProductSelected"
+                 OnMasterSelected="OnSearchMasterSelected" />
+
+<PriceCheckerModal Visible="@_showPriceChecker"
+                   Products="@_products"
+                   Masters="@_masters"
+                   OnClose="() => _showPriceChecker = false" />
+
+<CustomerSearchModal Visible="@_showCustomerSearch"
+                     Customers="@_customers"
+                     OnClose="() => _showCustomerSearch = false"
+                     OnSelected="OnCustomerPickedAsync" />
+
+<CustomerAddModal Visible="@_showCustomerAdd"
+                  OnClose="() => _showCustomerAdd = false"
+                  OnCreated="OnCustomerCreatedAsync" />
+
+<CalculatorModal Visible="@_showCalculator"
+                 OnClose="() => _showCalculator = false" />
+
+<CreatePurchaseOrderModal @ref="_createPurchaseOrderModal"
+                          Visible="_showCreatePurchaseOrder"
+                          EditingPurchaseOrderId="_editingPurchaseOrderId"
+                          IntakeService="PurchaseIntake"
+                          ReceiverId="SessionService.CashierId"
+                          OnClose="CloseCreatePurchaseOrder"
+                          OnMinimize="MinimizeCreatePurchaseOrder"
+                          OnCreated="OnPurchaseOrderCreatedAsync"
+                          OnSaved="OnPurchaseOrderSavedAsync"
+                          OnReceived="OnPurchaseOrderReceivedAsync" />
+
+<PurchaseOrdersModal Visible="_showPurchaseOrders"
+                     IntakeService="PurchaseIntake"
+                     OnClose="ClosePurchaseOrders"
+                     OnMinimize="MinimizePurchaseOrders"
+                     OnCreatePurchaseOrder="OpenCreateFromPurchaseOrders"
+                     OnEditPurchaseOrder="OpenEditPurchaseOrder"
+                     OnReceivePurchaseOrder="OpenReceivePurchaseOrder" />
+
+@if (_purchaseOrdersMinimized || _createPurchaseOrderMinimized)
+{
+    <div class="pos-mini-dock" role="status" aria-label="Minimized windows">
+        @if (_createPurchaseOrderMinimized)
+        {
+            <button type="button" class="pos-mini-chip orders" @onclick="RestoreCreatePurchaseOrder">
+                <span class="pos-mini-ico orders-ico" aria-hidden="true"></span>
+                <span class="pos-mini-text">
+                    <strong>@(_editingPurchaseOrderId is Guid ? "Edit Purchase Order" : "Create Purchase Order")</strong>
+                    <span>
+                        @(string.IsNullOrWhiteSpace(_cpoMiniInvoice) ? "Draft" : _cpoMiniInvoice)
+                        · @_cpoMiniLineCount line@(_cpoMiniLineCount == 1 ? "" : "s")
+                    </span>
+                </span>
+                <span class="pos-mini-badge">Minimized</span>
+            </button>
+        }
+        @if (_purchaseOrdersMinimized)
+        {
+            <button type="button" class="pos-mini-chip orders" @onclick="RestorePurchaseOrders">
+                <span class="pos-mini-ico orders-ico" aria-hidden="true"></span>
+                <span class="pos-mini-text">
+                    <strong>Purchase Orders</strong>
+                    <span>List parked · tap to restore</span>
+                </span>
+                <span class="pos-mini-badge">Minimized</span>
+            </button>
+        }
+    </div>
+}
 
 @code {
     private enum PaymentUiMode
@@ -509,48 +413,169 @@
         Credit
     }
 
-    private static readonly string[] CategoryFilters = ["All", "Dairy", "Grocery", "Bakery", "Loose only"];
-
     private ElementReference _scanInput;
-    private ElementReference _customerSearchInput;
+    private readonly SalesScanFocusCoordinator _scanFocus = new();
     private List<SalesProductDto> _products = [];
-    private IReadOnlyList<SalesProductDto> _receiveProducts = [];
+    private List<SaleMasterDto> _masters = [];
+    private List<SaleQuickLinkDto> _quickLinks = [];
     private IReadOnlyList<PartyDto> _customers = [];
-    private IReadOnlyList<SalesInvoiceSummaryDto> _recentBills = [];
-    private readonly Dictionary<Guid, string> _looseQtyText = [];
+    private readonly Dictionary<Guid, string> _qtyText = [];
+    private readonly Dictionary<Guid, string> _priceText = [];
 
     private string _scanText = string.Empty;
-    private string _gridSearch = string.Empty;
-    private string _categoryFilter = "All";
+    private bool _showScanDropdown;
+    private bool _broadSearch;
+    private int _scanHighlight;
     private string? _errorMessage;
     private string? _successMessage;
     private string? _checkoutError;
     private string? _customerLoadError;
     private string? _whatsAppError;
-    private bool _isLoadingProducts;
-    private bool _isLoadingCustomers;
-    private bool _isLoadingRecentBills;
     private bool _isBusy;
     private bool _useWalkInCustomer = true;
-    private bool _showDiscountInput;
     private bool _showPhonePrompt;
-    private bool _showReceiveGoods;
-    private string _customerSearch = string.Empty;
+    private bool _showPurchaseOrders;
+    private bool _showCreatePurchaseOrder;
+    private bool _purchaseOrdersMinimized;
+    private bool _createPurchaseOrderMinimized;
+    private Guid? _editingPurchaseOrderId;
+    private string _cpoMiniInvoice = string.Empty;
+    private int _cpoMiniLineCount;
+    private CreatePurchaseOrderModal? _createPurchaseOrderModal;
+    private bool _showItemSearch;
+    private string _itemSearchSeed = string.Empty;
+    private bool _showPriceChecker;
+    private bool _showCustomerSearch;
+    private bool _showCustomerAdd;
+    private bool _showCalculator;
+    private bool _whatsAppReceipt;
+    private bool _printOnPrinter;
+    private bool _isDisposed;
     private string _cashGivenText = string.Empty;
     private string _discountRsText = string.Empty;
+    private string _discountPctText = string.Empty;
+    private string _remarks = string.Empty;
+    private string _draftInvoiceNo = string.Empty;
+    private DateTime _saleDate = DateTime.Today;
     private string _onlineChannel = CheckoutPaymentMethods.EasyPaisa;
     private string _onlineTxnRef = string.Empty;
     private string _whatsAppPhone = string.Empty;
     private PartyDto? _selectedCustomer;
+    private SaleMasterDto? _variantMaster;
+    private string? _categoryPickName;
     private PaymentUiMode _paymentMode = PaymentUiMode.Cash;
     private DateTime _now = DateTime.Now;
     private Timer? _clockTimer;
+    private int _selectedLineIndex = -1;
 
-    private IEnumerable<SalesProductDto> VisibleProducts =>
-        GroupProductsForDisplay(ApplyFilters(_products, _gridSearch, _categoryFilter));
+    private bool ModalOpen =>
+        _showPhonePrompt
+        || _showPurchaseOrders
+        || _showCreatePurchaseOrder
+        || _showItemSearch
+        || _showPriceChecker
+        || _showCustomerSearch
+        || _showCustomerAdd
+        || _showCalculator
+        || _variantMaster is not null
+        || !string.IsNullOrWhiteSpace(_categoryPickName);
 
-    private IEnumerable<PartyDto> FilteredCustomers =>
-        CustomerApiClient.FilterCustomers(_customers, _customerSearch);
+    private static string DisplayCodeFor(PartyDto customer)
+    {
+        string phone = customer.PhoneNumber ?? string.Empty;
+        string digits = new string(phone.Where(char.IsDigit).ToArray());
+        if (digits.Length >= 5)
+        {
+            return digits[^5..];
+        }
+
+        return customer.Id.ToString("N")[^5..].ToUpperInvariant();
+    }
+
+    private IReadOnlyList<object> ScanHits
+    {
+        get
+        {
+            string q = (_scanText ?? string.Empty).Trim();
+            if (q.Length == 0)
+            {
+                return [];
+            }
+
+            List<object> list = [];
+            IEnumerable<SaleMasterDto> masters = _masters ?? [];
+            IEnumerable<SalesProductDto> products = _products ?? [];
+
+            foreach (SaleMasterDto m in masters
+                         .Where(m => ProductFieldMatches(m.Name, m.Barcode, m.Sku, m.ShortCode, q))
+                         .OrderBy(m => ExactProductRank(m.Name, m.Barcode, m.Sku, m.ShortCode, q))
+                         .ThenBy(m => m.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                         .Take(_broadSearch ? 8 : 6))
+            {
+                list.Add(m);
+            }
+
+            foreach (SalesProductDto p in products
+                         .Where(p => ProductFieldMatches(p.Name, p.Barcode, p.Sku, p.ShortCode, q))
+                         .OrderBy(p => ExactProductRank(p.Name, p.Barcode, p.Sku, p.ShortCode, q))
+                         .ThenBy(p => p.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                         .Take(Math.Max(0, (_broadSearch ? 16 : 10) - list.Count)))
+            {
+                list.Add(p);
+            }
+
+            return list;
+        }
+    }
+
+    private void ToggleBroadSearch()
+    {
+        _broadSearch = !_broadSearch;
+        if (_scanText.Trim().Length > 0)
+        {
+            _showScanDropdown = true;
+            _scanHighlight = 0;
+        }
+    }
+
+    private bool ProductFieldMatches(string? name, string? barcode, string? sku, string? shortCode, string q)
+    {
+        if (!_broadSearch)
+        {
+            return FieldContains(barcode, q) || FieldContains(shortCode, q);
+        }
+
+        return FieldContains(name, q)
+            || FieldContains(barcode, q)
+            || FieldContains(sku, q)
+            || FieldContains(shortCode, q);
+    }
+
+    private static int ExactProductRank(string? name, string? barcode, string? sku, string? shortCode, string q)
+    {
+        if (FieldEquals(shortCode, q) || FieldEquals(barcode, q) || FieldEquals(sku, q))
+        {
+            return 0;
+        }
+
+        if (FieldEquals(name, q))
+        {
+            return 1;
+        }
+
+        if (FieldContains(shortCode, q) || FieldContains(barcode, q) || FieldContains(sku, q))
+        {
+            return 2;
+        }
+
+        return 3;
+    }
+
+    private static bool FieldContains(string? field, string q) =>
+        !string.IsNullOrEmpty(field) && field.Contains(q, StringComparison.OrdinalIgnoreCase);
+
+    private static bool FieldEquals(string? field, string q) =>
+        !string.IsNullOrEmpty(field) && string.Equals(field, q, StringComparison.OrdinalIgnoreCase);
 
     private long DiscountAmountPaisa
     {
@@ -565,33 +590,87 @@
         }
     }
 
+    private long DiscountPaisa => DiscountAmountPaisa;
+
+    private void SyncDiscountPctFromRs()
+    {
+        long sub = CartService.SubtotalPaisa;
+        if (sub <= 0 || DiscountAmountPaisa <= 0)
+        {
+            _discountPctText = string.Empty;
+            return;
+        }
+
+        decimal pct = DiscountAmountPaisa * 100m / sub;
+        _discountPctText = pct.ToString("0.##", CultureInfo.InvariantCulture);
+    }
+
+    private void OnDiscountRsInput(ChangeEventArgs e)
+    {
+        _discountRsText = e.Value?.ToString() ?? string.Empty;
+        SyncDiscountPctFromRs();
+    }
+
+    private void OnDiscountPctInput(ChangeEventArgs e)
+    {
+        _discountPctText = e.Value?.ToString() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(_discountPctText))
+        {
+            _discountRsText = string.Empty;
+            return;
+        }
+
+        if (!decimal.TryParse(_discountPctText, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal pct)
+            || pct < 0)
+        {
+            return;
+        }
+
+        long paisa = (long)Math.Round(CartService.SubtotalPaisa * pct / 100m, MidpointRounding.AwayFromZero);
+        _discountRsText = (paisa / 100m).ToString("0.##", CultureInfo.InvariantCulture);
+    }
+
     private long PayablePaisa =>
         Math.Max(0, CartService.SubtotalPaisa - DiscountAmountPaisa);
 
-    private long ChangePaisa
+    private long PreviousDuePaisa =>
+        !_useWalkInCustomer && _selectedCustomer is not null
+            ? _selectedCustomer.CurrentBalancePaisa
+            : 0;
+
+    private long PaymentReceivedPaisa
     {
         get
         {
-            if (!TryParseRs(_cashGivenText, out long givenPaisa))
+            if (_paymentMode == PaymentUiMode.Credit)
             {
                 return 0;
             }
 
-            long change = givenPaisa - PayablePaisa;
-            return change > 0 ? change : 0;
+            if (_paymentMode == PaymentUiMode.Online)
+            {
+                return string.IsNullOrWhiteSpace(_onlineTxnRef) ? 0 : PayablePaisa;
+            }
+
+            if (TryParseRs(_cashGivenText, out long given) && given > 0)
+            {
+                return given;
+            }
+
+            return 0;
         }
     }
+
+    private long SaleBalancePaisa => PayablePaisa - Math.Min(PaymentReceivedPaisa, PayablePaisa);
+
+    private long CustomerNetBalancePaisa =>
+        PreviousDuePaisa + PayablePaisa - PaymentReceivedPaisa;
 
     private bool CanPay
     {
         get
         {
-            if (CartService.IsEmpty)
-            {
-                return false;
-            }
-
-            if (DiscountAmountPaisa > CartService.SubtotalPaisa)
+            if (CartService.IsEmpty || DiscountAmountPaisa > CartService.SubtotalPaisa)
             {
                 return false;
             }
@@ -605,11 +684,10 @@
             {
                 if (string.IsNullOrWhiteSpace(_cashGivenText))
                 {
-                    return true; // exact tender
+                    return true;
                 }
 
-                return TryParseRs(_cashGivenText, out long given)
-                       && given >= PayablePaisa;
+                return TryParseRs(_cashGivenText, out long given) && given >= PayablePaisa;
             }
 
             return !string.IsNullOrWhiteSpace(_onlineTxnRef)
@@ -629,42 +707,192 @@
         ShiftStatus.Changed += OnShiftStatusChanged;
         _clockTimer = new Timer(_ =>
         {
-            _now = DateTime.Now;
-            _ = InvokeAsync(StateHasChanged);
-        }, null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
+            if (_isDisposed)
+            {
+                return;
+            }
 
-        await Task.WhenAll(
-            LoadProductsAsync(),
-            LoadReceiveProductsAsync(),
-            LoadCustomersAsync(),
-            LoadRecentBillsAsync(),
-            ShiftStatus.RefreshAsync());
+            _now = DateTime.Now;
+            _ = InvokeAsync(() =>
+            {
+                if (!_isDisposed)
+                {
+                    StateHasChanged();
+                }
+            });
+        }, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
+
+        try
+        {
+            await Task.WhenAll(
+                LoadProductsAsync(),
+                LoadMastersAsync(),
+                LoadQuickLinksAsync(),
+                LoadCustomersAsync(),
+                ShiftStatus.RefreshAsync());
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Sales terminal failed to load catalog/session data.");
+            _errorMessage = "Could not load sales data. Check API connection and Reload.";
+        }
+
+        AssignDraftInvoiceNo();
 
         Uri uri = Navigation.ToAbsoluteUri(Navigation.Uri);
-        if (uri.Query.Contains("receive=1", StringComparison.OrdinalIgnoreCase))
+        if (uri.Query.Contains("orders=1", StringComparison.OrdinalIgnoreCase)
+            || uri.Query.Contains("purchases=1", StringComparison.OrdinalIgnoreCase))
         {
-            _showReceiveGoods = true;
+            _showPurchaseOrders = true;
+        }
+
+        if (uri.Query.Contains("createpo=1", StringComparison.OrdinalIgnoreCase))
+        {
+            OpenCreatePurchaseOrder();
+        }
+
+        try
+        {
+            await TryBindCustomerFromQueryAsync(uri);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to bind customer from query.");
+        }
+    }
+
+    private async Task TryBindCustomerFromQueryAsync(Uri uri)
+    {
+        string? customerRaw = null;
+        if (!string.IsNullOrEmpty(uri.Query))
+        {
+            foreach (string part in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+            {
+                string[] kv = part.Split('=', 2);
+                if (kv.Length == 2
+                    && string.Equals(Uri.UnescapeDataString(kv[0]), "customer", StringComparison.OrdinalIgnoreCase))
+                {
+                    customerRaw = Uri.UnescapeDataString(kv[1]);
+                    break;
+                }
+            }
+        }
+
+        if (customerRaw is null || !Guid.TryParse(customerRaw, out Guid customerId) || customerId == Guid.Empty)
+        {
+            return;
+        }
+
+        if (_customers.Count == 0)
+        {
+            await LoadCustomersAsync();
+        }
+
+        PartyDto? customer = _customers.FirstOrDefault(c => c.Id == customerId);
+        if (customer is not null)
+        {
+            BindCustomer(customer);
         }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender)
+        try
         {
-            await _scanInput.FocusAsync();
+            if (firstRender)
+            {
+                _scanFocus.RequestScan();
+            }
+
+            // Re-bind each render when ElementReference may have been replaced.
+            try
+            {
+                await Js.InvokeVoidAsync("webPosPreventKeys", _scanInput, new[] { "Tab" });
+            }
+            catch
+            {
+                /* ignore until DOM ready */
+            }
+
+            (SalesScanFocusCoordinator.Target target, int? qtyRow) = _scanFocus.TakePending();
+            if (target == SalesScanFocusCoordinator.Target.Qty && qtyRow is int row)
+            {
+                await FocusQtyAsync(row);
+                return;
+            }
+
+            if (target == SalesScanFocusCoordinator.Target.Scan)
+            {
+                await FocusScanAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            // Never let focus/JS failures become the yellow Blazor error bar.
+            Logger.LogDebug(ex, "SalesTerminal OnAfterRenderAsync ignored failure.");
         }
     }
 
-    private void OnCartChanged() => InvokeAsync(StateHasChanged);
+    private async Task FocusQtyAsync(int row)
+    {
+        if (row < 0 || row >= CartService.Lines.Count)
+        {
+            await RequestScanFocusAsync();
+            return;
+        }
 
-    private void OnShiftStatusChanged() => InvokeAsync(StateHasChanged);
+        _selectedLineIndex = row;
+        try
+        {
+            // Prefer DOM id over ElementReference[] — array @ref capture during render
+            // was throwing IndexOutOfRangeException → yellow "unhandled error" bar.
+            await Js.InvokeVoidAsync("webPosFocusById", $"pos-qty-{row}");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogDebug(ex, "Qty focus failed; falling back to scan.");
+            try { await FocusScanAsync(); }
+            catch { /* ignore */ }
+        }
+    }
+
+    private Task RequestQtyFocusAsync(int row)
+    {
+        // Always resolve through coordinator so TAB targets the latest row.
+        _scanFocus.RequestLatestQty(CartService.Lines.Count);
+        if (row >= 0 && row < CartService.Lines.Count)
+        {
+            _selectedLineIndex = row;
+        }
+
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private Task RequestScanFocusAsync()
+    {
+        _scanFocus.RequestScan();
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private void OnCartChanged()
+    {
+        if (!_isDisposed)
+        {
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void OnShiftStatusChanged()
+    {
+        if (!_isDisposed)
+        {
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
 
     private async Task LoadProductsAsync()
     {
-        _isLoadingProducts = true;
-        Result<IReadOnlyList<SalesProductDto>> result =
-            await SalesApi.GetProductsForSaleAsync();
-        _isLoadingProducts = false;
+        Result<IReadOnlyList<SalesProductDto>> result = await SalesApi.GetProductsForSaleAsync();
 
         if (result.Success && result.Data is not null)
         {
@@ -677,31 +905,74 @@
             : result.ErrorMessage;
     }
 
-    private async Task LoadReceiveProductsAsync()
+    private async Task LoadMastersAsync()
     {
-        Result<IReadOnlyList<SalesProductDto>> result =
-            await SalesApi.GetProductsForReceiveAsync();
-
+        Result<IReadOnlyList<SaleMasterDto>> result = await SalesApi.GetSaleMastersAsync();
         if (result.Success && result.Data is not null)
         {
-            _receiveProducts = result.Data;
-            return;
+            _masters = result.Data.ToList();
         }
+    }
 
-        // Fall back to sale catalog so receive still works if endpoint is unavailable.
-        if (_products.Count > 0)
+    private async Task LoadQuickLinksAsync()
+    {
+        Result<IReadOnlyList<SaleQuickLinkDto>> result = await SalesApi.GetSaleQuickLinksAsync();
+        if (result.Success && result.Data is not null)
         {
-            _receiveProducts = _products;
+            _quickLinks = result.Data.ToList();
+        }
+    }
+
+    private async Task OnQuickLinkAsync(SaleQuickLinkDto link)
+    {
+        try
+        {
+            ArgumentNullException.ThrowIfNull(link);
+            string linkType = link.LinkType ?? string.Empty;
+
+            if (linkType.Equals("Category", StringComparison.OrdinalIgnoreCase))
+            {
+                OpenCategoryPick(link.Name);
+                return;
+            }
+
+            if (linkType.Equals("Master", StringComparison.OrdinalIgnoreCase))
+            {
+                SaleMasterDto? master = _masters.FirstOrDefault(m => m.ProductId == link.TargetId);
+                if (master is null)
+                {
+                    await LoadMastersAsync();
+                    master = _masters.FirstOrDefault(m => m.ProductId == link.TargetId);
+                }
+
+                if (master is null)
+                {
+                    _errorMessage = "No sellable packs for this master yet.";
+                    return;
+                }
+
+                OpenVariant(master);
+                return;
+            }
+
+            if (link.Product is SalesProductDto product)
+            {
+                AddProductToCart(product);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Quick link failed for {Name}.", link?.Name);
+            _errorMessage = string.IsNullOrWhiteSpace(ex.Message)
+                ? "Could not open that quick item."
+                : ex.Message;
         }
     }
 
     private async Task LoadCustomersAsync()
     {
-        _isLoadingCustomers = true;
         _customerLoadError = null;
         Result<IReadOnlyList<PartyDto>> result = await CustomerApi.GetCustomersAsync();
-        _isLoadingCustomers = false;
-
         if (result.Success && result.Data is not null)
         {
             _customers = result.Data;
@@ -709,67 +980,7 @@
         }
 
         _customers = [];
-        _customerLoadError = string.IsNullOrWhiteSpace(result.ErrorMessage)
-            ? "Unable to load customers."
-            : result.ErrorMessage;
-    }
-
-    private async Task LoadRecentBillsAsync()
-    {
-        if (!SessionService.IsActive)
-        {
-            _recentBills = [];
-            return;
-        }
-
-        _isLoadingRecentBills = true;
-        Result<IReadOnlyList<SalesInvoiceSummaryDto>> result =
-            await InvoiceApi.ListAsync(SessionService.ShiftId, 4);
-        _isLoadingRecentBills = false;
-
-        if (result.Success && result.Data is not null)
-        {
-            _recentBills = result.Data;
-            return;
-        }
-
-        _recentBills = [];
-    }
-
-    private void SelectCategory(string category)
-    {
-        _categoryFilter = category;
-        _errorMessage = null;
-    }
-
-    private static IEnumerable<SalesProductDto> ApplyFilters(
-        IReadOnlyList<SalesProductDto> products,
-        string gridSearch,
-        string categoryFilter)
-    {
-        IEnumerable<SalesProductDto> query = products;
-
-        if (!string.Equals(categoryFilter, "All", StringComparison.Ordinal))
-        {
-            query = categoryFilter switch
-            {
-                "Loose only" => query.Where(product => product.IsLoose),
-                _ => query.Where(product =>
-                    string.Equals(product.CategoryName, categoryFilter, StringComparison.OrdinalIgnoreCase))
-            };
-        }
-
-        string search = gridSearch.Trim();
-        if (!string.IsNullOrEmpty(search))
-        {
-            query = query.Where(product =>
-                product.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
-                || product.Sku.Contains(search, StringComparison.OrdinalIgnoreCase)
-                || product.ShortCode.Contains(search, StringComparison.OrdinalIgnoreCase)
-                || product.Barcode.Contains(search, StringComparison.OrdinalIgnoreCase));
-        }
-
-        return query.OrderBy(product => product.ShortCode).ThenBy(product => product.Name);
+        _customerLoadError = result.ErrorMessage;
     }
 
     private SalesProductDto? ResolveProductFromScan(string input)
@@ -780,22 +991,81 @@
             return null;
         }
 
-        SalesProductDto? byShortCode = _products.FirstOrDefault(product =>
-            string.Equals(product.ShortCode, trimmed, StringComparison.OrdinalIgnoreCase));
-        if (byShortCode is not null)
+        // Short code / barcode / SKU exact first (e.g. r200 → Dal Mash 1kg).
+        List<SalesProductDto> exactCode = _products
+            .Where(product =>
+                FieldEquals(product.ShortCode, trimmed)
+                || FieldEquals(product.Barcode, trimmed)
+                || FieldEquals(product.Sku, trimmed))
+            .ToList();
+        if (exactCode.Count == 1)
         {
-            return byShortCode;
+            return exactCode[0];
         }
 
-        SalesProductDto? byBarcode = _products.FirstOrDefault(product =>
-            string.Equals(product.Barcode, trimmed, StringComparison.OrdinalIgnoreCase));
-        if (byBarcode is not null)
+        if (exactCode.Count > 1)
         {
-            return byBarcode;
+            return null;
         }
 
-        List<SalesProductDto> matches = ApplyFilters(_products, trimmed, "All").ToList();
-        return matches.Count == 1 ? matches[0] : null;
+        List<SalesProductDto> exactName = _products
+            .Where(product => FieldEquals(product.Name, trimmed))
+            .ToList();
+        if (exactName.Count == 1)
+        {
+            return exactName[0];
+        }
+
+        List<SalesProductDto> contains = _products
+            .Where(product =>
+                FieldContains(product.Name, trimmed)
+                || FieldContains(product.Barcode, trimmed)
+                || FieldContains(product.Sku, trimmed)
+                || FieldContains(product.ShortCode, trimmed))
+            .ToList();
+        return contains.Count == 1 ? contains[0] : null;
+    }
+
+    private SaleMasterDto? ResolveMasterFromScan(string input)
+    {
+        string trimmed = input.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            return null;
+        }
+
+        List<SaleMasterDto> exactCode = _masters
+            .Where(m =>
+                FieldEquals(m.Barcode, trimmed)
+                || FieldEquals(m.ShortCode, trimmed)
+                || FieldEquals(m.Sku, trimmed))
+            .ToList();
+        if (exactCode.Count == 1)
+        {
+            return exactCode[0];
+        }
+
+        if (exactCode.Count > 1)
+        {
+            return null;
+        }
+
+        List<SaleMasterDto> exactName = _masters
+            .Where(m => FieldEquals(m.Name, trimmed))
+            .ToList();
+        if (exactName.Count == 1)
+        {
+            return exactName[0];
+        }
+
+        List<SaleMasterDto> contains = _masters
+            .Where(m =>
+                FieldContains(m.Name, trimmed)
+                || FieldContains(m.Barcode, trimmed)
+                || FieldContains(m.Sku, trimmed)
+                || FieldContains(m.ShortCode, trimmed))
+            .ToList();
+        return contains.Count == 1 ? contains[0] : null;
     }
 
     private void AddProductToCart(SalesProductDto product)
@@ -804,146 +1074,335 @@
         _checkoutError = null;
         _successMessage = null;
 
-        // Grid cards are product-level; allocate qty across FEFO batches.
-        decimal remaining = product.IsLoose ? 1m : 1m;
-        List<SalesProductDto> batches = BatchesForProduct(product.ProductId).ToList();
-        if (batches.Count == 0)
+        ArgumentNullException.ThrowIfNull(product);
+
+        SalesProductDto catalog = _products.FirstOrDefault(p => p.ProductId == product.ProductId)
+            ?? product;
+        if (catalog.AvailableStock <= 0)
         {
-            _errorMessage = $"{product.Name} has no sellable stock.";
+            _errorMessage = $"{catalog.Name} has no sellable stock.";
             return;
         }
 
-        decimal available = batches.Sum(b => b.AvailableStock);
         decimal alreadyInCart = CartService.Lines
-            .Where(l => l.Product.ProductId == product.ProductId)
+            .Where(l => l.Product.ProductId == catalog.ProductId)
             .Sum(l => l.Quantity);
-        if (alreadyInCart + remaining > available + 0.0001m)
+        if (alreadyInCart + 1m > catalog.AvailableStock + 0.0001m)
         {
             _errorMessage =
-                $"Only {available:0.##} units of {product.Name} are available.";
+                $"Only {catalog.AvailableStock:0.##} units of {catalog.Name} are available.";
             return;
         }
 
-        foreach (SalesProductDto batch in batches)
+        // Avoid re-entrant StateHasChanged from CartService.Changed during this UI event —
+        // that was crashing Blazor WebView with the yellow "unhandled error" bar.
+        CartService.Changed -= OnCartChanged;
+        try
         {
-            if (remaining <= 0)
+            CartService.Add(catalog, 1m);
+        }
+        finally
+        {
+            CartService.Changed += OnCartChanged;
+        }
+
+        SyncLineEditors(catalog.ProductId);
+        FocusLastLine(catalog.ProductId);
+        // Scanner workflow: stay on barcode so the next scan can fire immediately.
+        // Use TAB explicitly to jump to the latest row quantity.
+        _scanFocus.OnProductAdded();
+    }
+
+    private void SyncLineEditors(Guid productId)
+    {
+        CartLine? line = CartService.Lines.FirstOrDefault(l => l.Product.ProductId == productId);
+        if (line is null)
+        {
+            _qtyText.Remove(productId);
+            _priceText.Remove(productId);
+            return;
+        }
+
+        _qtyText[productId] = line.Quantity.ToString("0.##", CultureInfo.InvariantCulture);
+        _priceText[productId] = FormatRs(line.EffectiveUnitPricePaisa);
+    }
+
+    private void FocusLastLine(Guid productId)
+    {
+        int idx = -1;
+        for (int i = 0; i < CartService.Lines.Count; i++)
+        {
+            if (CartService.Lines[i].Product.ProductId == productId)
             {
+                idx = i;
                 break;
             }
+        }
 
-            decimal inCart = CartService.Lines
-                .FirstOrDefault(l => l.Product.BatchId == batch.BatchId)?.Quantity ?? 0m;
-            decimal room = batch.AvailableStock - inCart;
-            if (room <= 0)
-            {
-                continue;
-            }
+        _selectedLineIndex = idx;
+    }
 
-            decimal take = Math.Min(room, remaining);
-            CartService.Add(batch, take);
-            remaining -= take;
+    private void OnScanInput(ChangeEventArgs e)
+    {
+        _scanText = e.Value?.ToString() ?? string.Empty;
+        _scanHighlight = 0;
+        _showScanDropdown = _scanText.Trim().Length > 0;
+        _errorMessage = null;
+    }
 
-            if (batch.IsLoose)
-            {
-                CartLine? line = CartService.Lines.FirstOrDefault(
-                    entry => entry.Product.BatchId == batch.BatchId);
-                if (line is not null)
-                {
-                    _looseQtyText[batch.BatchId] =
-                        line.Quantity.ToString("0.##", CultureInfo.InvariantCulture);
-                }
-            }
+    private void OnScanFocus()
+    {
+        if (_scanText.Trim().Length > 0)
+        {
+            _showScanDropdown = true;
         }
     }
 
-    private static IEnumerable<SalesProductDto> GroupProductsForDisplay(
-        IEnumerable<SalesProductDto> batches)
+    private async Task OnScanKeyDown(KeyboardEventArgs e)
     {
-        return batches
-            .GroupBy(p => p.ProductId)
-            .Select(g =>
+        if (_isBusy || ModalOpen)
+        {
+            return;
+        }
+
+        if (e.Key == "Tab")
+        {
+            _showScanDropdown = false;
+            int latest = CartService.Lines.Count - 1;
+            if (latest >= 0)
             {
-                List<SalesProductDto> ordered = g
-                    .OrderBy(x => x.ExpiryDate ?? DateOnly.MaxValue)
-                    .ThenBy(x => x.BatchNumber)
-                    .ToList();
-                SalesProductDto first = ordered[0];
-                return new SalesProductDto
-                {
-                    ProductId = first.ProductId,
-                    BatchId = first.BatchId,
-                    BatchNumber = first.BatchNumber,
-                    Name = first.Name,
-                    Sku = first.Sku,
-                    Barcode = first.Barcode,
-                    ShortCode = first.ShortCode,
-                    CategoryName = first.CategoryName,
-                    IsLoose = first.IsLoose,
-                    UnitPricePaisa = first.UnitPricePaisa,
-                    AvailableStock = ordered.Sum(x => x.AvailableStock),
-                    ExpiryDate = first.ExpiryDate
-                };
-            })
-            .OrderBy(p => p.Name);
+                await RequestQtyFocusAsync(latest);
+            }
+
+            return;
+        }
+
+        if (e.CtrlKey && e.Key == "Enter")
+        {
+            _showScanDropdown = false;
+            if (CanPay && !CartService.IsEmpty)
+            {
+                await PayNowAsync();
+            }
+
+            return;
+        }
+
+        if (e.Key is "Insert" or "F12")
+        {
+            _showScanDropdown = false;
+            if (CanPay && !CartService.IsEmpty)
+            {
+                await PayNowAsync();
+            }
+
+            return;
+        }
+
+        if (e.Key == "Escape")
+        {
+            _showScanDropdown = false;
+            return;
+        }
+
+        if (e.Key == "ArrowDown")
+        {
+            if (ScanHits.Count > 0)
+            {
+                _showScanDropdown = true;
+                _scanHighlight = Math.Min(_scanHighlight + 1, ScanHits.Count - 1);
+            }
+
+            return;
+        }
+
+        if (e.Key == "ArrowUp")
+        {
+            _scanHighlight = Math.Max(_scanHighlight - 1, 0);
+            return;
+        }
+
+        if (e.Key == "Enter")
+        {
+            await AddFromScanAsync();
+            return;
+        }
     }
 
-    private IEnumerable<SalesProductDto> BatchesForProduct(Guid productId) =>
-        _products
-            .Where(p => p.ProductId == productId && p.AvailableStock > 0)
-            .OrderBy(p => p.ExpiryDate ?? DateOnly.MaxValue)
-            .ThenBy(p => p.BatchNumber);
+    private async Task ChooseScanHitAsync(object hit)
+    {
+        _showScanDropdown = false;
+        _scanText = string.Empty;
+
+        if (hit is SaleMasterDto master)
+        {
+            OpenVariant(master);
+            await FocusScanAsync();
+            return;
+        }
+
+        if (hit is SalesProductDto product)
+        {
+            AddProductToCart(product);
+            await InvokeAsync(StateHasChanged);
+        }
+    }
 
     private async Task AddFromScanAsync()
     {
         _errorMessage = null;
         string scan = _scanText.Trim();
-        SalesProductDto? product = ResolveProductFromScan(scan);
-
-        if (product is null && !string.IsNullOrEmpty(scan))
+        if (string.IsNullOrWhiteSpace(scan))
         {
-            Result<SalesProductDto> lookup = await SalesApi.GetProductByBarcodeAsync(scan);
+            _errorMessage = "Enter a name, barcode, SKU, or short code.";
+            return;
+        }
+
+        IReadOnlyList<object> hits = ScanHits;
+        if (_showScanDropdown && hits.Count > 0)
+        {
+            int idx = Math.Clamp(_scanHighlight, 0, hits.Count - 1);
+            await ChooseScanHitAsync(hits[idx]);
+            return;
+        }
+
+        // Exact short-code / unique resolve when dropdown closed or empty.
+        SaleMasterDto? master = ResolveMasterFromScan(scan);
+        if (master is not null)
+        {
+            OpenVariant(master);
+            _scanText = string.Empty;
+            _showScanDropdown = false;
+            await FocusScanAsync();
+            return;
+        }
+
+        SalesProductDto? product = ResolveProductFromScan(scan);
+        if (product is null && hits.Count == 1)
+        {
+            await ChooseScanHitAsync(hits[0]);
+            return;
+        }
+
+        if (product is null && hits.Count > 1)
+        {
+            _showScanDropdown = true;
+            _scanHighlight = 0;
+            return;
+        }
+
+        if (product is null)
+        {
+            Result<BarcodeScanOutcome> lookup = await SalesApi.ScanBarcodeAsync(scan);
             if (lookup.Success && lookup.Data is not null)
             {
-                UpsertProductInCache(lookup.Data);
-                product = lookup.Data;
+                if (lookup.Data.IsMaster && lookup.Data.Master is not null)
+                {
+                    if (!_masters.Any(m => m.ProductId == lookup.Data.Master.ProductId))
+                    {
+                        _masters.Add(lookup.Data.Master);
+                    }
+
+                    OpenVariant(lookup.Data.Master);
+                    _scanText = string.Empty;
+                    _showScanDropdown = false;
+                    await FocusScanAsync();
+                    return;
+                }
+
+                if (lookup.Data.Product is not null)
+                {
+                    UpsertProductInCache(lookup.Data.Product);
+                    product = lookup.Data.Product;
+                }
             }
             else
             {
-                Logger.LogWarning(
-                    "Barcode lookup failed for '{Barcode}': {Error}",
-                    scan,
-                    lookup.ErrorMessage);
+                Logger.LogWarning("Barcode lookup failed for '{Barcode}': {Error}", scan, lookup.ErrorMessage);
             }
         }
 
         if (product is null)
         {
-            if (string.IsNullOrWhiteSpace(scan))
-            {
-                _errorMessage = "Enter a short code or scan a barcode.";
-            }
-            else
-            {
-                _errorMessage = $"Product not found for '{scan}'.";
-                PlayNotFoundBeep();
-            }
-
+            _errorMessage = $"Product not found for '{scan}'.";
+            _showScanDropdown = false;
+            PlayNotFoundBeep();
+            // Preserve existing not-found behavior (message + beep); keep barcode focused for next scan.
+            _scanFocus.OnProductNotFound();
+            await InvokeAsync(StateHasChanged);
             return;
         }
 
         AddProductToCart(product);
         _scanText = string.Empty;
-        await _scanInput.FocusAsync();
+        _showScanDropdown = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task FocusScanAsync()
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("webPosFocusById", "scanInput");
+            return;
+        }
+        catch
+        {
+            /* fall through to ElementReference */
+        }
+
+        try { await _scanInput.FocusAsync(); } catch { /* ignore */ }
+    }
+
+    private async Task OnQtyKeyDown(KeyboardEventArgs e, int row)
+    {
+        if (_isBusy || ModalOpen)
+        {
+            return;
+        }
+
+        if (e.CtrlKey && e.Key == "Enter")
+        {
+            if (CanPay && !CartService.IsEmpty)
+            {
+                await PayNowAsync();
+            }
+
+            return;
+        }
+
+        if (e.Key is "Insert" or "F12")
+        {
+            if (CanPay && !CartService.IsEmpty)
+            {
+                await PayNowAsync();
+            }
+
+            return;
+        }
+
+        if (e.Key == "Enter")
+        {
+            // Always return to barcode after editing quantity (scanner-first workflow).
+            _scanFocus.OnQtyEnter();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void DeleteSelectedLine()
+    {
+        if (_selectedLineIndex < 0 || _selectedLineIndex >= CartService.Lines.Count)
+        {
+            return;
+        }
+
+        CartLine line = CartService.Lines[_selectedLineIndex];
+        RemoveLine(line);
     }
 
     private void UpsertProductInCache(SalesProductDto product)
     {
-        int index = _products.FindIndex(p => p.BatchId == product.BatchId && product.BatchId != Guid.Empty);
-        if (index < 0 && product.BatchId == Guid.Empty)
-        {
-            index = _products.FindIndex(p => p.ProductId == product.ProductId && p.BatchId == Guid.Empty);
-        }
-
+        int index = _products.FindIndex(p => p.ProductId == product.ProductId);
         if (index >= 0)
         {
             _products[index] = product;
@@ -955,40 +1414,24 @@
 
     private static void PlayNotFoundBeep()
     {
-        try
-        {
-            Console.Beep(880, 160);
-        }
-        catch (Exception)
-        {
-            // Audio may be unavailable on some hosts; text error is enough.
-        }
+        try { Console.Beep(880, 160); }
+        catch (Exception) { /* ignore */ }
     }
 
-    private void ChangeQty(CartLine line, decimal delta)
-    {
-        decimal newQty = line.Quantity + delta;
-        if (newQty > line.Product.AvailableStock)
-        {
-            _errorMessage =
-                $"Only {line.Product.AvailableStock:0.##} units of {line.Product.Name} are available.";
-            return;
-        }
-
-        _errorMessage = null;
-        CartService.SetQuantity(line.Product.BatchId, newQty);
-    }
-
-    private string GetLooseQtyText(CartLine line) =>
-        _looseQtyText.TryGetValue(line.Product.BatchId, out string? text)
+    private string GetQtyText(CartLine line) =>
+        _qtyText.TryGetValue(line.Product.ProductId, out string? text)
             ? text
             : line.Quantity.ToString("0.##", CultureInfo.InvariantCulture);
 
-    private void OnLooseQtyChanged(CartLine line, ChangeEventArgs e)
+    private string GetPriceText(CartLine line) =>
+        _priceText.TryGetValue(line.Product.ProductId, out string? text)
+            ? text
+            : FormatRs(line.EffectiveUnitPricePaisa);
+
+    private void OnQtyChanged(CartLine line, ChangeEventArgs e)
     {
         string raw = e.Value?.ToString() ?? string.Empty;
-        _looseQtyText[line.Product.BatchId] = raw;
-
+        _qtyText[line.Product.ProductId] = raw;
         if (!decimal.TryParse(raw, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal quantity)
             && !decimal.TryParse(raw, NumberStyles.Number, CultureInfo.CurrentCulture, out quantity))
         {
@@ -1008,31 +1451,68 @@
         }
 
         _errorMessage = null;
-        CartService.SetQuantity(line.Product.BatchId, quantity);
-        _looseQtyText[line.Product.BatchId] = quantity.ToString("0.##", CultureInfo.InvariantCulture);
+        CartService.SetQuantity(line.Product.ProductId, quantity);
+    }
+
+    private void OnPriceChanged(CartLine line, ChangeEventArgs e)
+    {
+        string raw = e.Value?.ToString() ?? string.Empty;
+        _priceText[line.Product.ProductId] = raw;
+        if (!TryParseRs(raw, out long paisa))
+        {
+            return;
+        }
+
+        CartService.SetUnitPrice(line.Product.ProductId, paisa);
     }
 
     private void RemoveLine(CartLine line)
     {
-        _looseQtyText.Remove(line.Product.BatchId);
-        CartService.Remove(line.Product.BatchId);
+        _qtyText.Remove(line.Product.ProductId);
+        _priceText.Remove(line.Product.ProductId);
+        CartService.Remove(line.Product.ProductId);
+        _selectedLineIndex = Math.Min(_selectedLineIndex, CartService.Lines.Count - 1);
+        _scanFocus.OnRowRemoved();
     }
 
     private void ClearCart()
     {
         _errorMessage = null;
         _checkoutError = null;
-        _looseQtyText.Clear();
+        _qtyText.Clear();
+        _priceText.Clear();
         CartService.Clear();
         _cashGivenText = string.Empty;
         _discountRsText = string.Empty;
+        _discountPctText = string.Empty;
+        _selectedLineIndex = -1;
+    }
+
+    private void AssignDraftInvoiceNo()
+    {
+        _draftInvoiceNo = DateTime.Now.ToString("yyMMddHHmmss", CultureInfo.InvariantCulture);
+        _saleDate = DateTime.Today;
+    }
+
+    private void NewSale()
+    {
+        ClearCart();
+        _selectedCustomer = null;
+        _useWalkInCustomer = true;
+        _paymentMode = PaymentUiMode.Cash;
+        _onlineTxnRef = string.Empty;
+        _remarks = string.Empty;
+        _whatsAppReceipt = false;
+        _printOnPrinter = false;
+        AssignDraftInvoiceNo();
+        _successMessage = "New sale.";
+        _ = FocusScanAsync();
     }
 
     private void SelectWalkInCustomer()
     {
         _useWalkInCustomer = true;
         _selectedCustomer = null;
-        _customerSearch = string.Empty;
         _paymentMode = PaymentUiMode.Cash;
         _checkoutError = null;
     }
@@ -1046,24 +1526,12 @@
             await LoadCustomersAsync();
         }
 
-        await InvokeAsync(async () =>
-        {
-            StateHasChanged();
-            try
-            {
-                await _customerSearchInput.FocusAsync();
-            }
-            catch
-            {
-                // Input may not be rendered yet if a chip is already selected.
-            }
-        });
+        await OpenSearchCustomerAsync();
     }
 
     private void BindCustomer(PartyDto customer)
     {
         _selectedCustomer = customer;
-        _customerSearch = string.Empty;
         _useWalkInCustomer = false;
         _checkoutError = null;
         _whatsAppPhone = customer.PhoneNumber;
@@ -1073,26 +1541,10 @@
     private void ClearSelectedCustomer()
     {
         _selectedCustomer = null;
-        _customerSearch = string.Empty;
         _checkoutError = null;
         if (_paymentMode == PaymentUiMode.Credit)
         {
             _paymentMode = PaymentUiMode.Cash;
-        }
-    }
-
-    private async Task OnCustomerSearchKeyDown(KeyboardEventArgs e)
-    {
-        if (e.Key != "Enter")
-        {
-            return;
-        }
-
-        PartyDto? first = FilteredCustomers.FirstOrDefault();
-        if (first is not null)
-        {
-            BindCustomer(first);
-            await Task.CompletedTask;
         }
     }
 
@@ -1119,13 +1571,115 @@
         _checkoutError = null;
     }
 
-    private void ToggleDiscount()
+    private void OpenCalculator() => _showCalculator = true;
+
+    private void OpenAddCustomer() => _showCustomerAdd = true;
+
+    private async Task OpenSearchCustomerAsync()
     {
-        _showDiscountInput = !_showDiscountInput;
-        if (!_showDiscountInput)
+        if (_customers.Count == 0 && string.IsNullOrWhiteSpace(_customerLoadError))
         {
-            _discountRsText = string.Empty;
+            await LoadCustomersAsync();
         }
+
+        _showCustomerSearch = true;
+    }
+
+    private async Task OnCustomerPickedAsync(PartyDto customer)
+    {
+        BindCustomer(customer);
+        _showCustomerSearch = false;
+        await FocusScanAsync();
+    }
+
+    private async Task OnCustomerCreatedAsync(PartyDto customer)
+    {
+        await LoadCustomersAsync();
+        BindCustomer(customer);
+        _showCustomerAdd = false;
+        _successMessage = $"Customer added · {customer.Name}";
+        await FocusScanAsync();
+    }
+
+    private void OpenItemSearch()
+    {
+        _itemSearchSeed = string.Empty;
+        _showItemSearch = true;
+    }
+
+    private void CloseItemSearch()
+    {
+        _showItemSearch = false;
+        _itemSearchSeed = string.Empty;
+    }
+
+    private void ToggleWhatsAppInvoice() => _whatsAppReceipt = !_whatsAppReceipt;
+
+    private void TogglePrintInvoice() => _printOnPrinter = !_printOnPrinter;
+
+    private void GoCloseShift() => Navigation.NavigateTo("/close-shift");
+
+    private void OpenVariant(SaleMasterDto master) => _variantMaster = master;
+
+    private void CloseVariant() => _variantMaster = null;
+
+    private void OpenCategoryPick(string category)
+    {
+        _categoryPickName = category;
+        _errorMessage = null;
+    }
+
+    private void CloseCategoryPick() => _categoryPickName = null;
+
+    private Task OnCategoryProductSelected(SalesProductDto product)
+    {
+        UpsertProductInCache(product);
+        AddProductToCart(product);
+        _categoryPickName = null;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private Task OnCategoryMasterSelected(SaleMasterDto master)
+    {
+        _categoryPickName = null;
+        OpenVariant(master);
+        return Task.CompletedTask;
+    }
+
+    private Task OnVariantSelected(SalesProductDto product)
+    {
+        try
+        {
+            UpsertProductInCache(product);
+            AddProductToCart(product);
+            _variantMaster = null;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to add variant to cart.");
+            _errorMessage = string.IsNullOrWhiteSpace(ex.Message)
+                ? "Could not add that packing."
+                : ex.Message;
+            _variantMaster = null;
+        }
+
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private Task OnSearchProductSelected(SalesProductDto product)
+    {
+        _showItemSearch = false;
+        _itemSearchSeed = string.Empty;
+        AddProductToCart(product);
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private Task OnSearchMasterSelected(SaleMasterDto master)
+    {
+        _showItemSearch = false;
+        _itemSearchSeed = string.Empty;
+        OpenVariant(master);
+        return Task.CompletedTask;
     }
 
     private void HoldCart()
@@ -1136,7 +1690,12 @@
         }
 
         List<CartLine> lines = CartService.Lines
-            .Select(line => new CartLine { Product = line.Product, Quantity = line.Quantity })
+            .Select(line => new CartLine
+            {
+                Product = line.Product,
+                Quantity = line.Quantity,
+                UnitPriceOverridePaisa = line.UnitPriceOverridePaisa
+            })
             .ToList();
 
         CartHoldService.Hold(new HeldCartSnapshot
@@ -1144,14 +1703,17 @@
             Lines = lines,
             Customer = _selectedCustomer,
             UseWalkIn = _useWalkInCustomer,
-            DiscountAmountPaisa = DiscountAmountPaisa
+            DiscountAmountPaisa = DiscountAmountPaisa,
+            WhatsAppReceipt = _whatsAppReceipt,
+            PrintOnPrinter = _printOnPrinter
         });
 
         ClearCart();
         _selectedCustomer = null;
         _useWalkInCustomer = true;
-        _showDiscountInput = false;
-        _successMessage = "Cart held.";
+        _whatsAppReceipt = false;
+        _printOnPrinter = false;
+        _successMessage = "Sale held. Press Ctrl+R to retrieve.";
     }
 
     private void ResumeHeldCart()
@@ -1163,34 +1725,38 @@
         }
 
         CartService.Clear();
-        _looseQtyText.Clear();
+        _qtyText.Clear();
+        _priceText.Clear();
 
         foreach (CartLine line in snapshot.Lines)
         {
             CartService.Add(line.Product, line.Quantity);
-            if (line.Product.IsLoose)
+            if (line.UnitPriceOverridePaisa is long overridePrice)
             {
-                _looseQtyText[line.Product.BatchId] =
-                    line.Quantity.ToString("0.##", CultureInfo.InvariantCulture);
+                CartService.SetUnitPrice(line.Product.ProductId, overridePrice);
             }
+
+            SyncLineEditors(line.Product.ProductId);
         }
 
         _selectedCustomer = snapshot.Customer;
         _useWalkInCustomer = snapshot.UseWalkIn || snapshot.Customer is null;
+        _whatsAppReceipt = snapshot.WhatsAppReceipt;
+        _printOnPrinter = snapshot.PrintOnPrinter;
         if (snapshot.DiscountAmountPaisa > 0)
         {
-            _showDiscountInput = true;
             _discountRsText = (snapshot.DiscountAmountPaisa / 100m).ToString(
                 "0.##",
                 CultureInfo.InvariantCulture);
+            SyncDiscountPctFromRs();
         }
         else
         {
-            _showDiscountInput = false;
             _discountRsText = string.Empty;
+            _discountPctText = string.Empty;
         }
 
-        _successMessage = "Held cart resumed.";
+        _successMessage = "Held sale retrieved.";
         _checkoutError = null;
     }
 
@@ -1212,9 +1778,7 @@
             return;
         }
 
-        if (!string.IsNullOrWhiteSpace(_discountRsText)
-            && !TryParseRs(_discountRsText, out _)
-            && _showDiscountInput)
+        if (!string.IsNullOrWhiteSpace(_discountRsText) && !TryParseRs(_discountRsText, out _))
         {
             _checkoutError = "Enter a valid discount amount.";
             return;
@@ -1269,9 +1833,16 @@
         }
 
         List<CartLine> saleLines = CartService.Lines
-            .Select(line => new CartLine { Product = line.Product, Quantity = line.Quantity })
+            .Select(line => new CartLine
+            {
+                Product = line.Product,
+                Quantity = line.Quantity,
+                UnitPriceOverridePaisa = line.UnitPriceOverridePaisa
+            })
             .ToList();
         string? customerPhone = _selectedCustomer?.PhoneNumber;
+        bool whatsApp = _whatsAppReceipt;
+        bool printPrinter = _printOnPrinter;
 
         _isBusy = true;
         try
@@ -1280,7 +1851,8 @@
                 CartService.Lines,
                 paymentMethod,
                 customerId,
-                discountPaisa);
+                discountPaisa,
+                invoiceNo: string.IsNullOrWhiteSpace(_draftInvoiceNo) ? null : $"POS-{_draftInvoiceNo}");
 
             if (!result.Success)
             {
@@ -1306,26 +1878,50 @@
             _successMessage =
                 $"Sale complete · {sale.InvoiceNo} · Rs {FormatRs(sale.TotalAmountPaisa)}";
 
-            _looseQtyText.Clear();
+            _qtyText.Clear();
+            _priceText.Clear();
             CartService.Clear();
             _cashGivenText = string.Empty;
             _onlineTxnRef = string.Empty;
             _discountRsText = string.Empty;
-            _showDiscountInput = false;
+            _discountPctText = string.Empty;
+            _remarks = string.Empty;
             _selectedCustomer = null;
             _useWalkInCustomer = true;
             _paymentMode = PaymentUiMode.Cash;
+            _selectedLineIndex = -1;
+            _whatsAppReceipt = false;
+            _printOnPrinter = false;
+            AssignDraftInvoiceNo();
 
             await Task.WhenAll(
                 LoadProductsAsync(),
-                ShiftStatus.RefreshAsync(),
-                LoadRecentBillsAsync());
+                LoadMastersAsync(),
+                LoadQuickLinksAsync(),
+                ShiftStatus.RefreshAsync());
 
-            await _scanInput.FocusAsync();
+            if (whatsApp)
+            {
+                await WhatsAppReceiptAsync();
+            }
+
+            if (printPrinter)
+            {
+                await PrintReceiptAsync();
+            }
+
+            await FocusScanAsync();
         }
         catch (SessionNotActiveException)
         {
             _checkoutError = "Start Shift before processing a sale.";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "PayNow failed with unexpected error.");
+            _checkoutError = string.IsNullOrWhiteSpace(ex.Message)
+                ? "Unexpected sale error. Try again."
+                : ex.Message;
         }
         finally
         {
@@ -1333,13 +1929,12 @@
         }
     }
 
-    private async Task WhatsAppOrPrintAsync()
+    private async Task WhatsAppReceiptAsync()
     {
         _whatsAppError = null;
         LastSaleReceipt? receipt = LastSaleReceiptStore.Current;
         if (receipt is null)
         {
-            _errorMessage = "No recent sale to send. Complete a sale first.";
             return;
         }
 
@@ -1352,6 +1947,32 @@
         }
 
         await OpenWhatsAppAsync(phone, receipt);
+    }
+
+    private async Task PrintReceiptAsync()
+    {
+        LastSaleReceipt? receipt = LastSaleReceiptStore.Current;
+        if (receipt is null)
+        {
+            return;
+        }
+
+        string message = WhatsAppReceiptService.BuildReceiptMessage(
+            receipt.Sale,
+            receipt.Lines,
+            receipt.PaymentLabel,
+            receipt.OnlineTxnRef,
+            receipt.ChangePaisa);
+
+        try
+        {
+            await Js.InvokeVoidAsync("webPosPrintReceipt", message);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Printer receipt failed");
+            _checkoutError = "Could not open the printer dialog.";
+        }
     }
 
     private async Task ConfirmWhatsAppPhoneAsync()
@@ -1404,43 +2025,247 @@
 
     private async Task OnKeyDown(KeyboardEventArgs e)
     {
-        if (e.Key == "Escape" && _showPhonePrompt)
+        if (e.Key == "Escape")
         {
-            ClosePhonePrompt();
+            if (_showPhonePrompt)
+            {
+                ClosePhonePrompt();
+                return;
+            }
+
+            if (_showCalculator)
+            {
+                _showCalculator = false;
+                return;
+            }
+
+            if (_showCustomerAdd)
+            {
+                _showCustomerAdd = false;
+                return;
+            }
+
+            if (_showCustomerSearch)
+            {
+                _showCustomerSearch = false;
+                return;
+            }
+
+            if (_variantMaster is not null)
+            {
+                CloseVariant();
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(_categoryPickName))
+            {
+                CloseCategoryPick();
+                return;
+            }
+
+            if (_showItemSearch)
+            {
+                CloseItemSearch();
+                return;
+            }
+
+            if (_showPriceChecker)
+            {
+                _showPriceChecker = false;
+                return;
+            }
+
+            if (_showCreatePurchaseOrder)
+            {
+                CloseCreatePurchaseOrder();
+                return;
+            }
+
+            if (_showPurchaseOrders)
+            {
+                ClosePurchaseOrders();
+                return;
+            }
+        }
+
+        if (ModalOpen || _isBusy)
+        {
             return;
         }
 
-        if (e.Key == "Escape" && _showReceiveGoods)
+        if (e.Key is "Delete")
         {
-            CloseReceiveGoods();
+            DeleteSelectedLine();
             return;
         }
 
-        if (e.Key is "F9" && !_isBusy && !_showPhonePrompt)
+        if (e.CtrlKey && e.Key == "Enter")
         {
-            OpenReceiveGoods();
+            if (CanPay && !CartService.IsEmpty)
+            {
+                await PayNowAsync();
+            }
+
             return;
         }
 
-        if (e.Key == "Enter" && !_isBusy && !_showPhonePrompt && !_showReceiveGoods && !string.IsNullOrWhiteSpace(_scanText))
+        if (e.CtrlKey && (e.Key == "h" || e.Key == "H"))
         {
-            await AddFromScanAsync();
+            HoldCart();
+            return;
+        }
+
+        if (e.CtrlKey && (e.Key == "r" || e.Key == "R"))
+        {
+            ResumeHeldCart();
+            return;
+        }
+
+        switch (e.Key)
+        {
+            case "F3":
+                await OpenSearchCustomerAsync();
+                break;
+            case "F4":
+                OpenAddCustomer();
+                break;
+            case "F5":
+                NewSale();
+                break;
+            case "F6":
+                ToggleWhatsAppInvoice();
+                break;
+            case "F7":
+                TogglePrintInvoice();
+                break;
+            case "F8":
+                await SelectRegisteredCustomerMode();
+                break;
+            case "F9":
+                SelectWalkInCustomer();
+                break;
+            case "F12":
+            case "Insert":
+                if (CanPay && !CartService.IsEmpty)
+                {
+                    await PayNowAsync();
+                }
+
+                break;
         }
     }
 
-    private void OpenReceiveGoods()
+    private void LockTerminal()
+    {
+        SessionService.ClearSession();
+        Login.ClearCashier();
+        _ = ShiftStatus.RefreshAsync();
+        Navigation.NavigateTo("/login", forceLoad: true);
+    }
+
+    private void OpenPurchaseOrdersAsync()
     {
         _errorMessage = null;
-        _showReceiveGoods = true;
+        _purchaseOrdersMinimized = false;
+        _showPurchaseOrders = true;
     }
 
-    private void CloseReceiveGoods() => _showReceiveGoods = false;
-
-    private async Task OnGoodsReceivedAsync()
+    private void OpenCreateFromPurchaseOrders()
     {
-        _successMessage = "Stock received — inventory updated.";
-        await Task.WhenAll(LoadProductsAsync(), LoadReceiveProductsAsync(), ShiftStatus.RefreshAsync());
+        _showPurchaseOrders = false;
+        _purchaseOrdersMinimized = false;
+        OpenCreatePurchaseOrder();
     }
+
+    private void OpenCreatePurchaseOrder()
+    {
+        _errorMessage = null;
+        _editingPurchaseOrderId = null;
+        _createPurchaseOrderMinimized = false;
+        _showCreatePurchaseOrder = true;
+    }
+
+    private void OpenEditPurchaseOrder(Guid purchaseOrderId)
+    {
+        _errorMessage = null;
+        _showPurchaseOrders = false;
+        _purchaseOrdersMinimized = false;
+        _editingPurchaseOrderId = purchaseOrderId;
+        _createPurchaseOrderMinimized = false;
+        _showCreatePurchaseOrder = true;
+    }
+
+    private void OpenReceivePurchaseOrder(Guid purchaseOrderId) =>
+        OpenEditPurchaseOrder(purchaseOrderId);
+
+    private void CloseCreatePurchaseOrder()
+    {
+        _showCreatePurchaseOrder = false;
+        _createPurchaseOrderMinimized = false;
+        _editingPurchaseOrderId = null;
+        _cpoMiniInvoice = string.Empty;
+        _cpoMiniLineCount = 0;
+    }
+
+    private void MinimizeCreatePurchaseOrder()
+    {
+        if (_createPurchaseOrderModal is not null)
+        {
+            _cpoMiniInvoice = _createPurchaseOrderModal.InvoiceNo;
+            _cpoMiniLineCount = _createPurchaseOrderModal.ProductLineCount;
+        }
+
+        _showCreatePurchaseOrder = false;
+        _createPurchaseOrderMinimized = true;
+    }
+
+    private void RestoreCreatePurchaseOrder()
+    {
+        _createPurchaseOrderMinimized = false;
+        _showCreatePurchaseOrder = true;
+    }
+
+    private Task OnPurchaseOrderCreatedAsync()
+    {
+        _successMessage = "Purchase order created (open — not received yet).";
+        return Task.CompletedTask;
+    }
+
+    private Task OnPurchaseOrderSavedAsync()
+    {
+        _successMessage = "Purchase order saved.";
+        return Task.CompletedTask;
+    }
+
+    private Task OnPurchaseOrderReceivedAsync()
+    {
+        _successMessage = "Purchase order received into stock.";
+        _editingPurchaseOrderId = null;
+        return Task.CompletedTask;
+    }
+
+    private void ClosePurchaseOrders()
+    {
+        _showPurchaseOrders = false;
+        _purchaseOrdersMinimized = false;
+    }
+
+    private void MinimizePurchaseOrders()
+    {
+        _showPurchaseOrders = false;
+        _purchaseOrdersMinimized = true;
+    }
+
+    private void RestorePurchaseOrders()
+    {
+        _purchaseOrdersMinimized = false;
+        _showPurchaseOrders = true;
+    }
+
+    private static string ItemCode(SalesProductDto product) =>
+        !string.IsNullOrWhiteSpace(product.ShortCode)
+            ? product.ShortCode
+            : (!string.IsNullOrWhiteSpace(product.Barcode) ? product.Barcode : product.Sku);
 
     private static bool TryParseRs(string text, out long paisa)
     {
@@ -1462,21 +2287,12 @@
 
     private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
 
-    private static string FormatQty(CartLine line) =>
-        line.Product.IsLoose
-            ? line.Quantity.ToString("0.##")
-            : line.Quantity.ToString("0");
-
-    private static string DisplayCategory(SalesProductDto product) =>
-        string.IsNullOrWhiteSpace(product.CategoryName) ? "General" : product.CategoryName;
-
-    private static string ShortId(string invoiceNo) =>
-        invoiceNo.Length <= 8 ? invoiceNo : invoiceNo[^8..];
-
     public void Dispose()
     {
+        _isDisposed = true;
         CartService.Changed -= OnCartChanged;
         ShiftStatus.Changed -= OnShiftStatusChanged;
         _clockTimer?.Dispose();
+        _clockTimer = null;
     }
 }

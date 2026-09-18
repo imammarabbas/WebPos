@@ -1,0 +1,108 @@
+@using Common.Models
+@using System.Globalization
+@using WebPos.WindowsTerminal.Services
+
+@if (Visible)
+{
+    <div class="modal-backdrop" @onclick="Close">
+        <div class="sf-modal sf-customer-modal" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="sf-modal-head">
+                <h2>Search Customer · F4</h2>
+                <button type="button" class="link-btn" @onclick="Close">Close</button>
+            </div>
+            <input class="scan-input"
+                   type="search"
+                   placeholder="Name or phone…"
+                   @ref="_input"
+                   @bind="_query"
+                   @bind:event="oninput"
+                   @onkeydown="OnKeyDown"
+                   autocomplete="off" />
+            <ul class="sf-search-list" role="listbox">
+                @foreach ((PartyDto customer, int i) in Hits.Select((c, i) => (c, i)))
+                {
+                    <li class="@(i == _highlight ? "active" : null)"
+                        role="option"
+                        @onclick="() => ChooseAsync(customer)">
+                        <strong>@customer.Name</strong>
+                        <span>@customer.PhoneNumber · Bal Rs @FormatRs(customer.CurrentBalancePaisa)</span>
+                    </li>
+                }
+            </ul>
+            @if (Hits.Count == 0)
+            {
+                <p class="muted">@(_query.Trim().Length == 0 ? "Type to filter customers." : "No customers match.")</p>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public IReadOnlyList<PartyDto> Customers { get; set; } = [];
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<PartyDto> OnSelected { get; set; }
+
+    private ElementReference _input;
+    private string _query = string.Empty;
+    private int _highlight;
+    private bool _wasVisible;
+
+    private IReadOnlyList<PartyDto> Hits =>
+        CustomerApiClient.FilterCustomers(Customers, _query).Take(40).ToList();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Visible && !_wasVisible)
+        {
+            _query = string.Empty;
+            _highlight = 0;
+        }
+
+        _wasVisible = Visible;
+        await Task.CompletedTask;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Visible)
+        {
+            try { await _input.FocusAsync(); } catch { /* ignore */ }
+        }
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            await Close();
+            return;
+        }
+
+        if (e.Key == "ArrowDown")
+        {
+            _highlight = Math.Min(_highlight + 1, Math.Max(Hits.Count - 1, 0));
+            return;
+        }
+
+        if (e.Key == "ArrowUp")
+        {
+            _highlight = Math.Max(_highlight - 1, 0);
+            return;
+        }
+
+        if (e.Key == "Enter" && Hits.Count > 0)
+        {
+            int idx = Math.Clamp(_highlight, 0, Hits.Count - 1);
+            await ChooseAsync(Hits[idx]);
+        }
+    }
+
+    private async Task ChooseAsync(PartyDto customer) =>
+        await OnSelected.InvokeAsync(customer);
+
+    private async Task Close() => await OnClose.InvokeAsync();
+
+    private static string FormatRs(long paisa) =>
+        (paisa / 100m).ToString("N2", CultureInfo.InvariantCulture);
+}

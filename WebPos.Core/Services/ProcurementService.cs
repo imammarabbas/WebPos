@@ -12,7 +12,8 @@ public sealed class ProcurementService : IProcurementService
     private static readonly HashSet<string> AllowedMilkTypes =
         new(StringComparer.OrdinalIgnoreCase) { "COW", "BUFFALO", "MIXED" };
 
-    private readonly WebPosDbContext _context;
+    private readonly IDbContextFactory<WebPosDbContext> _dbFactory;
+    private readonly IAmbientDbContextAccessor _ambient;
     private readonly ITransactionService _transactionService;
     private readonly IPartyLedgerService _partyLedgerService;
     private readonly IPartyService _partyService;
@@ -20,14 +21,16 @@ public sealed class ProcurementService : IProcurementService
     private readonly ITenantService _tenantService;
 
     public ProcurementService(
-        WebPosDbContext context,
+        IDbContextFactory<WebPosDbContext> dbFactory,
+        IAmbientDbContextAccessor ambient,
         ITransactionService transactionService,
         IPartyLedgerService partyLedgerService,
         IPartyService partyService,
         ICashAccountService cashAccountService,
         ITenantService tenantService)
     {
-        _context = context ?? throw new ArgumentNullException(nameof(context));
+        _dbFactory = dbFactory ?? throw new ArgumentNullException(nameof(dbFactory));
+        _ambient = ambient ?? throw new ArgumentNullException(nameof(ambient));
         _transactionService = transactionService
             ?? throw new ArgumentNullException(nameof(transactionService));
         _partyLedgerService = partyLedgerService
@@ -77,7 +80,7 @@ public sealed class ProcurementService : IProcurementService
             // Non-GUID reference so PartyLedger does not treat this as a PurchaseOrderId.
             string referenceNo = $"MILK-{collectionId:N}";
             DateTimeOffset collectionTime =
-                request.CollectionTime ?? DateTimeOffset.UtcNow;
+                (request.CollectionTime ?? DateTimeOffset.UtcNow).ToUniversalTime();
 
             DailyMilkCollection collection = new()
             {
@@ -92,7 +95,7 @@ public sealed class ProcurementService : IProcurementService
                 TotalCreditPaisa = totalCreditPaisa,
                 CollectionTime = collectionTime
             };
-            _context.DailyMilkCollections.Add(collection);
+            _ambient.Required.DailyMilkCollections.Add(collection);
 
             Guid transactionGroupId = await _transactionService.PostBalancedEntriesAsync(
                 new DoubleEntryPostRequest
@@ -199,9 +202,55 @@ public sealed class ProcurementService : IProcurementService
             string paymentMethod = request.PaymentMethod.ToUpperInvariant();
             CashPaymentResolution payment = await _cashAccountService.ResolvePaymentAccountAsync(
                 request.CashAccountId,
+                request.AccountCode,
                 paymentMethod,
                 ct);
             string paymentAccount = payment.AccountCode;
+
+            if (payment.AffectsTillDrawer && request.ShiftId is null)
+            {
+                throw new InvalidOperationException(
+                    "Select an open shift for till-funded supplier payments.");
+            }
+
+            CashierShift? tillShift = null;
+            if (payment.AffectsTillDrawer && request.ShiftId is Guid payShiftId)
+            {
+                tillShift = await CashierShiftLocking.LockByIdForUpdateAsync(
+                    _ambient.Required,
+                    payShiftId,
+                    _tenantService.TenantId,
+                    ct)
+                    ?? throw new InvalidOperationException(
+                        "Open shift was not found for the cash supplier payment.");
+
+                if (!string.Equals(tillShift.Status, "OPEN", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "Open shift was not found for the cash supplier payment.");
+                }
+
+                if (payment.TerminalId is Guid tillTerminal
+                    && tillShift.TerminalId != tillTerminal)
+                {
+                    throw new InvalidOperationException(
+                        "Shift terminal does not match the selected till cash account.");
+                }
+
+                long gl = await SumAmbientGlAsync(paymentAccount, ct);
+                long spendable = CashSpendable.ForTill(gl, tillShift.ExpectedCashPaisa);
+                CashSpendable.EnsureCanSpend(
+                    paymentAccount,
+                    spendable,
+                    request.AmountPaisa,
+                    tillShift.Id,
+                    gl,
+                    tillShift.ExpectedCashPaisa);
+            }
+            else
+            {
+                await EnsureNonTillFundingSufficientAsync(paymentAccount, request.AmountPaisa, ct);
+            }
 
             Guid transactionGroupId = await _transactionService.PostBalancedEntriesAsync(
                 new DoubleEntryPostRequest
@@ -243,26 +292,9 @@ public sealed class ProcurementService : IProcurementService
                 allocations,
                 ct);
 
-            if (request.ShiftId is Guid shiftId && payment.AffectsTillDrawer)
+            if (tillShift is not null)
             {
-                CashierShift shift = await _context.CashierShifts
-                    .FirstOrDefaultAsync(
-                        candidate =>
-                            candidate.Id == shiftId
-                            && candidate.TenantId == _tenantService.TenantId
-                            && candidate.Status == "OPEN",
-                        ct)
-                    ?? throw new InvalidOperationException(
-                        "Open shift was not found for the cash supplier payment.");
-
-                if (payment.TerminalId is Guid tillTerminal
-                    && shift.TerminalId != tillTerminal)
-                {
-                    throw new InvalidOperationException(
-                        "Shift terminal does not match the selected till cash account.");
-                }
-
-                shift.ExpectedCashPaisa -= request.AmountPaisa;
+                tillShift.ExpectedCashPaisa -= request.AmountPaisa;
             }
 
             return new RecordSupplierPaymentResult
@@ -335,9 +367,16 @@ public sealed class ProcurementService : IProcurementService
             string paymentMethod = request.PaymentMethod.ToUpperInvariant();
             CashPaymentResolution payment = await _cashAccountService.ResolvePaymentAccountAsync(
                 request.CashAccountId,
+                request.AccountCode,
                 paymentMethod,
                 ct);
             string paymentAccount = payment.AccountCode;
+
+            if (payment.AffectsTillDrawer && request.ShiftId is null)
+            {
+                throw new InvalidOperationException(
+                    "Select an open shift for till-funded customer payments.");
+            }
 
             Guid transactionGroupId = await _transactionService.PostBalancedEntriesAsync(
                 new DoubleEntryPostRequest
@@ -381,7 +420,7 @@ public sealed class ProcurementService : IProcurementService
 
             if (request.ShiftId is Guid shiftId && payment.AffectsTillDrawer)
             {
-                CashierShift shift = await _context.CashierShifts
+                CashierShift shift = await _ambient.Required.CashierShifts
                     .FirstOrDefaultAsync(
                         candidate =>
                             candidate.Id == shiftId
@@ -574,7 +613,7 @@ public sealed class ProcurementService : IProcurementService
         foreach (PaymentAllocationRequest allocation in allocations)
         {
             string invoiceNo = allocation.InvoiceNo!.Trim();
-            SalesInvoice invoice = await _context.SalesInvoices
+            SalesInvoice invoice = await _ambient.Required.SalesInvoices
                 .FirstOrDefaultAsync(
                     i =>
                         i.InvoiceNo == invoiceNo
@@ -598,7 +637,7 @@ public sealed class ProcurementService : IProcurementService
             }
 
             invoice.AmountPaidPaisa += allocation.AmountPaisa;
-            await _context.PartyPaymentAllocations.AddAsync(
+            await _ambient.Required.PartyPaymentAllocations.AddAsync(
                 new PartyPaymentAllocation
                 {
                     Id = Guid.NewGuid(),
@@ -625,7 +664,7 @@ public sealed class ProcurementService : IProcurementService
         foreach (PaymentAllocationRequest allocation in allocations)
         {
             Guid purchaseOrderId = allocation.PurchaseOrderId!.Value;
-            PurchaseOrder order = await _context.PurchaseOrders
+            PurchaseOrder order = await _ambient.Required.PurchaseOrders
                 .FirstOrDefaultAsync(
                     o =>
                         o.Id == purchaseOrderId
@@ -653,7 +692,7 @@ public sealed class ProcurementService : IProcurementService
                 ? "PAID"
                 : "PARTIAL";
 
-            await _context.PartyPaymentAllocations.AddAsync(
+            await _ambient.Required.PartyPaymentAllocations.AddAsync(
                 new PartyPaymentAllocation
                 {
                     Id = Guid.NewGuid(),
@@ -719,6 +758,32 @@ public sealed class ProcurementService : IProcurementService
         }
 
         return normalized;
+    }
+
+    private async Task EnsureNonTillFundingSufficientAsync(
+        string accountCode,
+        long amountPaisa,
+        CancellationToken cancellationToken)
+    {
+        long gl = await SumAmbientGlAsync(accountCode, cancellationToken);
+        CashSpendable.EnsureCanSpend(
+            CashAccountService.SanitizeAccountCode(accountCode),
+            CashSpendable.ForNonTill(gl),
+            amountPaisa);
+    }
+
+    private async Task<long> SumAmbientGlAsync(
+        string accountCode,
+        CancellationToken cancellationToken)
+    {
+        Guid tenantId = _tenantService.TenantId;
+        string code = accountCode.ToUpperInvariant();
+        IQueryable<GeneralLedgerEntry> query = _ambient.Required.GeneralLedgerEntries
+            .Where(e => e.TenantId == tenantId && e.AccountCode.ToUpper() == code);
+
+        long? debits = await query.SumAsync(e => (long?)e.DebitPaisa, cancellationToken);
+        long? credits = await query.SumAsync(e => (long?)e.CreditPaisa, cancellationToken);
+        return (debits ?? 0L) - (credits ?? 0L);
     }
 
     private void EnsureTenantResolved()

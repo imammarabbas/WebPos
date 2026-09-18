@@ -148,11 +148,18 @@ public sealed class ShiftControllerTests
 
         using (IServiceScope scope = factory.Services.CreateScope())
         {
-            WebPosDbContext db = scope.ServiceProvider.GetRequiredService<WebPosDbContext>();
+            IDbContextFactory<WebPosDbContext> dbFactory =
+                scope.ServiceProvider.GetRequiredService<IDbContextFactory<WebPosDbContext>>();
+            var ambient = new AmbientDbContextAccessor();
             IShiftService shifts = new ShiftService(
-                db,
-                new InlineTransactionService(),
-                new FixedTenantService(TestEnrollmentAuth.DefaultTenantId));
+                dbFactory,
+                ambient,
+                new TransactionService(dbFactory),
+                new FixedTenantService(TestEnrollmentAuth.DefaultTenantId),
+                new CashAccountService(
+                    dbFactory,
+                    ambient,
+                    new FixedTenantService(TestEnrollmentAuth.DefaultTenantId)));
             CashVarianceReport closed = await shifts.ForceCloseShiftAsync(opened.ShiftId);
             closed.Status.Should().Be("CLOSED");
         }
@@ -282,6 +289,152 @@ public sealed class ShiftControllerTests
             });
 
         closeResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task CompleteManySales_ShouldSucceedOverHttp()
+    {
+        await using SalesApiFactory factory = new();
+        HttpClient client = factory.CreateClient();
+        await factory.EnsureTenantAsync();
+        using IServiceScope scope = factory.Services.CreateScope();
+        WebPosDbContext db = scope.ServiceProvider.GetRequiredService<WebPosDbContext>();
+        SaleSeedData seed = await SeedHelper.SeedSalePrerequisitesAsync(db, stockQty: 500m);
+
+        for (int i = 0; i < 25; i++)
+        {
+            using HttpResponseMessage saleResponse = await ApiTestClient.SendAsync(
+                client,
+                factory,
+                HttpMethod.Post,
+                "/api/sales/complete",
+                seed.TenantId,
+                seed.TerminalId,
+                new CompleteSaleRequest
+                {
+                    InvoiceNo = $"INV-STRESS-{i:D3}-{Guid.NewGuid():N}"[..40],
+                    ShiftId = seed.ShiftId,
+                    TerminalId = seed.TerminalId,
+                    CashierId = seed.CashierId,
+                    PaymentMethod = "CASH",
+                    DiscountAmountPaisa = i % 5 == 0 ? 100 : 0,
+                    Lines =
+                    [
+                        new SaleLineRequest
+                        {
+                            ProductId = seed.ProductId,
+                            BatchId = seed.BatchId,
+                            BatchNumber = seed.BatchNumber,
+                            ProductName = seed.ProductName,
+                            Quantity = 1m + (i % 3),
+                            UnitPricePaisa = seed.UnitPricePaisa,
+                            DiscountAppliedPaisa = 0
+                        }
+                    ]
+                });
+
+            string body = await saleResponse.Content.ReadAsStringAsync();
+            saleResponse.StatusCode.Should().Be(HttpStatusCode.OK, $"sale #{i}: {body}");
+        }
+    }
+
+    [Fact]
+    public async Task CompleteAliasPackSale_ManyTimes_ShouldDeductParentStock()
+    {
+        await using SalesApiFactory factory = new();
+        HttpClient client = factory.CreateClient();
+        await factory.EnsureTenantAsync();
+        using IServiceScope scope = factory.Services.CreateScope();
+        WebPosDbContext db = scope.ServiceProvider.GetRequiredService<WebPosDbContext>();
+        SaleSeedData seed = await SeedHelper.SeedSalePrerequisitesAsync(db, stockQty: 100m);
+
+        Guid parentId = Guid.NewGuid();
+        Guid packId = Guid.NewGuid();
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        db.Products.Add(new Product
+        {
+            Id = parentId,
+            TenantId = seed.TenantId,
+            Name = "Bulk Chana 20kg",
+            Sku = $"SKU-P-{parentId:N}"[..20],
+            Barcode = $"BC-P-{parentId:N}"[..20],
+            ShortCode = $"{Random.Shared.Next(5000, 9999)}",
+            Brand = "Test",
+            BaseUnit = "kg",
+            ConversionMultiplier = 1,
+            ShowOnWebshop = false,
+            IsBulk = true,
+            StockQty = 20m,
+            CostPricePaisa = 10_000L,
+            RetailPricePaisa = 0,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        db.Products.Add(new Product
+        {
+            Id = packId,
+            TenantId = seed.TenantId,
+            Name = "Chana 1kg",
+            Sku = $"SKU-C-{packId:N}"[..20],
+            Barcode = $"BC-C-{packId:N}"[..20],
+            ShortCode = "c200",
+            Brand = "Test",
+            BaseUnit = "kg",
+            ConversionMultiplier = 1,
+            ShowOnWebshop = false,
+            IsBulk = false,
+            ParentProductId = parentId,
+            DeductionMultiplier = 1m,
+            StockQty = 0,
+            CostPricePaisa = 10_000L,
+            RetailPricePaisa = 30_000L,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        await db.SaveChangesAsync();
+
+        for (int i = 0; i < 10; i++)
+        {
+            using HttpResponseMessage saleResponse = await ApiTestClient.SendAsync(
+                client,
+                factory,
+                HttpMethod.Post,
+                "/api/sales/complete",
+                seed.TenantId,
+                seed.TerminalId,
+                new CompleteSaleRequest
+                {
+                    InvoiceNo = $"INV-PACK-{i:D2}-{Guid.NewGuid():N}"[..40],
+                    ShiftId = seed.ShiftId,
+                    TerminalId = seed.TerminalId,
+                    CashierId = seed.CashierId,
+                    PaymentMethod = "CASH",
+                    DiscountAmountPaisa = 0,
+                    Lines =
+                    [
+                        new SaleLineRequest
+                        {
+                            ProductId = packId,
+                            BatchId = null,
+                            BatchNumber = string.Empty,
+                            ProductName = "Chana 1kg",
+                            Quantity = 1m,
+                            UnitPricePaisa = 30_000L,
+                            DiscountAppliedPaisa = 0
+                        }
+                    ]
+                });
+
+            string body = await saleResponse.Content.ReadAsStringAsync();
+            saleResponse.StatusCode.Should().Be(HttpStatusCode.OK, $"pack sale #{i}: {body}");
+        }
+
+        db.ChangeTracker.Clear();
+        Product parent = await db.Products
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .SingleAsync(p => p.Id == parentId);
+        parent.StockQty.Should().Be(10m);
     }
 
     [Fact]

@@ -4,16 +4,17 @@ using WebPos.Core.Abstractions;
 using WebPos.Core.Constants;
 using WebPos.Core.Data;
 using WebPos.Core.Interfaces;
+using WebPos.Core.Services;
 
 namespace WebPos.Core.Validation;
 
 public sealed class CreatePartyRequestValidator : AbstractValidator<CreatePartyRequest>
 {
     public CreatePartyRequestValidator(
-        WebPosDbContext dbContext,
+        IDbContextFactory<WebPosDbContext> dbFactory,
         ITenantService tenantService)
     {
-        ArgumentNullException.ThrowIfNull(dbContext);
+        ArgumentNullException.ThrowIfNull(dbFactory);
         ArgumentNullException.ThrowIfNull(tenantService);
 
         RuleFor(request => request.Role)
@@ -33,11 +34,15 @@ public sealed class CreatePartyRequestValidator : AbstractValidator<CreatePartyR
 
                 string normalizedName = name.Trim();
                 string normalizedRole = PartyTypes.Normalize(request.Role);
-                return !await dbContext.Parties.AnyAsync(
-                    party =>
-                        party.TenantId == tenantService.TenantId
-                        && party.PartyType == normalizedRole
-                        && party.Name == normalizedName,
+                return await DbContextExecution.ExecuteAsync(
+                    dbFactory,
+                    async (context, ct) =>
+                        !await context.Parties.AnyAsync(
+                            party =>
+                                party.TenantId == tenantService.TenantId
+                                && party.PartyType == normalizedRole
+                                && party.Name == normalizedName,
+                            ct),
                     cancellationToken);
             })
             .WithMessage(
@@ -54,10 +59,14 @@ public sealed class CreatePartyRequestValidator : AbstractValidator<CreatePartyR
                 }
 
                 string normalizedPhone = phone.Trim();
-                return !await dbContext.Parties.AnyAsync(
-                    party =>
-                        party.TenantId == tenantService.TenantId
-                        && party.PhoneNumber == normalizedPhone,
+                return await DbContextExecution.ExecuteAsync(
+                    dbFactory,
+                    async (context, ct) =>
+                        !await context.Parties.AnyAsync(
+                            party =>
+                                party.TenantId == tenantService.TenantId
+                                && party.PhoneNumber == normalizedPhone,
+                            ct),
                     cancellationToken);
             })
             .WithMessage(

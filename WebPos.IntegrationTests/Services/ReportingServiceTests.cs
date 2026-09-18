@@ -290,6 +290,9 @@ public sealed class ReportingServiceTests
                 Brand = "WebPos",
                 BaseUnit = "PCS",
                 ConversionMultiplier = 1,
+                StockQty = 8,
+                CostPricePaisa = 50_00,
+                RetailPricePaisa = 100_00,
                 CreatedAt = now,
                 UpdatedAt = now
             });

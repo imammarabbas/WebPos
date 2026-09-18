@@ -1,7 +1,9 @@
 @page "/close-shift"
 @using Common.Models
+@using WebPos.Client.Sdk
 @inject LoginApiClient Login
 @inject ShiftApiClient ShiftApi
+@inject IApiClient ApiClient
 @inject ISessionService SessionService
 @inject TerminalOptions TerminalOptions
 @inject NavigationManager Navigation
@@ -27,16 +29,27 @@
         @if (_report is not null)
         {
             <section class="variance-panel" aria-live="polite">
-                <h2>Cash variance</h2>
+                <h2>Cash reconciliation</h2>
                 <dl>
-                    <dt>Expected</dt>
-                    <dd>Rs @((_report.ExpectedCashPaisa / 100m).ToString("N2"))</dd>
-                    <dt>Counted</dt>
-                    <dd>Rs @((_report.ActualCashPaisa / 100m).ToString("N2"))</dd>
-                    <dt>Discrepancy</dt>
+                    <dt>Expected cash</dt>
+                    <dd>Rs @FormatRs(_report.ExpectedCashPaisa)</dd>
+                    <dt>Physical count</dt>
+                    <dd>Rs @FormatRs(_report.PhysicalCountPaisa)</dd>
+                    <dt>Difference</dt>
                     <dd class="@(_report.IsBalanced ? "ok" : "warn")">
-                        Rs @((_report.DiscrepancyPaisa / 100m).ToString("N2"))
-                        @(_report.IsBalanced ? "(balanced)" : "")
+                        Rs @FormatRs(_report.DiscrepancyPaisa)
+                    </dd>
+                    <dt>Registered (ledger)</dt>
+                    <dd>Rs @FormatRs(_report.RegisteredLedgerPaisa)</dd>
+                    <dt>Available</dt>
+                    <dd>Rs @FormatRs(_report.AvailablePaisa)</dd>
+                    <dt>Unreconciled Cash In</dt>
+                    <dd>Rs @FormatRs(_report.UnreconciledCashInPaisa)</dd>
+                    <dt>Unreconciled Cash Out</dt>
+                    <dd>Rs @FormatRs(_report.UnreconciledCashOutPaisa)</dd>
+                    <dt>Status</dt>
+                    <dd class="@(_report.ReconciliationStatus == "MATCHED" ? "ok" : "warn")">
+                        @_report.ReconciliationStatus
                     </dd>
                 </dl>
                 <button type="button" class="start-button" @onclick="GoLogin">
@@ -59,6 +72,44 @@
                        @bind:event="oninput"
                        disabled="@_isBusy" />
 
+                @if (_open is not null)
+                {
+                    long physical = ParsePhysicalPaisa();
+                    long difference = physical - _open.ExpectedCashPaisa;
+                    string status = difference < 0
+                        ? "SHORTAGE"
+                        : difference > 0
+                            ? "OVERAGE"
+                            : (_open.UnreconciledCashInPaisa + _open.UnreconciledCashOutPaisa) > 0
+                                ? "UNRECONCILED"
+                                : "MATCHED";
+                    <section class="variance-panel" style="margin-top:1rem;" aria-live="polite">
+                        <h2>Preview</h2>
+                        <dl>
+                            <dt>Expected cash</dt>
+                            <dd>Rs @FormatRs(_open.ExpectedCashPaisa)</dd>
+                            <dt>Physical count</dt>
+                            <dd>Rs @FormatRs(physical)</dd>
+                            <dt>Difference</dt>
+                            <dd>Rs @FormatRs(difference)</dd>
+                            <dt>Registered (ledger)</dt>
+                            <dd>Rs @FormatRs(_open.RegisteredLedgerPaisa)</dd>
+                            <dt>Available</dt>
+                            <dd>Rs @FormatRs(_open.AvailablePaisa)</dd>
+                            <dt>Unreconciled Cash In</dt>
+                            <dd>Rs @FormatRs(_open.UnreconciledCashInPaisa)</dd>
+                            <dt>Unreconciled Cash Out</dt>
+                            <dd>Rs @FormatRs(_open.UnreconciledCashOutPaisa)</dd>
+                            <dt>Status</dt>
+                            <dd>@status</dd>
+                        </dl>
+                        <p class="mm-muted" style="font-size:0.85rem;">
+                            Expected cash is the system float. Physical count is your blind observation — it does not overwrite Expected.
+                            Ledger vs Expected is not treated as shortage here.
+                        </p>
+                    </section>
+                }
+
                 <div class="terminal-id">
                     Shift: @(SessionService.IsActive ? SessionService.ShiftId.ToString() : "none")
                 </div>
@@ -78,8 +129,9 @@
     private string? _errorMessage;
     private bool _isBusy;
     private CashVarianceReport? _report;
+    private OpenShiftDto? _open;
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         if (Login.CurrentCashier is null)
         {
@@ -90,7 +142,29 @@
         if (!SessionService.IsActive)
         {
             _errorMessage = "No open shift. Start a shift before closing.";
+            return;
         }
+
+        try
+        {
+            _open = await ApiClient.GetOpenShiftAsync(TerminalOptions.TerminalId);
+        }
+        catch
+        {
+            /* preview best-effort */
+        }
+    }
+
+    private long ParsePhysicalPaisa()
+    {
+        if (!decimal.TryParse(_actualCashText, out decimal actualCash)
+            || actualCash < 0
+            || actualCash > long.MaxValue / 100m)
+        {
+            return 0;
+        }
+
+        return (long)Math.Round(actualCash * 100m, MidpointRounding.AwayFromZero);
     }
 
     private async Task CloseShiftAsync()
@@ -140,4 +214,6 @@
     }
 
     private void GoLogin() => Navigation.NavigateTo("/login");
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
 }

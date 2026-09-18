@@ -9,18 +9,21 @@ namespace WebPos.Core.Services;
 
 public sealed class PurchaseReturnService : IPurchaseReturnService
 {
-    private readonly WebPosDbContext _context;
+    private readonly IDbContextFactory<WebPosDbContext> _dbFactory;
+    private readonly IAmbientDbContextAccessor _ambient;
     private readonly ITransactionService _transactionService;
     private readonly IPartyLedgerService _partyLedgerService;
     private readonly ITenantService _tenantService;
 
     public PurchaseReturnService(
-        WebPosDbContext context,
+        IDbContextFactory<WebPosDbContext> dbFactory,
+        IAmbientDbContextAccessor ambient,
         ITransactionService transactionService,
         IPartyLedgerService partyLedgerService,
         ITenantService tenantService)
     {
-        _context = context ?? throw new ArgumentNullException(nameof(context));
+        _dbFactory = dbFactory ?? throw new ArgumentNullException(nameof(dbFactory));
+        _ambient = ambient ?? throw new ArgumentNullException(nameof(ambient));
         _transactionService = transactionService
             ?? throw new ArgumentNullException(nameof(transactionService));
         _partyLedgerService = partyLedgerService
@@ -39,8 +42,9 @@ public sealed class PurchaseReturnService : IPurchaseReturnService
         return _transactionService.ExecuteInTransactionAsync(async ct =>
         {
             ValidateRequest(request);
+            WebPosDbContext context = _ambient.Required;
 
-            PurchaseOrder purchaseOrder = await _context.PurchaseOrders
+            PurchaseOrder purchaseOrder = await context.PurchaseOrders
                 .Include(order => order.Items)
                 .FirstOrDefaultAsync(
                     order =>
@@ -50,7 +54,7 @@ public sealed class PurchaseReturnService : IPurchaseReturnService
                 ?? throw new InvalidOperationException(
                     "Purchase order was not found for the current tenant.");
 
-            bool managerExists = await _context.Users.AnyAsync(
+            bool managerExists = await context.Users.AnyAsync(
                 user =>
                     user.Id == request.ManagerId
                     && user.TenantId == _tenantService.TenantId
@@ -68,8 +72,8 @@ public sealed class PurchaseReturnService : IPurchaseReturnService
             long totalCreditDeductionPaisa = 0;
 
             List<PurchaseReturnItem> priorReturnItems = await (
-                from item in _context.PurchaseReturnItems
-                join existingReturn in _context.PurchaseReturns
+                from item in context.PurchaseReturnItems
+                join existingReturn in context.PurchaseReturns
                     on item.PurchaseReturnId equals existingReturn.Id
                 where existingReturn.OriginalPurchaseOrderId == request.OriginalPurchaseOrderId
                       && existingReturn.TenantId == _tenantService.TenantId
@@ -83,7 +87,7 @@ public sealed class PurchaseReturnService : IPurchaseReturnService
                         "Return quantity must be greater than zero.");
                 }
 
-                ProductBatch batch = await _context.ProductBatches
+                ProductBatch batch = await context.ProductBatches
                     .FirstOrDefaultAsync(
                         candidate =>
                             candidate.Id == line.BatchId
@@ -105,10 +109,23 @@ public sealed class PurchaseReturnService : IPurchaseReturnService
                         $"Batch {line.BatchId} is not linked to the original purchase order.");
                 }
 
-                if (line.Quantity > batch.CurrentQty)
+                Product product = await context.Products
+                    .FirstOrDefaultAsync(
+                        p => p.Id == line.ProductId && p.TenantId == _tenantService.TenantId,
+                        ct)
+                    ?? throw new InvalidOperationException(
+                        $"Product {line.ProductId} was not found for the current tenant.");
+
+                if (product.ParentProductId is not null)
                 {
                     throw new InvalidOperationException(
-                        $"Insufficient batch stock to return. Available: {batch.CurrentQty}.");
+                        "Cannot return purchase stock for an alias product.");
+                }
+
+                if (line.Quantity > product.StockQty)
+                {
+                    throw new InvalidOperationException(
+                        $"Insufficient product stock to return. Available: {product.StockQty}.");
                 }
 
                 decimal purchasedQty = purchaseOrder.Items
@@ -130,8 +147,11 @@ public sealed class PurchaseReturnService : IPurchaseReturnService
                         $"Cannot return {line.Quantity}; only {returnable} remaining for this purchase line.");
                 }
 
+                long unitCost = batch.CostPricePaisa > 0
+                    ? batch.CostPricePaisa
+                    : product.CostPricePaisa;
                 long lineCreditPaisa = (long)Math.Round(
-                    line.Quantity * batch.CostPricePaisa,
+                    line.Quantity * unitCost,
                     MidpointRounding.AwayFromZero);
                 totalCreditDeductionPaisa += lineCreditPaisa;
                 resolved.Add((line, batch, lineCreditPaisa));
@@ -156,11 +176,11 @@ public sealed class PurchaseReturnService : IPurchaseReturnService
                 TotalCreditDeductionPaisa = totalCreditDeductionPaisa,
                 CreatedAt = now
             };
-            _context.PurchaseReturns.Add(purchaseReturn);
+            context.PurchaseReturns.Add(purchaseReturn);
 
             foreach ((PurchaseReturnLineRequest line, ProductBatch batch, _) in resolved)
             {
-                _context.PurchaseReturnItems.Add(new PurchaseReturnItem
+                context.PurchaseReturnItems.Add(new PurchaseReturnItem
                 {
                     Id = Guid.NewGuid(),
                     TenantId = _tenantService.TenantId,
@@ -171,7 +191,25 @@ public sealed class PurchaseReturnService : IPurchaseReturnService
                     CostPerUnitPaisa = batch.CostPricePaisa
                 });
 
-                batch.CurrentQty -= line.Quantity;
+                int stockRows = await context.Products
+                    .Where(p =>
+                        p.Id == line.ProductId
+                        && p.TenantId == _tenantService.TenantId
+                        && p.StockQty >= line.Quantity)
+                    .ExecuteUpdateAsync(
+                        s => s.SetProperty(p => p.StockQty, p => p.StockQty - line.Quantity),
+                        ct);
+                if (stockRows == 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Insufficient product stock to return for product {line.ProductId}.");
+                }
+
+                // Keep legacy batch qty in sync when still used as inventory (older rows).
+                if (batch.CurrentQty > 0)
+                {
+                    batch.CurrentQty = Math.Max(0m, batch.CurrentQty - line.Quantity);
+                }
             }
 
             Guid transactionGroupId = await _transactionService.PostBalancedEntriesAsync(

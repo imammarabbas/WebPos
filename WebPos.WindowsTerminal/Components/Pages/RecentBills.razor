@@ -1,89 +1,383 @@
 @page "/recent-bills"
+@using System.Globalization
 @using Common.Models
 @inject ISessionService SessionService
 @inject InvoiceApiClient InvoiceApi
+@inject CustomerApiClient CustomerApi
 @inject NavigationManager Navigation
-@inject LastSaleReceiptStore LastSale
 @inject WhatsAppReceiptService WhatsAppReceipt
+@inject IJSRuntime Js
 
-<PageTitle>Recent Bills</PageTitle>
+<PageTitle>Previous Sales</PageTitle>
 
-<div class="page-shell">
-    <header class="page-header">
-        <div>
-            <h1>Recent bills</h1>
-            <p class="muted">All terminals · recent invoices</p>
+<div class="page-shell po-page">
+    <PosTopMenu />
+
+    <div class="po-page-header">
+        <div class="po-page-header-left">
+            <div class="po-icon-tile" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" stroke-linecap="round" />
+                </svg>
+            </div>
+            <div>
+                <h1>Previous Sales</h1>
+                <p>View past bills · return, print, or WhatsApp · customer ledger by date</p>
+            </div>
         </div>
-        <a class="link-btn" href="sales">← Back to POS</a>
-    </header>
+        <a class="po-btn po-btn-outline" href="sales">Back to Sale</a>
+    </div>
 
     @if (!string.IsNullOrWhiteSpace(_error))
     {
-        <div class="alert-red">@_error</div>
+        <div class="po-alert">@_error</div>
     }
 
-    @if (_isLoading)
+    @if (_detail is not null)
     {
-        <p class="muted">Loading…</p>
-    }
-    else if (_invoices.Count == 0)
-    {
-        <p class="muted">No recent bills yet.</p>
+        <div class="po-card">
+            <h2>Sale @_detail.InvoiceNo</h2>
+            <div class="pov-info-grid">
+                <div class="pov-info-item"><label>Invoice</label><div class="pov-value">@_detail.InvoiceNo</div></div>
+                <div class="pov-info-item"><label>Date</label><div class="pov-value">@_detail.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</div></div>
+                <div class="pov-info-item"><label>Customer</label><div class="pov-value">@(string.IsNullOrWhiteSpace(_detail.CustomerName) ? "Walk-in" : _detail.CustomerName)</div></div>
+                <div class="pov-info-item"><label>Payment</label><div class="pov-value">@_detail.PaymentMethod</div></div>
+            </div>
+        </div>
+
+        <div class="po-card">
+            <h2>Items</h2>
+            <div class="po-table-wrap">
+                <table class="po-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Product</th>
+                            <th class="po-num">Qty</th>
+                            <th class="po-num">Price</th>
+                            <th class="po-num">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @{
+                            int i = 0;
+                        }
+                        @foreach (SalesInvoiceLineDto line in _detail.Lines)
+                        {
+                            i++;
+                            long amount = (long)Math.Round(line.QuantitySold * line.UnitPricePaisa, MidpointRounding.AwayFromZero);
+                            <tr>
+                                <td>@i</td>
+                                <td>@line.ProductName</td>
+                                <td class="po-num">@line.QuantitySold.ToString("0.##", CultureInfo.InvariantCulture)</td>
+                                <td class="po-num">@FormatRs(line.UnitPricePaisa)</td>
+                                <td class="po-num">@FormatRs(amount)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="po-card">
+            <h2>Totals</h2>
+            <div class="pov-totals">
+                <div class="pov-totals-row"><span>Sub Total</span><span>Rs @FormatRs(_detail.GrossAmountPaisa)</span></div>
+                <div class="pov-totals-row"><span>Discount</span><span>Rs @FormatRs(_detail.DiscountAmountPaisa)</span></div>
+                <div class="pov-totals-row grand"><span>Grand Total</span><span>Rs @FormatRs(_detail.TotalAmountPaisa)</span></div>
+            </div>
+            <div class="pov-footer-actions">
+                <a class="po-btn po-btn-primary" href="@($"returns?invoice={Uri.EscapeDataString(_detail.InvoiceNo)}")">Return</a>
+                <button type="button" class="po-btn po-btn-outline" @onclick="() => SendWhatsAppDetailAsync(_detail)">WhatsApp</button>
+                <button type="button" class="po-btn po-btn-outline" @onclick="() => PrintDetailAsync(_detail)">Print</button>
+                <button type="button" class="po-btn" @onclick="CloseView">Back</button>
+            </div>
+        </div>
     }
     else
     {
-        <div class="bill-list">
-            @foreach (SalesInvoiceSummaryDto bill in _invoices)
-            {
-                <article class="bill-card">
-                    <div class="bill-top">
-                        <strong>#@ShortId(bill.InvoiceNo)</strong>
-                        <span>@bill.CreatedAt.ToLocalTime().ToString("HH:mm")</span>
-                    </div>
-                    <div class="bill-amount">Rs @FormatRs(bill.TotalAmountPaisa)</div>
-                    <div class="bill-meta">
-                        @bill.ItemCount items · @bill.PaymentMethod
-                        @if (!string.IsNullOrWhiteSpace(bill.CustomerName))
-                        {
-                            <span> · @bill.CustomerName</span>
-                        }
-                    </div>
-                    <div class="bill-actions">
-                        <a class="secondary-btn" href="@($"returns?invoice={Uri.EscapeDataString(bill.InvoiceNo)}")">Return</a>
-                        <button type="button" class="secondary-btn" @onclick="() => SendWhatsAppAsync(bill)">WhatsApp</button>
-                    </div>
-                </article>
-            }
+        <div class="po-card rb-filter-card">
+            <div class="po-filter-row rb-filter-row">
+                <div class="po-field rb-search-field">
+                    <label for="bill-search">Search</label>
+                    <input id="bill-search"
+                           class="form-control"
+                           type="search"
+                           placeholder="Search invoice / customer…"
+                           value="@_filter"
+                           @oninput="OnSearchInput"
+                           disabled="@_isLoading" />
+                    @if (_customerHits.Count > 0 && _ledgerCustomer is null)
+                    {
+                        <ul class="rb-customer-suggest" role="listbox">
+                            @foreach (PartyDto hit in _customerHits)
+                            {
+                                <li role="option" @onclick="() => SelectCustomerAsync(hit)">
+                                    <strong>@hit.Name</strong>
+                                    <span>@hit.PhoneNumber</span>
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+                <div class="po-field">
+                    <label for="bill-from">From Date</label>
+                    <input id="bill-from" class="form-control" type="date" @bind="_fromDate" disabled="@_isLoading" />
+                </div>
+                <div class="po-field">
+                    <label for="bill-to">To Date</label>
+                    <input id="bill-to" class="form-control" type="date" @bind="_toDate" disabled="@_isLoading" />
+                </div>
+                <div class="po-filter-actions">
+                    <button type="button" class="po-btn po-btn-primary" disabled="@_isLoading" @onclick="ApplyAsync">Apply</button>
+                    <button type="button" class="po-btn po-btn-outline" disabled="@_isLoading" @onclick="ReloadAsync">Refresh</button>
+                </div>
+            </div>
+            <div class="rb-quick-row">
+                <button type="button" class="po-btn po-btn-sm po-btn-outline" disabled="@_isLoading" @onclick="() => SetQuickRange(QuickRange.ThisMonth)">This Month</button>
+                <button type="button" class="po-btn po-btn-sm po-btn-outline" disabled="@_isLoading" @onclick="() => SetQuickRange(QuickRange.LastMonth)">Last Month</button>
+                <button type="button" class="po-btn po-btn-sm po-btn-outline" disabled="@_isLoading" @onclick="() => SetQuickRange(QuickRange.Last30)">Last 30 Days</button>
+                <button type="button" class="po-btn po-btn-sm po-btn-outline" disabled="@_isLoading" @onclick="() => SetQuickRange(QuickRange.Last60)">Last 60 Days</button>
+                @if (_ledgerCustomer is not null)
+                {
+                    <button type="button" class="po-btn po-btn-sm" disabled="@_isLoading" @onclick="ClearLedgerCustomer">Clear customer</button>
+                }
+            </div>
         </div>
+
+        @if (_ledgerCustomer is not null)
+        {
+            <div class="po-card">
+                <div class="rb-ledger-head">
+                    <div>
+                        <h2>Customer Ledger</h2>
+                        <p class="rb-ledger-sub">@_ledgerCustomer.Name · @_fromDate.ToString("dd/MM/yyyy") → @_toDate.ToString("dd/MM/yyyy")</p>
+                    </div>
+                    <button type="button" class="po-btn po-btn-primary" disabled="@(_isLoading || _ledgerEntries.Count == 0)" @onclick="SendWhatsAppLedgerAsync">
+                        WhatsApp Ledger
+                    </button>
+                </div>
+                <div class="rb-kpi-row">
+                    <div class="rb-kpi"><span>Opening Balance</span><strong>Rs @FormatRs(_openingBalancePaisa)</strong></div>
+                    <div class="rb-kpi"><span>Total Debit</span><strong>Rs @FormatRs(_totalDebitPaisa)</strong></div>
+                    <div class="rb-kpi"><span>Total Credit</span><strong>Rs @FormatRs(_totalCreditPaisa)</strong></div>
+                    <div class="rb-kpi"><span>Closing Balance</span><strong>Rs @FormatRs(_closingBalancePaisa)</strong></div>
+                </div>
+            </div>
+        }
+
+        @if (_isLoading)
+        {
+            <p class="po-empty">Loading…</p>
+        }
+        else if (_ledgerCustomer is not null)
+        {
+            @if (_ledgerEntries.Count == 0)
+            {
+                <p class="po-empty">No ledger transactions in this date range.</p>
+            }
+            else
+            {
+                <div class="po-card">
+                    <div class="po-table-wrap">
+                        <table class="po-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Invoice / Reference</th>
+                                    <th>Description</th>
+                                    <th class="po-num">Debit</th>
+                                    <th class="po-num">Credit</th>
+                                    <th class="po-num">Balance</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (PartyLedgerEntryDto entry in _ledgerEntries)
+                                {
+                                    <tr>
+                                        <td>@entry.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy")</td>
+                                        <td><strong>@(string.IsNullOrWhiteSpace(entry.InvoiceNo) ? ShortId(entry.ReferenceDetails) : ShortId(entry.InvoiceNo))</strong></td>
+                                        <td>@DescribeEntry(entry)</td>
+                                        <td class="po-num">@(entry.DebitPaisa > 0 ? FormatRs(entry.DebitPaisa) : "—")</td>
+                                        <td class="po-num">@(entry.CreditPaisa > 0 ? FormatRs(entry.CreditPaisa) : "—")</td>
+                                        <td class="po-num">@FormatRs(entry.NewBalancePaisa)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
+        }
+        else if (Filtered.Count == 0)
+        {
+            <p class="po-empty">No previous sales found.</p>
+        }
+        else
+        {
+            <div class="po-card">
+                <div class="po-table-wrap">
+                    <table class="po-table">
+                        <thead>
+                            <tr>
+                                <th>Invoice</th>
+                                <th>Date</th>
+                                <th>Customer</th>
+                                <th class="po-num">Items</th>
+                                <th class="po-num">Total (Rs)</th>
+                                <th>Payment</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (SalesInvoiceSummaryDto bill in Filtered)
+                            {
+                                <tr>
+                                    <td><strong>@ShortId(bill.InvoiceNo)</strong></td>
+                                    <td>@bill.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</td>
+                                    <td>@(string.IsNullOrWhiteSpace(bill.CustomerName) ? "Walk-in" : bill.CustomerName)</td>
+                                    <td class="po-num">@bill.ItemCount</td>
+                                    <td class="po-num">@FormatRs(bill.TotalAmountPaisa)</td>
+                                    <td><span class="po-badge po-badge-open">@bill.PaymentMethod</span></td>
+                                    <td>
+                                        <div class="po-actions">
+                                            <button type="button" class="po-btn po-btn-sm po-btn-outline" @onclick="() => ViewAsync(bill)">View</button>
+                                            <a class="po-btn po-btn-sm po-btn-primary" href="@($"returns?invoice={Uri.EscapeDataString(bill.InvoiceNo)}")">Return</a>
+                                            <button type="button" class="po-btn po-btn-sm po-btn-outline" @onclick="() => SendWhatsAppAsync(bill)">WhatsApp</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
     }
 
     @if (_showPhonePrompt)
     {
-        <div class="modal-backdrop" @onclick="() => _showPhonePrompt = false">
-            <div class="success-modal" @onclick:stopPropagation="true">
+        <div class="modal-backdrop po-modal-backdrop" @onclick="() => _showPhonePrompt = false">
+            <div class="po-card" style="width:min(420px,92vw);margin:10vh auto;" @onclick:stopPropagation="true">
                 <h2>WhatsApp phone</h2>
-                <input class="txn-ref-input" type="tel" @bind="_waPhone" @bind:event="oninput" placeholder="03xxxxxxxxx" />
+                <div class="po-field">
+                    <label>Phone</label>
+                    <input class="form-control" type="tel" @bind="_waPhone" @bind:event="oninput" placeholder="03xxxxxxxxx" />
+                </div>
                 @if (!string.IsNullOrWhiteSpace(_waError))
                 {
                     <p class="field-error">@_waError</p>
                 }
-                <div class="checkout-actions">
-                    <button type="button" class="secondary-btn" @onclick="() => _showPhonePrompt = false">Cancel</button>
-                    <button type="button" class="pay-btn" @onclick="ConfirmWhatsAppAsync">Send</button>
+                <div class="pov-footer-actions">
+                    <button type="button" class="po-btn" @onclick="() => _showPhonePrompt = false">Cancel</button>
+                    <button type="button" class="po-btn po-btn-primary" @onclick="ConfirmWhatsAppAsync">Send</button>
                 </div>
             </div>
         </div>
     }
 </div>
 
+<style>
+    .rb-filter-card { min-height: 7.5rem; }
+    .rb-filter-row {
+        grid-template-columns: minmax(14rem, 1.6fr) minmax(9rem, 0.7fr) minmax(9rem, 0.7fr) auto;
+        align-items: end;
+    }
+    .rb-search-field { position: relative; }
+    .rb-customer-suggest {
+        position: absolute;
+        left: 0; right: 0; top: calc(100% + 0.2rem);
+        z-index: 20;
+        margin: 0; padding: 0.35rem;
+        list-style: none;
+        background: #fff;
+        border: 1px solid #dbe3ef;
+        border-radius: 8px;
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+        max-height: 14rem;
+        overflow: auto;
+    }
+    .rb-customer-suggest li {
+        display: flex; flex-direction: column; gap: 0.1rem;
+        padding: 0.5rem 0.55rem; border-radius: 6px; cursor: pointer;
+    }
+    .rb-customer-suggest li:hover { background: #eff6ff; }
+    .rb-customer-suggest strong { color: #1d4ed8; font-size: 0.88rem; }
+    .rb-customer-suggest span { color: #64748b; font-size: 0.75rem; }
+    .rb-quick-row {
+        display: flex; flex-wrap: wrap; gap: 0.4rem;
+        margin-top: 0.75rem; min-height: 2.1rem; align-items: center;
+    }
+    .rb-ledger-head {
+        display: flex; justify-content: space-between; align-items: flex-start;
+        gap: 1rem; margin-bottom: 0.85rem;
+    }
+    .rb-ledger-head h2 { margin: 0; }
+    .rb-ledger-sub { margin: 0.25rem 0 0; color: #64748b; font-weight: 600; }
+    .rb-kpi-row {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.65rem;
+    }
+    .rb-kpi {
+        background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px;
+        padding: 0.65rem 0.75rem; display: flex; flex-direction: column; gap: 0.2rem;
+    }
+    .rb-kpi span { font-size: 0.72rem; font-weight: 700; color: #64748b; text-transform: uppercase; }
+    .rb-kpi strong { color: #1e3a5f; font-size: 1rem; }
+    @@media (max-width: 1100px) {
+        .rb-filter-row { grid-template-columns: 1fr 1fr; }
+        .rb-kpi-row { grid-template-columns: 1fr 1fr; }
+    }
+</style>
+
 @code {
+    private enum QuickRange { ThisMonth, LastMonth, Last30, Last60 }
+    private enum WaMode { Receipt, Ledger }
+
     private IReadOnlyList<SalesInvoiceSummaryDto> _invoices = [];
+    private IReadOnlyList<PartyDto> _customers = [];
+    private IReadOnlyList<PartyDto> _customerHits = [];
+    private IReadOnlyList<PartyLedgerEntryDto> _ledgerEntries = [];
+    private PartyDto? _ledgerCustomer;
+    private SalesInvoiceDetailDto? _detail;
+    private string _filter = string.Empty;
+    private DateOnly _fromDate;
+    private DateOnly _toDate;
     private bool _isLoading = true;
     private string? _error;
     private bool _showPhonePrompt;
     private string _waPhone = string.Empty;
     private string? _waError;
     private SalesInvoiceDetailDto? _pendingDetail;
+    private WaMode _waMode = WaMode.Receipt;
+    private long _openingBalancePaisa;
+    private long _closingBalancePaisa;
+    private long _totalDebitPaisa;
+    private long _totalCreditPaisa;
+
+    private List<SalesInvoiceSummaryDto> Filtered
+    {
+        get
+        {
+            string q = _filter.Trim();
+            DateTimeOffset fromUtc = StartOfLocalDay(_fromDate);
+            DateTimeOffset toUtc = EndOfLocalDay(_toDate);
+
+            IEnumerable<SalesInvoiceSummaryDto> query = _invoices.Where(b =>
+                b.CreatedAt >= fromUtc && b.CreatedAt <= toUtc);
+
+            if (!string.IsNullOrEmpty(q))
+            {
+                query = query.Where(b =>
+                    b.InvoiceNo.Contains(q, StringComparison.OrdinalIgnoreCase)
+                    || (b.CustomerName?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (b.ReceiptNumber?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false));
+            }
+
+            return query.OrderByDescending(b => b.CreatedAt).ToList();
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -93,18 +387,195 @@
             return;
         }
 
-        Result<IReadOnlyList<SalesInvoiceSummaryDto>> result =
-            await InvoiceApi.ListRecentAsync(50);
-        _isLoading = false;
+        await SetQuickRange(QuickRange.ThisMonth);
+        await ReloadAsync();
+    }
 
-        if (!result.Success || result.Data is null)
+    private async Task ReloadAsync()
+    {
+        _isLoading = true;
+        _error = null;
+        try
         {
-            _error = result.ErrorMessage ?? "Unable to load bills.";
+            Result<IReadOnlyList<SalesInvoiceSummaryDto>> invoices = await InvoiceApi.ListRecentAsync(200);
+            Result<IReadOnlyList<PartyDto>> customers = await CustomerApi.GetCustomersAsync();
+
+            if (!invoices.Success || invoices.Data is null)
+            {
+                _error = invoices.ErrorMessage ?? "Unable to load bills.";
+                _invoices = [];
+            }
+            else
+            {
+                _invoices = invoices.Data;
+            }
+
+            _customers = customers.Success && customers.Data is not null ? customers.Data : [];
+
+            if (_ledgerCustomer is not null)
+            {
+                await LoadLedgerAsync();
+            }
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task ApplyAsync()
+    {
+        _error = null;
+        if (_toDate < _fromDate)
+        {
+            _error = "To Date must be on or after From Date.";
             return;
         }
 
-        _invoices = result.Data;
+        if (_ledgerCustomer is not null)
+        {
+            _isLoading = true;
+            try
+            {
+                await LoadLedgerAsync();
+            }
+            finally
+            {
+                _isLoading = false;
+            }
+        }
     }
+
+    private void OnSearchInput(ChangeEventArgs e)
+    {
+        _filter = e.Value?.ToString() ?? string.Empty;
+        if (_ledgerCustomer is not null)
+        {
+            return;
+        }
+
+        string q = _filter.Trim();
+        if (q.Length < 2)
+        {
+            _customerHits = [];
+            return;
+        }
+
+        _customerHits = CustomerApiClient.FilterCustomers(_customers, q).Take(8).ToList();
+    }
+
+    private async Task SelectCustomerAsync(PartyDto customer)
+    {
+        _ledgerCustomer = customer;
+        _filter = customer.Name;
+        _customerHits = [];
+        _detail = null;
+        _isLoading = true;
+        _error = null;
+        try
+        {
+            await LoadLedgerAsync();
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void ClearLedgerCustomer()
+    {
+        _ledgerCustomer = null;
+        _ledgerEntries = [];
+        _openingBalancePaisa = 0;
+        _closingBalancePaisa = 0;
+        _totalDebitPaisa = 0;
+        _totalCreditPaisa = 0;
+        _customerHits = [];
+    }
+
+    private async Task LoadLedgerAsync()
+    {
+        if (_ledgerCustomer is null)
+        {
+            return;
+        }
+
+        DateTimeOffset from = StartOfLocalDay(_fromDate);
+        DateTimeOffset to = EndOfLocalDay(_toDate);
+        Result<IReadOnlyList<PartyLedgerEntryDto>> result =
+            await CustomerApi.GetLedgerAsync(_ledgerCustomer.Id, from, to, 500);
+
+        if (!result.Success || result.Data is null)
+        {
+            _error = result.ErrorMessage ?? "Unable to load customer ledger.";
+            _ledgerEntries = [];
+            _openingBalancePaisa = 0;
+            _closingBalancePaisa = 0;
+            _totalDebitPaisa = 0;
+            _totalCreditPaisa = 0;
+            return;
+        }
+
+        _ledgerEntries = result.Data;
+        if (_ledgerEntries.Count == 0)
+        {
+            _openingBalancePaisa = _ledgerCustomer.CurrentBalancePaisa;
+            _closingBalancePaisa = _ledgerCustomer.CurrentBalancePaisa;
+            _totalDebitPaisa = 0;
+            _totalCreditPaisa = 0;
+            return;
+        }
+
+        _openingBalancePaisa = _ledgerEntries[0].OldBalancePaisa;
+        _closingBalancePaisa = _ledgerEntries[^1].NewBalancePaisa;
+        _totalDebitPaisa = _ledgerEntries.Sum(e => e.DebitPaisa);
+        _totalCreditPaisa = _ledgerEntries.Sum(e => e.CreditPaisa);
+    }
+
+    private async Task SetQuickRange(QuickRange range)
+    {
+        DateOnly today = DateOnly.FromDateTime(DateTime.Today);
+        switch (range)
+        {
+            case QuickRange.ThisMonth:
+                _fromDate = new DateOnly(today.Year, today.Month, 1);
+                _toDate = today;
+                break;
+            case QuickRange.LastMonth:
+                DateOnly firstThis = new(today.Year, today.Month, 1);
+                _toDate = firstThis.AddDays(-1);
+                _fromDate = new DateOnly(_toDate.Year, _toDate.Month, 1);
+                break;
+            case QuickRange.Last30:
+                _toDate = today;
+                _fromDate = today.AddDays(-29);
+                break;
+            case QuickRange.Last60:
+                _toDate = today;
+                _fromDate = today.AddDays(-59);
+                break;
+        }
+
+        if (_ledgerCustomer is not null)
+        {
+            await ApplyAsync();
+        }
+    }
+
+    private async Task ViewAsync(SalesInvoiceSummaryDto bill)
+    {
+        _error = null;
+        Result<SalesInvoiceDetailDto> detailResult = await InvoiceApi.GetAsync(bill.InvoiceNo);
+        if (!detailResult.Success || detailResult.Data is null)
+        {
+            _error = detailResult.ErrorMessage ?? "Unable to load invoice.";
+            return;
+        }
+
+        _detail = detailResult.Data;
+    }
+
+    private void CloseView() => _detail = null;
 
     private async Task SendWhatsAppAsync(SalesInvoiceSummaryDto bill)
     {
@@ -116,10 +587,35 @@
             return;
         }
 
-        _pendingDetail = detailResult.Data;
-        if (!string.IsNullOrWhiteSpace(_pendingDetail.CustomerPhone))
+        await SendWhatsAppDetailAsync(detailResult.Data);
+    }
+
+    private async Task SendWhatsAppDetailAsync(SalesInvoiceDetailDto detail)
+    {
+        _waMode = WaMode.Receipt;
+        _pendingDetail = detail;
+        if (!string.IsNullOrWhiteSpace(detail.CustomerPhone))
         {
-            await OpenWhatsAppAsync(_pendingDetail.CustomerPhone, _pendingDetail);
+            await OpenWhatsAppReceiptAsync(detail.CustomerPhone, detail);
+            return;
+        }
+
+        _waPhone = string.Empty;
+        _showPhonePrompt = true;
+    }
+
+    private async Task SendWhatsAppLedgerAsync()
+    {
+        if (_ledgerCustomer is null)
+        {
+            return;
+        }
+
+        _waMode = WaMode.Ledger;
+        _waError = null;
+        if (!string.IsNullOrWhiteSpace(_ledgerCustomer.PhoneNumber))
+        {
+            await OpenWhatsAppLedgerAsync(_ledgerCustomer.PhoneNumber);
             return;
         }
 
@@ -129,22 +625,97 @@
 
     private async Task ConfirmWhatsAppAsync()
     {
+        if (_waMode == WaMode.Ledger)
+        {
+            await OpenWhatsAppLedgerAsync(_waPhone);
+            return;
+        }
+
         if (_pendingDetail is null)
         {
             return;
         }
 
-        await OpenWhatsAppAsync(_waPhone, _pendingDetail);
+        await OpenWhatsAppReceiptAsync(_waPhone, _pendingDetail);
     }
 
-    private async Task OpenWhatsAppAsync(string phone, SalesInvoiceDetailDto detail)
+    private async Task PrintDetailAsync(SalesInvoiceDetailDto detail)
+    {
+        string message = BuildReceiptText(detail);
+        try
+        {
+            await Js.InvokeVoidAsync("webPosPrintReceipt", message);
+        }
+        catch
+        {
+            _error = "Could not print receipt.";
+        }
+    }
+
+    private async Task OpenWhatsAppReceiptAsync(string phone, SalesInvoiceDetailDto detail)
+    {
+        string message = BuildReceiptText(detail);
+        string? url = WhatsAppReceipt.BuildWhatsAppUrl(phone, message);
+        if (url is null)
+        {
+            _waError = "Enter a valid mobile number.";
+            _showPhonePrompt = true;
+            return;
+        }
+
+        _showPhonePrompt = false;
+        try
+        {
+            await Browser.Default.OpenAsync(url, BrowserLaunchMode.SystemPreferred);
+        }
+        catch
+        {
+            _error = "Could not open WhatsApp.";
+        }
+    }
+
+    private async Task OpenWhatsAppLedgerAsync(string phone)
+    {
+        if (_ledgerCustomer is null)
+        {
+            return;
+        }
+
+        string message = WhatsAppReceipt.BuildLedgerMessage(
+            _ledgerCustomer.Name,
+            _fromDate,
+            _toDate,
+            _openingBalancePaisa,
+            _closingBalancePaisa,
+            _ledgerEntries);
+
+        string? url = WhatsAppReceipt.BuildWhatsAppUrl(phone, message);
+        if (url is null)
+        {
+            _waError = "Enter a valid mobile number.";
+            _showPhonePrompt = true;
+            return;
+        }
+
+        _showPhonePrompt = false;
+        try
+        {
+            await Browser.Default.OpenAsync(url, BrowserLaunchMode.SystemPreferred);
+        }
+        catch
+        {
+            _error = "Could not open WhatsApp.";
+        }
+    }
+
+    private string BuildReceiptText(SalesInvoiceDetailDto detail)
     {
         List<CartLine> lines = detail.Lines.Select(line => new CartLine
         {
             Product = new SalesProductDto
             {
                 ProductId = line.ProductId,
-                BatchId = line.BatchId,
+                BatchId = line.BatchId ?? Guid.Empty,
                 BatchNumber = line.BatchNumber,
                 Name = line.ProductName,
                 Sku = string.Empty,
@@ -167,32 +738,39 @@
             TransactionGroupId = Guid.Empty
         };
 
-        string message = WhatsAppReceipt.BuildReceiptMessage(
-            sale,
-            lines,
-            detail.PaymentMethod);
-
-        string? url = WhatsAppReceipt.BuildWhatsAppUrl(phone, message);
-        if (url is null)
-        {
-            _waError = "Enter a valid mobile number.";
-            _showPhonePrompt = true;
-            return;
-        }
-
-        _showPhonePrompt = false;
-        try
-        {
-            await Browser.Default.OpenAsync(url, BrowserLaunchMode.SystemPreferred);
-        }
-        catch
-        {
-            _error = "Could not open WhatsApp.";
-        }
+        return WhatsAppReceipt.BuildReceiptMessage(sale, lines, detail.PaymentMethod);
     }
 
-    private static string ShortId(string invoiceNo) =>
-        invoiceNo.Length <= 8 ? invoiceNo : invoiceNo[^8..];
+    private static string DescribeEntry(PartyLedgerEntryDto entry)
+    {
+        if (!string.IsNullOrWhiteSpace(entry.ReferenceDetails))
+        {
+            return entry.ReferenceDetails;
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Type))
+        {
+            return entry.Type;
+        }
+
+        return entry.PaymentMethod;
+    }
+
+    private static DateTimeOffset StartOfLocalDay(DateOnly date) =>
+        new(date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Local));
+
+    private static DateTimeOffset EndOfLocalDay(DateOnly date) =>
+        new(date.ToDateTime(new TimeOnly(23, 59, 59), DateTimeKind.Local));
+
+    private static string ShortId(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "—";
+        }
+
+        return value.Length <= 10 ? value : value[^10..];
+    }
 
     private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
 }

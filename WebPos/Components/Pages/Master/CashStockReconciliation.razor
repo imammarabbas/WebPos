@@ -1,0 +1,88 @@
+@page "/master/cash-stock-reconciliation"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using WebPos.Core.Abstractions
+@inject IBusinessPositionService PositionService
+
+<PageTitle>Cash vs Stock Reconciliation · Cone Mart</PageTitle>
+
+<div class="mm-page">
+    <div class="mm-page-header">
+        <div>
+            <h1>Cash vs stock reconciliation</h1>
+            <p>Unexplained variances shown separately — missing stock ≠ unrecorded sale</p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+
+    @if (_recon is not null)
+    {
+        <div class="mm-grid-2">
+            <div class="mm-card">
+                <h2>Cash</h2>
+                @foreach (TillCashVisibilityDto till in _recon.Cash)
+                {
+                    <div style="margin-bottom:1rem;padding-bottom:1rem;border-bottom:1px solid var(--mm-border,#e5e7eb);">
+                        <strong>@till.TillName</strong>
+                        <dl class="mm-dl" style="margin:0.5rem 0 0;font-size:0.9rem;">
+                            <dt>Recorded cash (Till GL)</dt><dd>Rs @FormatRs(till.RecordedCashPaisa)</dd>
+                            <dt>Expected cash</dt><dd>Rs @FormatRs(till.ExpectedCashPaisa)</dd>
+                            <dt>Physical cash</dt><dd>@(till.HasPhysicalCount ? $"Rs {FormatRs(till.PhysicalCashPaisa!.Value)}" : "Not Counted")</dd>
+                            <dt>Difference (Physical − Expected)</dt><dd>Rs @FormatRs(till.DifferencePhysicalMinusExpectedPaisa)</dd>
+                            <dt>Unrecorded physical surplus</dt><dd>Rs @FormatRs(till.UnrecordedPhysicalSurplusPaisa)</dd>
+                            <dt>Unregistered cash (GL liability)</dt><dd>Rs @FormatRs(till.UnregisteredCashLiabilityPaisa)</dd>
+                        </dl>
+                    </div>
+                }
+            </div>
+            <div class="mm-card">
+                <h2>Stock</h2>
+                <dl class="mm-dl" style="font-size:0.9rem;">
+                    <dt>Expected stock</dt><dd>Rs @FormatRs(_recon.Stock.ExpectedValuePaisa)</dd>
+                    <dt>Physical stock</dt><dd>@(_recon.Stock.PhysicalValuePaisa is long sp ? $"Rs {FormatRs(sp)}" : "—")</dd>
+                    <dt>Missing / unexplained</dt><dd>Rs @FormatRs(_recon.Stock.MissingUnexplainedValuePaisa)</dd>
+                </dl>
+                @if (_recon.Stock.LastPhysicalCountAt is DateTimeOffset countedAt)
+                {
+                    <p class="mm-muted">Last physical count: @countedAt.LocalDateTime.ToString("dd MMM yyyy HH:mm")</p>
+                }
+            </div>
+        </div>
+
+        <div class="mm-alert" style="margin-top:1rem;border:1px solid #93c5fd;background:#eff6ff;color:#1e40af;">
+            These variances are <strong>not</strong> automatically linked. Unrecorded cash is not assumed to be a sale.
+            Missing stock is not assumed to equal unrecorded cash. Investigate and record the correct transaction when known.
+        </div>
+    }
+</div>
+
+<style>
+    .mm-dl { display: grid; grid-template-columns: 1fr auto; gap: 0.25rem 1rem; }
+    .mm-dl dt { color: #6b7280; }
+    .mm-dl dd { margin: 0; font-weight: 600; text-align: right; }
+</style>
+
+@code {
+    private CashStockReconciliationDto? _recon;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _recon = await PositionService.GetCashStockReconciliationAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+}

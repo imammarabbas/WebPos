@@ -1,20 +1,23 @@
 .terminal-shell {
     min-height: 100vh;
-    margin: -1.1rem -1.5rem;
-    padding: 2rem;
+    margin: 0;
+    padding: 1.5rem;
     display: grid;
     place-items: center;
-    background: radial-gradient(ellipse at top, #1a2433 0%, #0b0f14 60%);
-    color: #f2f5f8;
-    font-family: "Segoe UI", sans-serif;
+    background:
+        radial-gradient(ellipse 80% 55% at 50% -10%, #1e3a5f 0%, transparent 55%),
+        linear-gradient(180deg, #0f172a 0%, #0b1220 100%);
+    color: #e8eef7;
+    font-family: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
 }
 
 .shift-card {
-    width: min(100%, 34rem);
-    padding: 1.75rem;
-    border: 1px solid #2d3b4f;
-    border-radius: 6px;
-    background: #121820;
+    width: min(100%, 28rem);
+    padding: 1.5rem 1.35rem;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 16px;
+    background: rgba(15, 23, 42, 0.92);
+    box-shadow: 0 18px 40px rgba(2, 6, 23, 0.45);
 }
 
 .brand {

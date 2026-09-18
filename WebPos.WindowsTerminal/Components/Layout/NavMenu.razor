@@ -35,8 +35,8 @@
             </div>
             <div class="nav-item px-3">
                 <button type="button" class="nav-link" style="background:none;border:0;width:100%;text-align:left;cursor:pointer;"
-                        @onclick="GoReceiveGoods">
-                    <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Receive Goods
+                        @onclick="GoPurchaseOrders">
+                    <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Purchase Orders
                 </button>
             </div>
             <div class="nav-item px-3">
@@ -53,7 +53,7 @@
             </div>
             <div class="stat-row">
                 <span>Shift</span>
-                <strong>@(SessionService.IsActive ? $"OPEN · {ShiftLabel}" : "—")</strong>
+                <strong>@(SessionService.IsActive ? $"OPEN ï¿½ {ShiftLabel}" : "ï¿½")</strong>
             </div>
             <div class="stat-row">
                 <span>Terminal</span>
@@ -68,7 +68,7 @@
         <div class="cashier-avatar">@CashierInitials</div>
         <div class="cashier-meta">
             <strong>@CashierDisplayName</strong>
-            <span>Cashier · Copenhagen</span>
+            <span>Cashier ï¿½ Copenhagen</span>
         </div>
         <button type="button"
                 class="logout-btn"
@@ -89,7 +89,7 @@
     private string ShiftLabel =>
         SessionService.OpenedAt is DateTimeOffset opened
             ? opened.ToLocalTime().ToString("HH:mm")
-            : "—";
+            : "ï¿½";
 
     private string CashierInitials
     {
@@ -127,7 +127,7 @@
         Navigation.NavigateTo("/login", forceLoad: true);
     }
 
-    private void GoReceiveGoods() => Navigation.NavigateTo("/sales?receive=1");
+    private void GoPurchaseOrders() => Navigation.NavigateTo("/sales?orders=1");
 
     private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
 

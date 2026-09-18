@@ -1,4 +1,5 @@
 using System.Text;
+using Common.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using WebPos.Core.Abstractions;
@@ -44,6 +45,24 @@ public sealed class ReportingController(IReportingService reportingService) : Co
             cancellationToken);
 
         return Ok(result);
+    }
+
+    [HttpGet("sales-by-cashier")]
+    [ProducesResponseType(typeof(IReadOnlyList<CashierSalesSummaryDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<IReadOnlyList<CashierSalesSummaryDto>>> SalesByCashier(
+        [FromQuery] DateTimeOffset from,
+        [FromQuery] DateTimeOffset to,
+        CancellationToken cancellationToken = default)
+    {
+        if (to < from)
+        {
+            return BadRequest("Query 'to' must be on or after 'from'.");
+        }
+
+        IReadOnlyList<CashierSalesSummaryDto> rows =
+            await _reportingService.GetSalesByCashierAsync(from, to, cancellationToken);
+        return Ok(rows);
     }
 
     [HttpGet("pnl")]

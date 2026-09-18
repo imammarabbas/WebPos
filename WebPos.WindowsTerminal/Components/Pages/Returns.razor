@@ -6,236 +6,215 @@
 @inject ShiftStatusApiClient ShiftStatus
 @inject NavigationManager Navigation
 
-<PageTitle>Returns</PageTitle>
+<PageTitle>Sales Return</PageTitle>
 
-<div class="page-shell">
+<div class="page-shell po-page po-detail">
+    <PosTopMenu />
+
     @if (!string.IsNullOrWhiteSpace(_error))
     {
-        <div class="alert-red">@_error</div>
+        <div class="po-alert">@_error</div>
     }
     @if (!string.IsNullOrWhiteSpace(_success))
     {
-        <div class="alert-ok">@_success</div>
+        <div class="cpo-ok" role="status">@_success</div>
     }
 
     @if (_detail is null)
     {
-        <section class="find-sale-card">
-            <div class="find-sale-header">
-                <div class="find-sale-title">
-                    <span class="find-icon" aria-hidden="true">🔍</span>
-                    <h1>Find Sale to Return</h1>
-                    <span class="ways-badge">3 ways</span>
+        <div class="po-page-header">
+            <div class="po-page-header-left">
+                <div class="po-icon-tile" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 7h16v12H4zM9 7V5h6v2" stroke-linecap="round" />
+                        <path d="M9 14h6" stroke-linecap="round" />
+                    </svg>
                 </div>
-                <button type="button" class="recent-sales-btn" disabled="@_isLoading" @onclick="LoadRecentSalesAsync">
-                    Recent Sales
-                </button>
+                <div>
+                    <h1>Sales Return</h1>
+                    <p>Find a sale or open Return from Previous Sales</p>
+                </div>
             </div>
+            <div class="po-actions">
+                <a class="po-btn po-btn-primary" href="recent-bills">Previous Sales</a>
+                <a class="po-btn po-btn-outline" href="sales">Back to Sale</a>
+            </div>
+        </div>
 
-            <EditForm Model="_search" OnValidSubmit="FindSaleAsync" class="find-sale-form">
-                <div class="search-row">
-                    <div class="search-field">
-                        <span class="field-icon" aria-hidden="true">#</span>
-                        <div class="field-body">
-                            <label class="field-label" for="invoiceSearch">Invoice / Sale ID</label>
-                            <InputText id="invoiceSearch"
-                                       class="search-input"
-                                       @bind-Value="_search.Invoice"
-                                       placeholder="e.g. INV-1021" />
-                        </div>
+        <div class="po-card">
+            <h2>Find sale</h2>
+            <EditForm Model="_search" OnValidSubmit="FindSaleAsync">
+                <div class="po-filter-row" style="grid-template-columns:repeat(3,minmax(0,1fr)) auto;">
+                    <div class="po-field">
+                        <label for="invoiceSearch">Invoice / Sale ID</label>
+                        <InputText id="invoiceSearch" class="form-control" @bind-Value="_search.Invoice" placeholder="e.g. INV-1021" />
                     </div>
-                    <div class="search-field">
-                        <span class="field-icon" aria-hidden="true">👤</span>
-                        <div class="field-body">
-                            <label class="field-label" for="customerSearch">Customer</label>
-                            <InputText id="customerSearch"
-                                       class="search-input"
-                                       @bind-Value="_search.Customer"
-                                       placeholder="Ali Khan, Sara..." />
-                        </div>
+                    <div class="po-field">
+                        <label for="customerSearch">Customer</label>
+                        <InputText id="customerSearch" class="form-control" @bind-Value="_search.Customer" placeholder="Name…" />
                     </div>
-                    <div class="search-field">
-                        <span class="field-icon" aria-hidden="true">▦</span>
-                        <div class="field-body">
-                            <label class="field-label" for="productSearch">Product · Scan or type</label>
-                            <InputText id="productSearch"
-                                       class="search-input"
-                                       @bind-Value="_search.Product"
-                                       placeholder="Cola, Samosa..." />
-                        </div>
+                    <div class="po-field">
+                        <label for="productSearch">Product</label>
+                        <InputText id="productSearch" class="form-control" @bind-Value="_search.Product" placeholder="Scan or type…" />
                     </div>
-                    <button type="submit" class="find-btn" disabled="@_isLoading">
-                        🔍 Find Sale
-                    </button>
+                    <div class="po-filter-actions">
+                        <button type="submit" class="po-btn po-btn-primary" disabled="@_isLoading">Find</button>
+                        <button type="button" class="po-btn po-btn-outline" disabled="@_isLoading" @onclick="LoadRecentSalesAsync">Recent</button>
+                    </div>
                 </div>
             </EditForm>
-        </section>
+        </div>
 
-        <section class="bills-section">
-            <div class="bills-section-head">
-                <h2>@(_showingSearchResults ? "Search results" : "Recent bills")</h2>
-                <a class="link-btn" href="sales">← Back to POS</a>
-            </div>
-
+        <div class="po-card" style="margin-top:1rem;">
+            <h2>@(_showingSearchResults ? "Search results" : "Recent bills")</h2>
             @if (_isLoading)
             {
-                <p class="muted">Loading…</p>
+                <p class="po-empty">Loading…</p>
             }
             else if (_invoices.Count == 0)
             {
-                <p class="muted">@(_showingSearchResults ? "No matching sales found." : "No bills for this shift yet.")</p>
+                <p class="po-empty">@(_showingSearchResults ? "No matching sales found." : "No bills yet — start from Previous Sales.")</p>
             }
             else
             {
-                <div class="bill-cards">
-                    @foreach (SalesInvoiceSummaryDto bill in _invoices)
-                    {
-                        <button type="button"
-                                class="bill-card"
-                                @onclick="() => OpenInvoiceAsync(bill.InvoiceNo)">
-                            <div class="bill-top">
-                                <strong>#@ShortId(bill.InvoiceNo)</strong>
-                                <span>@bill.CreatedAt.ToLocalTime().ToString("HH:mm")</span>
-                            </div>
-                            <div class="bill-amount">Rs @FormatRs(bill.TotalAmountPaisa)</div>
-                            <div class="bill-meta">
-                                @bill.ItemCount @(bill.ItemCount == 1 ? "item" : "items") · @PaymentLabel(bill.PaymentMethod)
-                            </div>
-                            @if (bill.ProductLabels.Count > 0)
+                <div class="po-table-wrap">
+                    <table class="po-table">
+                        <thead>
+                            <tr>
+                                <th>Invoice</th>
+                                <th>Date</th>
+                                <th class="po-num">Items</th>
+                                <th class="po-num">Total</th>
+                                <th>Payment</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (SalesInvoiceSummaryDto bill in _invoices)
                             {
-                                <div class="product-chips">
-                                    @foreach (string label in bill.ProductLabels)
-                                    {
-                                        <span class="product-chip">@label</span>
-                                    }
-                                </div>
+                                <tr>
+                                    <td><strong>@ShortId(bill.InvoiceNo)</strong></td>
+                                    <td>@bill.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</td>
+                                    <td class="po-num">@bill.ItemCount</td>
+                                    <td class="po-num">@FormatRs(bill.TotalAmountPaisa)</td>
+                                    <td>@PaymentLabel(bill.PaymentMethod)</td>
+                                    <td>
+                                        <button type="button" class="po-btn po-btn-sm po-btn-primary" @onclick="() => OpenInvoiceAsync(bill.InvoiceNo)">Return</button>
+                                    </td>
+                                </tr>
                             }
-                        </button>
-                    }
+                        </tbody>
+                    </table>
                 </div>
             }
-        </section>
+        </div>
     }
     else
     {
-        <div class="return-layout">
-            <section class="invoice-meta-panel">
-                <div class="meta-top">
-                    <div>
-                        <p class="muted">Returning sale</p>
-                        <h1>#@ShortId(_detail.InvoiceNo)</h1>
-                    </div>
-                    <button type="button" class="secondary-btn" @onclick="ClearDetailAsync">Change sale</button>
+        <div class="po-page-header">
+            <div class="po-page-header-left">
+                <div class="po-icon-tile" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 7h16v12H4zM9 7V5h6v2" stroke-linecap="round" />
+                        <path d="M9 14h6" stroke-linecap="round" />
+                    </svg>
                 </div>
-                <dl class="meta-grid">
-                    <div>
-                        <dt>Sold</dt>
-                        <dd>@_detail.CreatedAt.ToLocalTime().ToString("dd MMM · HH:mm")</dd>
-                    </div>
-                    <div>
-                        <dt>Payment</dt>
-                        <dd>@PaymentLabel(_detail.PaymentMethod)</dd>
-                    </div>
-                    <div>
-                        <dt>Customer</dt>
-                        <dd>@(string.IsNullOrWhiteSpace(_detail.CustomerName) ? "Walk-in" : _detail.CustomerName)</dd>
-                    </div>
-                    <div>
-                        <dt>Original total</dt>
-                        <dd>Rs @FormatRs(_detail.TotalAmountPaisa)</dd>
-                    </div>
-                </dl>
-                <button type="button" class="secondary-btn full-return-btn" @onclick="ApplyFullReturn">
-                    Return Entire Sale
-                </button>
-            </section>
+                <div>
+                    <h1>Sales Return</h1>
+                    <p>Return products from original sale #@ShortId(_detail.InvoiceNo)</p>
+                </div>
+            </div>
+            <div class="po-actions">
+                <button type="button" class="po-btn po-btn-outline" @onclick="ClearDetailAsync">Change sale</button>
+                <a class="po-btn po-btn-outline" href="recent-bills">Previous Sales</a>
+            </div>
+        </div>
 
-            <aside class="cart-panel">
-                <div class="cart-header">
-                    <h2>Return cart <span class="cart-count">@ActiveReturnLineCount</span></h2>
+        <div class="po-card">
+            <h2>Original sale</h2>
+            <div class="pov-info-grid">
+                <div class="pov-info-item"><label>Invoice</label><div class="pov-value">@_detail.InvoiceNo</div></div>
+                <div class="pov-info-item"><label>Sold</label><div class="pov-value">@_detail.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</div></div>
+                <div class="pov-info-item"><label>Customer</label><div class="pov-value">@(string.IsNullOrWhiteSpace(_detail.CustomerName) ? "Walk-in" : _detail.CustomerName)</div></div>
+                <div class="pov-info-item"><label>Payment</label><div class="pov-value">@PaymentLabel(_detail.PaymentMethod)</div></div>
+                <div class="pov-info-item"><label>Original total</label><div class="pov-value">Rs @FormatRs(_detail.TotalAmountPaisa)</div></div>
+            </div>
+            <div class="pov-footer-actions">
+                <button type="button" class="po-btn po-btn-outline" @onclick="ApplyFullReturn">Return Entire Sale</button>
+            </div>
+        </div>
+
+        <div class="po-card">
+            <h2>Return items (@ActiveReturnLineCount selected)</h2>
+            @if (_lines.Count == 0)
+            {
+                <p class="po-empty">Nothing left to return on this invoice.</p>
+            }
+            else
+            {
+                <div class="po-table-wrap">
+                    <table class="po-table">
+                        <thead>
+                            <tr>
+                                <th>Product</th>
+                                <th class="po-num">Max</th>
+                                <th class="po-num">Price</th>
+                                <th class="po-num">Return Qty</th>
+                                <th class="po-num">Amount</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (ReturnLineEdit line in _lines)
+                            {
+                                <tr>
+                                    <td><strong>@line.ProductName</strong></td>
+                                    <td class="po-num">@line.ReturnableQuantity.ToString("0.##")</td>
+                                    <td class="po-num">@FormatRs(line.UnitPricePaisa)</td>
+                                    <td class="po-num">
+                                        <div class="po-actions" style="justify-content:flex-end;">
+                                            <button type="button" class="po-btn po-btn-sm" disabled="@(line.ReturnQuantity <= 0 || _isBusy)" @onclick="() => AdjustQty(line, -Step(line))">−</button>
+                                            @if (line.IsLoose)
+                                            {
+                                                <input class="form-control" style="width:4.5rem;text-align:right;"
+                                                       type="number" step="0.01" min="0"
+                                                       max="@line.ReturnableQuantity.ToString(CultureInfo.InvariantCulture)"
+                                                       value="@line.ReturnQtyText"
+                                                       @oninput="e => OnQtyInput(line, e.Value?.ToString())" />
+                                            }
+                                            else
+                                            {
+                                                <span style="min-width:2rem;text-align:center;">@line.ReturnQuantity.ToString("0.##")</span>
+                                            }
+                                            <button type="button" class="po-btn po-btn-sm" disabled="@(line.ReturnQuantity >= line.ReturnableQuantity || _isBusy)" @onclick="() => AdjustQty(line, Step(line))">+</button>
+                                        </div>
+                                    </td>
+                                    <td class="po-num">@FormatRs(line.LineGrossPaisa)</td>
+                                    <td>
+                                        <button type="button" class="po-btn po-btn-sm" disabled="@_isBusy" @onclick="() => ClearLine(line)">Clear</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
                 </div>
 
-                @if (_lines.Count == 0)
-                {
-                    <p class="muted">Nothing left to return on this invoice.</p>
-                }
-                else
-                {
-                    <ul class="cart-lines">
-                        @foreach (ReturnLineEdit line in _lines)
-                        {
-                            <li class="cart-line @(line.ReturnQuantity <= 0 ? "inactive" : string.Empty)">
-                                <div class="line-info">
-                                    <strong>@line.ProductName</strong>
-                                    <span>Rs @FormatRs(line.UnitPricePaisa) · max @line.ReturnableQuantity.ToString("0.##")</span>
-                                </div>
-                                <div class="line-actions">
-                                    <button type="button"
-                                            class="qty-btn"
-                                            disabled="@(line.ReturnQuantity <= 0 || _isBusy)"
-                                            @onclick="() => AdjustQty(line, -Step(line))">−</button>
-                                    @if (line.IsLoose)
-                                    {
-                                        <input class="qty-input loose"
-                                               type="number"
-                                               step="0.01"
-                                               min="0"
-                                               max="@line.ReturnableQuantity.ToString(CultureInfo.InvariantCulture)"
-                                               value="@line.ReturnQtyText"
-                                               @oninput="e => OnQtyInput(line, e.Value?.ToString())" />
-                                    }
-                                    else
-                                    {
-                                        <span class="line-qty">@line.ReturnQuantity.ToString("0.##")</span>
-                                    }
-                                    <button type="button"
-                                            class="qty-btn"
-                                            disabled="@(line.ReturnQuantity >= line.ReturnableQuantity || _isBusy)"
-                                            @onclick="() => AdjustQty(line, Step(line))">+</button>
-                                    <span class="line-total">Rs @FormatRs(line.LineGrossPaisa)</span>
-                                    <button type="button"
-                                            class="remove-btn"
-                                            title="Remove from return"
-                                            disabled="@_isBusy"
-                                            @onclick="() => ClearLine(line)">×</button>
-                                </div>
-                            </li>
-                        }
-                    </ul>
+                <div class="pov-totals" style="margin-top:1rem;">
+                    <div class="pov-totals-row"><span>Subtotal</span><span>Rs @FormatRs(RefundGrossPaisa)</span></div>
+                    @if (RefundDiscountPaisa > 0)
+                    {
+                        <div class="pov-totals-row"><span>Discount</span><span>− Rs @FormatRs(RefundDiscountPaisa)</span></div>
+                    }
+                    <div class="pov-totals-row grand"><span>Total refund</span><span>Rs @FormatRs(RefundNetPaisa)</span></div>
+                </div>
 
-                    <div class="totals">
-                        <div class="total-row">
-                            <span>Subtotal</span>
-                            <span>Rs @FormatRs(RefundGrossPaisa)</span>
-                        </div>
-                        @if (RefundDiscountPaisa > 0)
-                        {
-                            <div class="total-row">
-                                <span>Discount</span>
-                                <span>− Rs @FormatRs(RefundDiscountPaisa)</span>
-                            </div>
-                        }
-                        @if (_detail.TaxAmountPaisa > 0 && RefundTaxPaisa > 0)
-                        {
-                            <div class="total-row">
-                                <span>Tax</span>
-                                <span>Rs @FormatRs(RefundTaxPaisa)</span>
-                            </div>
-                        }
-                        <div class="total-row grand">
-                            <span>Total refund</span>
-                            <strong>Rs @FormatRs(RefundNetPaisa)</strong>
-                        </div>
-                    </div>
-
-                    <button type="button"
-                            class="pay-btn"
-                            disabled="@(_isBusy || ActiveReturnLineCount == 0)"
-                            @onclick="SubmitReturnAsync">
+                <div class="pov-footer-actions">
+                    <button type="button" class="po-btn po-btn-primary" disabled="@(_isBusy || ActiveReturnLineCount == 0)" @onclick="SubmitReturnAsync">
                         @(_isBusy ? "Processing…" : "Confirm return")
                     </button>
-                }
-            </aside>
+                    <button type="button" class="po-btn" @onclick="ClearDetailAsync">Back</button>
+                </div>
+            }
         </div>
     }
 </div>
@@ -254,7 +233,7 @@
     private sealed class ReturnLineEdit
     {
         public Guid ProductId { get; init; }
-        public Guid BatchId { get; init; }
+        public Guid? BatchId { get; init; }
         public required string ProductName { get; init; }
         public bool IsLoose { get; init; }
         public decimal QuantitySold { get; init; }

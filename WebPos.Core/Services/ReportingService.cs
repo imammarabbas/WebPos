@@ -213,6 +213,87 @@ public sealed class ReportingService : IReportingService
         };
     }
 
+    public async Task<IReadOnlyList<Common.Models.CashierSalesSummaryDto>> GetSalesByCashierAsync(
+        DateTimeOffset from,
+        DateTimeOffset to,
+        CancellationToken cancellationToken = default)
+    {
+        if (to < from)
+        {
+            throw new ArgumentException("'to' must be on or after 'from'.", nameof(to));
+        }
+
+        EnsureTenantResolved();
+        Guid tenantId = _tenantService.TenantId;
+        DateTimeOffset rangeFrom = from;
+        DateTimeOffset rangeTo = to;
+        await using WebPosDbContext context = await _dbFactory.CreateDbContextAsync(cancellationToken);
+
+        var sales = await context.SalesInvoices
+            .AsNoTracking()
+            .Where(invoice =>
+                invoice.TenantId == tenantId
+                && invoice.CreatedAt >= rangeFrom
+                && invoice.CreatedAt <= rangeTo)
+            .Join(
+                context.Users.AsNoTracking(),
+                invoice => invoice.CashierId,
+                user => user.Id,
+                (invoice, user) => new { invoice, user })
+            .Join(
+                context.Roles.AsNoTracking(),
+                pair => pair.user.RoleId,
+                role => role.Id,
+                (pair, role) => new { pair.invoice, pair.user, role })
+            .GroupBy(x => new { x.invoice.CashierId, x.user.Username, x.role.RoleName })
+            .Select(g => new
+            {
+                g.Key.CashierId,
+                CashierName = g.Key.Username,
+                g.Key.RoleName,
+                SalesPaisa = g.Sum(x => x.invoice.TotalAmountPaisa),
+                SaleCount = g.Count()
+            })
+            .ToListAsync(cancellationToken);
+
+        var returns = await context.SalesReturns
+            .AsNoTracking()
+            .Where(ret =>
+                ret.TenantId == tenantId
+                && ret.CreatedAt >= rangeFrom
+                && ret.CreatedAt <= rangeTo)
+            .GroupBy(ret => ret.CashierId)
+            .Select(g => new
+            {
+                CashierId = g.Key,
+                ReturnsPaisa = g.Sum(x => x.TotalRefundPaisa),
+                ReturnCount = g.Count()
+            })
+            .ToListAsync(cancellationToken);
+
+        Dictionary<Guid, (long ReturnsPaisa, int ReturnCount)> returnLookup =
+            returns.ToDictionary(r => r.CashierId, r => (r.ReturnsPaisa, r.ReturnCount));
+
+        return sales
+            .Select(row =>
+            {
+                returnLookup.TryGetValue(row.CashierId, out (long ReturnsPaisa, int ReturnCount) ret);
+                return new Common.Models.CashierSalesSummaryDto
+                {
+                    CashierId = row.CashierId,
+                    CashierName = row.CashierName,
+                    RoleName = row.RoleName,
+                    SalesPaisa = row.SalesPaisa,
+                    SaleCount = row.SaleCount,
+                    ReturnsPaisa = ret.ReturnsPaisa,
+                    ReturnCount = ret.ReturnCount
+                };
+            })
+            .OrderByDescending(r => r.NetSalesPaisa)
+            .ThenBy(r => r.CashierName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     public async Task<BiDashboardResult> GetBiDashboardAsync(
         BiDashboardQuery query,
         CancellationToken cancellationToken = default)
@@ -246,12 +327,10 @@ public sealed class ReportingService : IReportingService
             ? await LoadInvoiceAggregatesAsync(context, tenantId, prevFrom, prevTo, query, cancellationToken)
             : [];
 
-        Dictionary<Guid, decimal> stockByProduct = await context.ProductBatches
+        Dictionary<Guid, decimal> stockByProduct = await context.Products
             .AsNoTracking()
-            .Where(b => b.TenantId == tenantId && b.CurrentQty > 0)
-            .GroupBy(b => b.ProductId)
-            .Select(g => new { ProductId = g.Key, Qty = g.Sum(x => x.CurrentQty) })
-            .ToDictionaryAsync(x => x.ProductId, x => x.Qty, cancellationToken);
+            .Where(p => p.TenantId == tenantId && !p.IsDeleted && p.ParentProductId == null)
+            .ToDictionaryAsync(p => p.Id, p => p.StockQty, cancellationToken);
 
         Dictionary<Guid, string> terminalNames = await context.Terminals
             .AsNoTracking()

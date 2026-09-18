@@ -8,7 +8,7 @@
 @using WebPos.Core.Data
 @using WebPos.Core.Models
 @using WebPos.Core.Security
-@inject WebPosDbContext Context
+@inject IDbContextFactory<WebPosDbContext> DbFactory
 @inject NavigationManager NavigationManager
 @inject AuthenticationStateProvider AuthStateProvider
 
@@ -152,7 +152,8 @@
 
     private async Task LoadRolesAsync()
     {
-        _roles = await Context.Roles
+        await using WebPosDbContext context = await DbFactory.CreateDbContextAsync();
+        _roles = await context.Roles
             .AsNoTracking()
             .OrderBy(r => r.RoleName)
             .ToListAsync();
@@ -160,7 +161,8 @@
 
     private async Task LoadUsersAsync()
     {
-        _users = await Context.Users
+        await using WebPosDbContext context = await DbFactory.CreateDbContextAsync();
+        _users = await context.Users
             .AsNoTracking()
             .Include(u => u.Role)
             .OrderBy(u => u.Username)
@@ -201,7 +203,9 @@
                 return;
             }
 
-            bool usernameExists = await Context.Users
+            await using WebPosDbContext context = await DbFactory.CreateDbContextAsync();
+
+            bool usernameExists = await context.Users
                 .AnyAsync(u => u.Username == username);
 
             if (usernameExists)
@@ -210,7 +214,7 @@
                 return;
             }
 
-            bool roleExists = await Context.Roles
+            bool roleExists = await context.Roles
                 .AsNoTracking()
                 .AnyAsync(r => r.Id == _form.RoleId);
 
@@ -222,7 +226,7 @@
 
             DateTimeOffset now = DateTimeOffset.UtcNow;
 
-            Context.Users.Add(new User
+            context.Users.Add(new User
             {
                 Id = Guid.NewGuid(),
                 Username = username,
@@ -233,7 +237,7 @@
                 UpdatedAt = now
             });
 
-            await Context.SaveChangesAsync();
+            await context.SaveChangesAsync();
 
             _form.Username = string.Empty;
             _form.Password = string.Empty;

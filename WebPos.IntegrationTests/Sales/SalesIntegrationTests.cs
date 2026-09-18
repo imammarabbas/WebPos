@@ -75,12 +75,12 @@ public sealed class SalesIntegrationTests
         long totalCredits = ledgerEntries.Sum(e => e.CreditPaisa);
         totalDebits.Should().Be(totalCredits);
 
-        ProductBatch? batch = await assertScope.DbContext.ProductBatches
+        Product? product = await assertScope.DbContext.Products
             .AsNoTracking()
-            .FirstOrDefaultAsync(b => b.Id == seed.BatchId);
+            .FirstOrDefaultAsync(p => p.Id == seed.ProductId);
 
-        batch.Should().NotBeNull();
-        batch!.CurrentQty.Should().Be(seed.InitialQty - soldQty);
+        product.Should().NotBeNull();
+        product!.StockQty.Should().Be(seed.InitialQty - soldQty);
 
         CashierShift? shift = await assertScope.DbContext.CashierShifts
             .AsNoTracking()
@@ -139,11 +139,11 @@ public sealed class SalesIntegrationTests
             .AnyAsync(e => e.ReferenceNo == invoiceNo);
         ledgerExists.Should().BeFalse();
 
-        ProductBatch? batch = await assertScope.DbContext.ProductBatches
+        Product? product = await assertScope.DbContext.Products
             .AsNoTracking()
-            .FirstOrDefaultAsync(b => b.Id == seed.BatchId);
-        batch.Should().NotBeNull();
-        batch!.CurrentQty.Should().Be(seed.InitialQty);
+            .FirstOrDefaultAsync(p => p.Id == seed.ProductId);
+        product.Should().NotBeNull();
+        product!.StockQty.Should().Be(seed.InitialQty);
 
         CashierShift? shift = await assertScope.DbContext.CashierShifts
             .AsNoTracking()
@@ -209,11 +209,11 @@ public sealed class SalesIntegrationTests
 
         await using IntegrationTestScope assertScope = _fixture.CreateScope();
 
-        ProductBatch? batch = await assertScope.DbContext.ProductBatches
+        Product? product = await assertScope.DbContext.Products
             .AsNoTracking()
-            .FirstOrDefaultAsync(b => b.Id == seed.BatchId);
-        batch.Should().NotBeNull();
-        batch!.CurrentQty.Should().Be(seed.InitialQty - soldQty + returnQty); // 10 - 2 + 1 = 9
+            .FirstOrDefaultAsync(p => p.Id == seed.ProductId);
+        product.Should().NotBeNull();
+        product!.StockQty.Should().Be(seed.InitialQty - soldQty + returnQty); // 10 - 2 + 1 = 9
 
         List<GeneralLedgerEntry> groupEntries = await assertScope.DbContext.GeneralLedgerEntries
             .AsNoTracking()

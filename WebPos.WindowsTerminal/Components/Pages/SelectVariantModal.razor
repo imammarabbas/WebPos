@@ -1,0 +1,131 @@
+@using Common.Models
+@using System.Globalization
+
+@if (Master is not null)
+{
+    <div class="modal-backdrop" @onclick="Close">
+        <div class="sf-modal sf-variant-modal" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="sf-modal-head">
+                <h2>Select Variant — @(Master.Name ?? "Item")</h2>
+                <button type="button" class="link-btn" @onclick="Close">Close</button>
+            </div>
+            @if (SafeChildren.Count == 0)
+            {
+                <p class="muted">No sellable packings in stock for this master.</p>
+            }
+            else
+            {
+                <table class="sf-variant-table">
+                    <thead>
+                        <tr>
+                            <th>Packing</th>
+                            <th>Code</th>
+                            <th>Barcode</th>
+                            <th>Price</th>
+                            <th>Stock</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (SaleVariantChildDto child in SafeChildren)
+                        {
+                            <tr @onclick="() => SelectAsync(child)">
+                                <td><strong>@(string.IsNullOrWhiteSpace(child.PackingSize) ? "—" : child.PackingSize)</strong></td>
+                                <td>@DisplayCode(child)</td>
+                                <td class="mono">@(string.IsNullOrWhiteSpace(child.Barcode) ? "—" : child.Barcode)</td>
+                                <td>Rs @FormatRs(child.UnitPricePaisa)</td>
+                                <td>@child.AvailableStock.ToString("0.##", CultureInfo.InvariantCulture)</td>
+                                <td>
+                                    <button type="button"
+                                            class="sf-mini-btn"
+                                            disabled="@_busy"
+                                            @onclick:stopPropagation="true"
+                                            @onclick="() => SelectAsync(child)">
+                                        Add
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public SaleMasterDto? Master { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<SalesProductDto> OnSelected { get; set; }
+
+    private bool _busy;
+
+    private IReadOnlyList<SaleVariantChildDto> SafeChildren =>
+        (Master?.Children ?? Array.Empty<SaleVariantChildDto>())
+            .Where(c => c is not null)
+            .ToList();
+
+    private async Task Close()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        await OnClose.InvokeAsync();
+    }
+
+    private async Task SelectAsync(SaleVariantChildDto? child)
+    {
+        if (_busy || child is null)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            SalesProductDto product = new()
+            {
+                ProductId = child.ProductId,
+                BatchId = Guid.Empty,
+                BatchNumber = string.Empty,
+                Name = string.IsNullOrWhiteSpace(child.Name) ? "Item" : child.Name,
+                Sku = child.Sku ?? string.Empty,
+                Barcode = child.Barcode ?? string.Empty,
+                ShortCode = child.ShortCode ?? string.Empty,
+                CategoryName = child.CategoryName ?? string.Empty,
+                IsLoose = child.IsLoose,
+                BaseUnit = child.BaseUnit ?? string.Empty,
+                PackingSize = child.PackingSize ?? string.Empty,
+                UnitPricePaisa = child.UnitPricePaisa,
+                AvailableStock = child.AvailableStock,
+                ExpiryDate = null
+            };
+
+            await OnSelected.InvokeAsync(product);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string DisplayCode(SaleVariantChildDto child)
+    {
+        if (!string.IsNullOrWhiteSpace(child.ShortCode))
+        {
+            return child.ShortCode;
+        }
+
+        if (!string.IsNullOrWhiteSpace(child.Sku))
+        {
+            return child.Sku;
+        }
+
+        return "—";
+    }
+
+    private static string FormatRs(long paisa) =>
+        (paisa / 100m).ToString("N2", CultureInfo.InvariantCulture);
+}

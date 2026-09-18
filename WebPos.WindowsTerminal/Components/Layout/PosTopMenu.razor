@@ -1,0 +1,307 @@
+@inject NavigationManager Navigation
+@inject CartHoldService CartHoldService
+@inject ISessionService SessionService
+@inject LoginApiClient Login
+@inject ShiftStatusApiClient ShiftStatus
+
+<nav class="pos-top-menu pos-top-smart" aria-label="POS modules" @onclick="CloseMenus">
+    <div class="pos-brand" @onclick="GoSale" @onclick:stopPropagation role="button" tabindex="0" @onkeydown="OnBrandKey">
+        <span class="pos-brand-logo" aria-hidden="true"></span>
+        <span class="pos-brand-text">
+            <strong>Smart POS</strong>
+            <span>Point of Sale System</span>
+        </span>
+    </div>
+
+    <button type="button"
+            class="pos-menu-link @(IsActive("/sales") && !_purchaseOpen && !_productsOpen ? "active" : null)"
+            @onclick="GoSale"
+            @onclick:stopPropagation>
+        <span class="pos-ico pos-ico-sale" aria-hidden="true"></span>
+        Sale
+    </button>
+
+    <div class="pos-menu-dd @(_productsOpen ? "open" : null)" @onclick:stopPropagation>
+        <button type="button"
+                class="pos-menu-link @(_productsOpen || IsActive("/products") ? "active" : null)"
+                aria-haspopup="true"
+                aria-expanded="@_productsOpen"
+                @onclick="ToggleProductsMenu">
+            <span class="pos-ico pos-ico-products" aria-hidden="true"></span>
+            Products
+            <span class="pos-chevron" aria-hidden="true"></span>
+        </button>
+        @if (_productsOpen)
+        {
+            <div class="pos-menu-flyout" role="menu" @onclick:stopPropagation>
+                <button type="button" role="menuitem" class="pos-flyout-item" @onclick="GoProducts">
+                    <span class="pos-flyout-ico pos-flyout-list" aria-hidden="true"></span>
+                    <span class="pos-flyout-text">
+                        <strong>Product List</strong>
+                        <span>Browse and edit products</span>
+                    </span>
+                </button>
+                <button type="button" role="menuitem" class="pos-flyout-item" @onclick="GoNewProduct">
+                    <span class="pos-flyout-ico pos-flyout-plus" aria-hidden="true"></span>
+                    <span class="pos-flyout-text">
+                        <strong>New Product</strong>
+                        <span>Create a new product</span>
+                    </span>
+                </button>
+            </div>
+        }
+    </div>
+
+    <button type="button"
+            class="pos-menu-link @(IsActive("/customers") ? "active" : null)"
+            @onclick="GoCustomers"
+            @onclick:stopPropagation>
+        <span class="pos-ico pos-ico-customer" aria-hidden="true"></span>
+        Customer
+    </button>
+
+    <button type="button"
+            class="pos-menu-link @(IsActive("/suppliers") ? "active" : null)"
+            @onclick="GoSuppliers"
+            @onclick:stopPropagation>
+        <span class="pos-ico pos-ico-supplier" aria-hidden="true"></span>
+        Supplier
+    </button>
+
+    <button type="button"
+            class="pos-menu-link @(IsActive("/recent-bills") ? "active" : null)"
+            @onclick="GoPastSales"
+            @onclick:stopPropagation>
+        <span class="pos-ico pos-ico-past" aria-hidden="true"></span>
+        Past Sales
+    </button>
+
+    <div class="pos-menu-dd @(_purchaseOpen ? "open" : null)" @onclick:stopPropagation>
+        <button type="button"
+                class="pos-menu-link @(_purchaseOpen ? "active" : null)"
+                aria-haspopup="true"
+                aria-expanded="@_purchaseOpen"
+                @onclick="TogglePurchaseMenu">
+            <span class="pos-ico pos-ico-orders" aria-hidden="true"></span>
+            Purchase Orders
+            <span class="pos-chevron" aria-hidden="true"></span>
+        </button>
+        @if (_purchaseOpen)
+        {
+            <div class="pos-menu-flyout" role="menu" @onclick:stopPropagation>
+                <button type="button" role="menuitem" class="pos-flyout-item" @onclick="GoCreatePurchaseOrder">
+                    <span class="pos-flyout-ico pos-flyout-plus" aria-hidden="true"></span>
+                    <span class="pos-flyout-text">
+                        <strong>New Purchase Order</strong>
+                        <span>Create a new purchase order</span>
+                    </span>
+                </button>
+                <button type="button" role="menuitem" class="pos-flyout-item" @onclick="GoPurchaseOrders">
+                    <span class="pos-flyout-ico pos-flyout-list" aria-hidden="true"></span>
+                    <span class="pos-flyout-text">
+                        <strong>Order List</strong>
+                        <span>View and manage purchase orders</span>
+                    </span>
+                </button>
+            </div>
+        }
+    </div>
+
+    <button type="button"
+            class="pos-menu-link"
+            disabled="@(!OnHold.HasDelegate)"
+            @onclick="Hold"
+            @onclick:stopPropagation>
+        <span class="pos-ico pos-ico-hold" aria-hidden="true"></span>
+        Hold
+    </button>
+
+    <button type="button"
+            class="pos-menu-link"
+            disabled="@(!OnRetrieve.HasDelegate || !CartHoldService.HasHeldCart)"
+            @onclick="Retrieve"
+            @onclick:stopPropagation>
+        <span class="pos-ico pos-ico-retrieve" aria-hidden="true"></span>
+        Retrieve
+    </button>
+
+    <button type="button"
+            class="pos-menu-link @(IsActive("/returns") ? "active" : null)"
+            @onclick="GoReturns"
+            @onclick:stopPropagation>
+        <span class="pos-ico pos-ico-returns" aria-hidden="true"></span>
+        Returns
+    </button>
+
+    <button type="button"
+            class="pos-menu-link @(IsActive("/close-shift") ? "active" : null)"
+            @onclick="GoCloseShift"
+            @onclick:stopPropagation>
+        <span class="pos-ico pos-ico-cash" aria-hidden="true"></span>
+        Cash / Close
+    </button>
+
+    <div class="pos-menu-spacer"></div>
+
+    <div class="pos-session-user">
+        <button type="button"
+                class="pos-logout-btn"
+                title="Lock keeps the server shift open. Same PIN can resume; another PIN needs Close Shift or Master Force Close."
+                @onclick="OnLock"
+                @onclick:stopPropagation>
+            Logout
+        </button>
+    </div>
+</nav>
+
+@code {
+    [Parameter] public EventCallback OnPurchaseOrders { get; set; }
+    [Parameter] public EventCallback OnCreatePurchaseOrder { get; set; }
+    [Parameter] public EventCallback OnLockRequested { get; set; }
+    [Parameter] public EventCallback OnHold { get; set; }
+    [Parameter] public EventCallback OnRetrieve { get; set; }
+
+    private bool _purchaseOpen;
+    private bool _productsOpen;
+
+    private string CurrentPath
+    {
+        get
+        {
+            string path = new Uri(Navigation.Uri).AbsolutePath.TrimEnd('/');
+            return string.IsNullOrEmpty(path) ? "/sales" : path;
+        }
+    }
+
+    private bool IsActive(string prefix) =>
+        CurrentPath.Equals(prefix, StringComparison.OrdinalIgnoreCase)
+        || CurrentPath.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase);
+
+    private void TogglePurchaseMenu()
+    {
+        _productsOpen = false;
+        _purchaseOpen = !_purchaseOpen;
+    }
+
+    private void ToggleProductsMenu()
+    {
+        _purchaseOpen = false;
+        _productsOpen = !_productsOpen;
+    }
+
+    private void CloseMenus()
+    {
+        _purchaseOpen = false;
+        _productsOpen = false;
+    }
+
+    private void GoSale()
+    {
+        CloseMenus();
+        Navigation.NavigateTo("/sales");
+    }
+
+    private void OnBrandKey(KeyboardEventArgs e)
+    {
+        if (e.Key is "Enter" or " ")
+        {
+            GoSale();
+        }
+    }
+
+    private void GoProducts()
+    {
+        CloseMenus();
+        Navigation.NavigateTo("/products");
+    }
+
+    private void GoNewProduct()
+    {
+        CloseMenus();
+        Navigation.NavigateTo("/products/new");
+    }
+
+    private void GoCustomers()
+    {
+        CloseMenus();
+        Navigation.NavigateTo("/customers");
+    }
+
+    private void GoSuppliers()
+    {
+        CloseMenus();
+        Navigation.NavigateTo("/suppliers");
+    }
+
+    private void GoPastSales()
+    {
+        CloseMenus();
+        Navigation.NavigateTo("/recent-bills");
+    }
+
+    private async Task GoPurchaseOrders()
+    {
+        CloseMenus();
+        if (OnPurchaseOrders.HasDelegate)
+        {
+            await OnPurchaseOrders.InvokeAsync();
+            return;
+        }
+
+        Navigation.NavigateTo("/sales?orders=1");
+    }
+
+    private async Task GoCreatePurchaseOrder()
+    {
+        CloseMenus();
+        if (OnCreatePurchaseOrder.HasDelegate)
+        {
+            await OnCreatePurchaseOrder.InvokeAsync();
+            return;
+        }
+
+        Navigation.NavigateTo("/sales?createpo=1");
+    }
+
+    private async Task Hold()
+    {
+        if (OnHold.HasDelegate)
+        {
+            await OnHold.InvokeAsync();
+        }
+    }
+
+    private async Task Retrieve()
+    {
+        if (OnRetrieve.HasDelegate)
+        {
+            await OnRetrieve.InvokeAsync();
+        }
+    }
+
+    private void GoReturns()
+    {
+        CloseMenus();
+        Navigation.NavigateTo("/returns");
+    }
+
+    private void GoCloseShift()
+    {
+        CloseMenus();
+        Navigation.NavigateTo("/close-shift");
+    }
+
+    private async Task OnLock()
+    {
+        if (OnLockRequested.HasDelegate)
+        {
+            await OnLockRequested.InvokeAsync();
+            return;
+        }
+
+        SessionService.ClearSession();
+        Login.ClearCashier();
+        _ = ShiftStatus.RefreshAsync();
+        Navigation.NavigateTo("/login", forceLoad: true);
+    }
+}

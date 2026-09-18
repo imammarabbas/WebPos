@@ -24,7 +24,7 @@ public sealed class CartService
         }
 
         CartLine? existing = _lines.FirstOrDefault(
-            line => line.Product.BatchId == product.BatchId);
+            line => line.Product.ProductId == product.ProductId);
 
         if (existing is not null)
         {
@@ -42,9 +42,9 @@ public sealed class CartService
         Changed?.Invoke();
     }
 
-    public void SetQuantity(Guid batchId, decimal quantity)
+    public void SetQuantity(Guid productId, decimal quantity)
     {
-        CartLine? line = _lines.FirstOrDefault(entry => entry.Product.BatchId == batchId);
+        CartLine? line = _lines.FirstOrDefault(entry => entry.Product.ProductId == productId);
         if (line is null)
         {
             return;
@@ -62,9 +62,27 @@ public sealed class CartService
         Changed?.Invoke();
     }
 
-    public void Remove(Guid batchId)
+    public void SetUnitPrice(Guid productId, long unitPricePaisa)
     {
-        CartLine? line = _lines.FirstOrDefault(entry => entry.Product.BatchId == batchId);
+        CartLine? line = _lines.FirstOrDefault(entry => entry.Product.ProductId == productId);
+        if (line is null)
+        {
+            return;
+        }
+
+        if (unitPricePaisa < 0)
+        {
+            return;
+        }
+
+        line.UnitPriceOverridePaisa =
+            unitPricePaisa == line.Product.UnitPricePaisa ? null : unitPricePaisa;
+        Changed?.Invoke();
+    }
+
+    public void Remove(Guid productId)
+    {
+        CartLine? line = _lines.FirstOrDefault(entry => entry.Product.ProductId == productId);
         if (line is null)
         {
             return;

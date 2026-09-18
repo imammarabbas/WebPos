@@ -43,15 +43,19 @@ public sealed class PinLoginTests
     public async Task LoginAsync_ShouldReturnCashier_WhenPinHashMatches()
     {
         HmacPinHasher hasher = CreateHasher();
-        await using WebPosDbContext context = CreateContext();
-        User cashier = await SeedUserAsync(context, "Cashier", pinHash: hasher.HashPin(Pin));
-        LoginService service = new(context, hasher);
+        (WebPosDbContext context, IDbContextFactory<WebPosDbContext> dbFactory) =
+            CreateContextAndFactory();
+        await using (context)
+        {
+            User cashier = await SeedUserAsync(context, "Cashier", pinHash: hasher.HashPin(Pin));
+            LoginService service = new(dbFactory, hasher);
 
-        Common.Models.CashierDto? result = await service.LoginAsync(Pin);
+            Common.Models.CashierDto? result = await service.LoginAsync(Pin);
 
-        result.Should().NotBeNull();
-        result!.CashierId.Should().Be(cashier.Id);
-        result.Name.Should().Be(cashier.Username);
+            result.Should().NotBeNull();
+            result!.CashierId.Should().Be(cashier.Id);
+            result.Name.Should().Be(cashier.Username);
+        }
     }
 
     [Fact]
@@ -59,35 +63,43 @@ public sealed class PinLoginTests
     {
         const string managerPin = "8642";
         HmacPinHasher hasher = CreateHasher();
-        await using WebPosDbContext context = CreateContext();
-        User manager = await SeedUserAsync(
-            context,
-            "Manager",
-            pinHash: hasher.HashPin(managerPin));
-        LoginService service = new(context, hasher);
+        (WebPosDbContext context, IDbContextFactory<WebPosDbContext> dbFactory) =
+            CreateContextAndFactory();
+        await using (context)
+        {
+            User manager = await SeedUserAsync(
+                context,
+                "Manager",
+                pinHash: hasher.HashPin(managerPin));
+            LoginService service = new(dbFactory, hasher);
 
-        Common.Models.CashierDto? result = await service.LoginAsync(managerPin);
+            Common.Models.CashierDto? result = await service.LoginAsync(managerPin);
 
-        result.Should().NotBeNull();
-        result!.CashierId.Should().Be(manager.Id);
+            result.Should().NotBeNull();
+            result!.CashierId.Should().Be(manager.Id);
+        }
     }
 
     [Fact]
     public async Task LoginAsync_ShouldFallbackToPasswordHash_WhenPinHashIsEmpty()
     {
         HmacPinHasher hasher = CreateHasher();
-        await using WebPosDbContext context = CreateContext();
-        User cashier = await SeedUserAsync(
-            context,
-            "Cashier",
-            pinHash: string.Empty,
-            passwordHash: CryptoHelper.HashPassword(Pin));
-        LoginService service = new(context, hasher);
+        (WebPosDbContext context, IDbContextFactory<WebPosDbContext> dbFactory) =
+            CreateContextAndFactory();
+        await using (context)
+        {
+            User cashier = await SeedUserAsync(
+                context,
+                "Cashier",
+                pinHash: string.Empty,
+                passwordHash: CryptoHelper.HashPassword(Pin));
+            LoginService service = new(dbFactory, hasher);
 
-        Common.Models.CashierDto? result = await service.LoginAsync(Pin);
+            Common.Models.CashierDto? result = await service.LoginAsync(Pin);
 
-        result.Should().NotBeNull();
-        result!.CashierId.Should().Be(cashier.Id);
+            result.Should().NotBeNull();
+            result!.CashierId.Should().Be(cashier.Id);
+        }
     }
 
     private static HmacPinHasher CreateHasher()
@@ -102,14 +114,26 @@ public sealed class PinLoginTests
         return new HmacPinHasher(configuration);
     }
 
-    private static WebPosDbContext CreateContext()
+    private static (WebPosDbContext Context, IDbContextFactory<WebPosDbContext> Factory)
+        CreateContextAndFactory()
     {
         DbContextOptions<WebPosDbContext> options =
             new DbContextOptionsBuilder<WebPosDbContext>()
                 .UseInMemoryDatabase($"WebPos_PinLogin_{Guid.NewGuid():N}")
                 .Options;
 
-        return new WebPosDbContext(options, new FixedTenantService(TenantDefaults.MasterTenantId));
+        var tenantService = new FixedTenantService(TenantDefaults.MasterTenantId);
+        var context = new WebPosDbContext(options, tenantService);
+        IDbContextFactory<WebPosDbContext> factory =
+            new TestDbContextFactory(options, tenantService);
+        return (context, factory);
+    }
+
+    private sealed class TestDbContextFactory(
+        DbContextOptions<WebPosDbContext> options,
+        ITenantService tenant) : IDbContextFactory<WebPosDbContext>
+    {
+        public WebPosDbContext CreateDbContext() => new(options, tenant);
     }
 
     private static async Task<User> SeedUserAsync(

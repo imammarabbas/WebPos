@@ -190,8 +190,10 @@ public sealed class JwtAuthorizationTests
         };
         SymmetricSecurityKey key = new(Encoding.UTF8.GetBytes(options.Key));
 
+        IDbContextFactory<WebPosDbContext> dbFactory =
+            new TestDbContextFactory(dbOptions, tenantService);
         JwtService service = new(
-            context,
+            dbFactory,
             tenantService,
             new JwtSigningKey(key),
             Microsoft.Extensions.Options.Options.Create(options));
@@ -231,6 +233,13 @@ public sealed class JwtAuthorizationTests
         return new AuthorizationFilterContext(
             new ActionContext(httpContext, routeData, new ActionDescriptor()),
             []);
+    }
+
+    private sealed class TestDbContextFactory(
+        DbContextOptions<WebPosDbContext> options,
+        ITenantService tenant) : IDbContextFactory<WebPosDbContext>
+    {
+        public WebPosDbContext CreateDbContext() => new(options, tenant);
     }
 
     private sealed class TestTenantService(Guid tenantId) : ITenantService

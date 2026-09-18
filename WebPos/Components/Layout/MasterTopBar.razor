@@ -36,7 +36,7 @@
             @if (_newOpen)
             {
                 <div class="mm-new-menu" @onclick:stopPropagation>
-                    <a href="/master/products?new=1" @onclick="CloseNewMenu">Product</a>
+                    <a href="/master/products/new" @onclick="CloseNewMenu">Product</a>
                     <a href="/master/parties?role=CUSTOMER&new=1" @onclick="CloseNewMenu">Customer</a>
                     <a href="/master/parties?role=SUPPLIER&new=1" @onclick="CloseNewMenu">Supplier</a>
                     <a href="/master/purchases?new=1" @onclick="CloseNewMenu">Purchase</a>

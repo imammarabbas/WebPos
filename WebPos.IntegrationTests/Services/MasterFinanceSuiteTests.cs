@@ -1,10 +1,15 @@
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using WebPos.Core.Abstractions;
 using WebPos.Core.Constants;
+using WebPos.Core.Entities;
 using WebPos.Core.Models;
+using WebPos.Core.Seeding;
 using WebPos.Core.Services;
 using WebPos.IntegrationTests.Infrastructure;
+using DoubleEntryPostRequest = WebPos.Core.Abstractions.DoubleEntryPostRequest;
+using LedgerPosting = WebPos.Core.Abstractions.LedgerPosting;
 
 namespace WebPos.IntegrationTests.Services;
 
@@ -52,9 +57,12 @@ public sealed class MasterFinanceSuiteTests
             ]
         });
 
+        await FundBankAsync(scope, 50_000L);
+
         // Revenue +30000, cost +20000, GP +10000
         var expenseService = new ExpenseService(
-            scope.DbContext,
+            scope.DbFactory,
+            scope.Ambient,
             scope.TransactionService,
             scope.CashAccountService,
             scope.TenantService);
@@ -103,8 +111,11 @@ public sealed class MasterFinanceSuiteTests
             .Select(s => s.ExpectedCashPaisa)
             .SingleAsync();
 
+        await FundBankAsync(scope, 50_000L);
+
         var expenseService = new ExpenseService(
-            scope.DbContext,
+            scope.DbFactory,
+            scope.Ambient,
             scope.TransactionService,
             scope.CashAccountService,
             scope.TenantService);
@@ -144,6 +155,14 @@ public sealed class MasterFinanceSuiteTests
     {
         await using IntegrationTestScope scope = _fixture.CreateScope();
         SaleSeedData seed = await SeedHelper.SeedSalePrerequisitesAsync(scope.DbContext);
+        await CashAccountSeeder.SeedForTenantAsync(
+            scope.DbContext,
+            TenantDefaults.MasterTenantId,
+            NullLogger.Instance);
+
+        CashAccountDto till = await scope.CashAccountService.EnsureTillAccountsAsync(
+            seed.TerminalId,
+            "Pilot Till");
 
         // Seed some till cash via a sale first.
         await scope.SalesService.CompleteSaleAsync(new CompleteSaleRequest
@@ -175,12 +194,13 @@ public sealed class MasterFinanceSuiteTests
             .SingleAsync();
 
         var expenseService = new ExpenseService(
-            scope.DbContext,
+            scope.DbFactory,
+            scope.Ambient,
             scope.TransactionService,
             scope.CashAccountService,
             scope.TenantService);
 
-        await expenseService.RecordShiftExpenseAsync(new RecordExpenseRequest
+        RecordExpenseResult result = await expenseService.RecordShiftExpenseAsync(new RecordExpenseRequest
         {
             ShiftId = seed.ShiftId,
             LoggedByUserId = seed.CashierId,
@@ -188,6 +208,7 @@ public sealed class MasterFinanceSuiteTests
             ExpenseCategory = ExpenseCategories.Equipment,
             ReceiptReference = "FIX-1",
             PaymentMethod = "CASH",
+            CashAccountId = till.Id,
             AmountPaisa = 2_000L
         });
 
@@ -197,5 +218,68 @@ public sealed class MasterFinanceSuiteTests
             .Select(s => s.ExpectedCashPaisa)
             .SingleAsync();
         expectedAfter.Should().Be(expectedBefore - 2_000L);
+
+        List<GeneralLedgerEntry> legs = await scope.DbContext.GeneralLedgerEntries
+            .AsNoTracking()
+            .Where(e => e.TransactionGroupId == result.TransactionGroupId)
+            .ToListAsync();
+        legs.Should().Contain(e =>
+            e.AccountCode == till.AccountCode && e.CreditPaisa == 2_000L);
+        legs.Should().NotContain(e =>
+            e.AccountCode == LedgerAccounts.Cash && e.CreditPaisa == 2_000L);
     }
+
+    [Fact]
+    public async Task CashExpense_WithoutFundingAccount_ShouldReject()
+    {
+        await using IntegrationTestScope scope = _fixture.CreateScope();
+        SaleSeedData seed = await SeedHelper.SeedSalePrerequisitesAsync(scope.DbContext);
+
+        var expenseService = new ExpenseService(
+            scope.DbFactory,
+            scope.Ambient,
+            scope.TransactionService,
+            scope.CashAccountService,
+            scope.TenantService);
+
+        Func<Task> act = () => expenseService.RecordShiftExpenseAsync(new RecordExpenseRequest
+        {
+            ShiftId = seed.ShiftId,
+            LoggedByUserId = seed.CashierId,
+            Description = "Missing funding",
+            ExpenseCategory = ExpenseCategories.Rent,
+            ReceiptReference = "RENT-X",
+            PaymentMethod = "CASH",
+            AmountPaisa = 1_000L
+        });
+
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("*funding account*");
+    }
+
+    private static Task FundBankAsync(IntegrationTestScope scope, long amountPaisa) =>
+        scope.TransactionService.ExecuteInTransactionAsync(ct =>
+            scope.TransactionService.PostBalancedEntriesAsync(
+                new DoubleEntryPostRequest
+                {
+                    TransactionType = "TEST_FUND",
+                    ReferenceNo = $"FUND-{Guid.NewGuid():N}"[..16],
+                    ReferenceDetails = "Test bank funding",
+                    Postings =
+                    [
+                        new LedgerPosting
+                        {
+                            AccountCode = LedgerAccounts.Bank,
+                            DebitPaisa = amountPaisa,
+                            CreditPaisa = 0
+                        },
+                        new LedgerPosting
+                        {
+                            AccountCode = LedgerAccounts.Revenue,
+                            DebitPaisa = 0,
+                            CreditPaisa = amountPaisa
+                        }
+                    ]
+                },
+                ct));
 }

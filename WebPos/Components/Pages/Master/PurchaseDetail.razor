@@ -6,36 +6,27 @@
 @using WebPos.Core.Abstractions
 @inject IPurchaseService PurchaseService
 @inject IPartyService PartyService
-@inject IProductAdminService ProductService
 @inject NavigationManager Navigation
+@inject IJSRuntime Js
+
+<link rel="stylesheet" href="po-master.css" />
 
 <PageTitle>Purchase @_detail?.SupplierInvoiceNo · Cone Mart</PageTitle>
 
-<div class="mm-page">
-    <div class="mm-page-header">
-        <div>
-            <h1>@(IsOpen ? "Edit purchase order" : "Purchase order")</h1>
-            <p>
-                @if (_detail is not null)
-                {
-                    <text>@_detail.SupplierInvoiceNo · @(_detail.IsReceived ? "Received" : "Open") · @_detail.PaymentStatus</text>
-                }
-                else
-                {
-                    <text>Loading…</text>
-                }
-            </p>
+<div class="mm-page pov-page">
+    <div class="po-page-header">
+        <div class="po-page-header-left">
+            <div class="po-icon-tile" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" stroke-linecap="round" />
+                </svg>
+            </div>
+            <div>
+                <h1>Purchase Order</h1>
+                <p>View and manage purchase order details</p>
+            </div>
         </div>
-        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-            <a class="mm-btn" href="/master/purchases">← Back to list</a>
-            @if (IsOpen)
-            {
-                <button type="button" class="mm-btn mm-btn-primary" disabled="@_saving" @onclick="SaveAsync">
-                    @(_saving ? "Saving…" : "Save changes")
-                </button>
-                <button type="button" class="mm-btn" disabled="@_saving" @onclick="ReceiveAsync">Receive stock</button>
-            }
-        </div>
+        <a class="po-btn po-btn-outline" href="/master/purchases">Back to Purchase Orders</a>
     </div>
 
     @if (!string.IsNullOrEmpty(_error))
@@ -53,21 +44,21 @@
     }
     else if (_detail is not null)
     {
-        <div class="mm-card">
-            <h2>Header</h2>
-            <div class="mm-form-grid">
-                <div class="mm-field">
-                    <label>Supplier invoice #</label>
+        <div class="po-card">
+            <h2>PO Information</h2>
+            <div class="pov-info-grid">
+                <div class="pov-info-item">
+                    <label>PO No.</label>
                     @if (IsOpen)
                     {
                         <input class="form-control" @bind="_invoiceNo" />
                     }
                     else
                     {
-                        <div class="mm-kpi-value" style="font-size:1.1rem;">@_detail.SupplierInvoiceNo</div>
+                        <div class="pov-value">@_detail.SupplierInvoiceNo</div>
                     }
                 </div>
-                <div class="mm-field">
+                <div class="pov-info-item">
                     <label>Supplier</label>
                     @if (IsOpen)
                     {
@@ -80,62 +71,87 @@
                     }
                     else
                     {
-                        <div>@(_detail.SupplierName ?? _detail.SupplierId.ToString("N")[..8])</div>
+                        <div class="pov-value">@(_detail.SupplierName ?? _detail.SupplierId.ToString("N")[..8])</div>
                     }
                 </div>
-                <div class="mm-field">
-                    <label>Purchase date</label>
+                <div class="pov-info-item">
+                    <label>Purchase Date</label>
                     @if (IsOpen)
                     {
                         <input class="form-control" type="date" @bind="_purchaseDate" />
                     }
                     else
                     {
-                        <div>@_detail.CreatedAt.ToLocalTime().ToString("g")</div>
+                        <div class="pov-value">@_detail.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy")</div>
                     }
                 </div>
-                <div class="mm-field">
-                    <label>Discount (Rs)</label>
-                    @if (IsOpen)
-                    {
+                <div class="pov-info-item">
+                    <label>Status</label>
+                    <div>
+                        @if (_detail.IsReceived)
+                        {
+                            <span class="po-badge po-badge-received">Received</span>
+                        }
+                        else
+                        {
+                            <span class="po-badge po-badge-open">Open</span>
+                        }
+                    </div>
+                </div>
+                <div class="pov-info-item">
+                    <label>Payment</label>
+                    <div class="pov-value">@_detail.PaymentStatus</div>
+                </div>
+                @if (IsOpen)
+                {
+                    <div class="pov-info-item">
+                        <label>Discount (Rs)</label>
                         <input class="form-control" type="number" step="0.01" @bind="_discountRs" />
-                    }
-                    else
-                    {
-                        <div>Rs @FormatRs(_detail.DiscountPaisa)</div>
-                    }
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="po-card">
+            <h2>Receiving Summary</h2>
+            <div class="pov-summary-row">
+                <div class="pov-summary-kpi">
+                    <span>Lines</span>
+                    <strong>@_lines.Count</strong>
                 </div>
-                <div class="mm-field">
-                    <label>Subtotal</label>
-                    <div>Rs @FormatRs(_detail.SubTotalPaisa)</div>
+                <div class="pov-summary-kpi">
+                    <span>Total Qty</span>
+                    <strong>@TotalQty.ToString("N3")</strong>
                 </div>
-                <div class="mm-field">
-                    <label>Net payable</label>
-                    <div class="mm-kpi-value" style="font-size:1.25rem;">Rs @FormatRs(_detail.NetPayablePaisa)</div>
+                <div class="pov-summary-kpi">
+                    <span>Stock Status</span>
+                    <strong style="font-size:1rem;">@(_detail.IsReceived ? "Fully received" : "Not received")</strong>
                 </div>
             </div>
         </div>
 
-        <div class="mm-card">
+        <div class="po-card">
             <div class="d-flex justify-content-between align-items-center mb-2">
-                <h2 style="margin:0;">Lines</h2>
+                <h2 style="margin:0;">Items</h2>
                 @if (IsOpen)
                 {
-                    <button type="button" class="mm-btn" @onclick="AddLine">+ Line</button>
+                    <button type="button" class="po-btn po-btn-outline" @onclick="AddLine">+ Line</button>
                 }
             </div>
-            <div class="mm-table-wrap">
-                <table class="mm-table">
+            <div class="po-table-wrap">
+                <table class="po-table">
                     <thead>
                         <tr>
+                            <th>#</th>
                             <th>Product</th>
-                            <th>Qty</th>
-                            <th>Bonus</th>
-                            <th>Cost</th>
-                            <th>Retail</th>
+                            <th class="po-num">Qty</th>
+                            <th class="po-num">Bonus</th>
+                            <th class="po-num">Cost</th>
+                            <th class="po-num">Retail</th>
                             <th>Batch</th>
                             <th>Expiry</th>
                             <th>Rack</th>
+                            <th class="po-num">Amount</th>
                             @if (IsOpen)
                             {
                                 <th></th>
@@ -147,24 +163,27 @@
                         {
                             int index = i;
                             LineEdit line = _lines[index];
+                            decimal amount = line.Quantity * line.PurchasePriceRs;
                             <tr>
+                                <td>@(index + 1)</td>
                                 <td>
                                     @if (IsOpen)
                                     {
-                                        <select class="form-control" @bind="line.ProductId">
-                                            <option value="">— Select —</option>
-                                            @foreach (ProductAdminDto p in _products)
-                                            {
-                                                <option value="@p.Id">@p.Name (@p.Sku)</option>
-                                            }
-                                        </select>
+                                        <ProductSearchBox InputId="@($"mm-po-detail-product-{index}")"
+                                                          ProductId="@line.ProductId"
+                                                          ProductIdChanged="v => line.ProductId = v ?? string.Empty"
+                                                          SelectedLabel="@line.ProductName"
+                                                          SelectedLabelChanged="v => line.ProductName = v"
+                                                          OnSelected="p => OnLineProductSelectedAsync(index, p)"
+                                                          MastersOnly="true"
+                                                          Disabled="@_saving" />
                                     }
                                     else
                                     {
                                         @(line.ProductName ?? line.ProductId)
                                     }
                                 </td>
-                                <td>
+                                <td class="po-num">
                                     @if (IsOpen)
                                     {
                                         <input class="form-control" type="number" step="0.001" @bind="line.Quantity" />
@@ -174,7 +193,7 @@
                                         @line.Quantity.ToString("N3")
                                     }
                                 </td>
-                                <td>
+                                <td class="po-num">
                                     @if (IsOpen)
                                     {
                                         <input class="form-control" type="number" step="0.001" @bind="line.BonusQuantity" />
@@ -184,24 +203,24 @@
                                         @line.BonusQuantity.ToString("N3")
                                     }
                                 </td>
-                                <td>
+                                <td class="po-num">
                                     @if (IsOpen)
                                     {
                                         <input class="form-control" type="number" step="0.01" @bind="line.PurchasePriceRs" />
                                     }
                                     else
                                     {
-                                        <text>Rs @line.PurchasePriceRs.ToString("N2")</text>
+                                        <text>@line.PurchasePriceRs.ToString("N2")</text>
                                     }
                                 </td>
-                                <td>
+                                <td class="po-num">
                                     @if (IsOpen)
                                     {
                                         <input class="form-control" type="number" step="0.01" @bind="line.RetailPriceRs" />
                                     }
                                     else
                                     {
-                                        <text>Rs @line.RetailPriceRs.ToString("N2")</text>
+                                        <text>@line.RetailPriceRs.ToString("N2")</text>
                                     }
                                 </td>
                                 <td>
@@ -234,6 +253,7 @@
                                         @(line.RackLocation ?? "—")
                                     }
                                 </td>
+                                <td class="po-num">@amount.ToString("N2")</td>
                                 @if (IsOpen)
                                 {
                                     <td>
@@ -246,6 +266,35 @@
                 </table>
             </div>
         </div>
+
+        <div class="po-card">
+            <h2>Totals</h2>
+            <div class="pov-totals">
+                <div class="pov-totals-row">
+                    <span>Sub Total</span>
+                    <span>Rs @FormatRs(DisplaySubTotalPaisa)</span>
+                </div>
+                <div class="pov-totals-row">
+                    <span>Discount</span>
+                    <span>Rs @(IsOpen ? _discountRs.ToString("N2") : FormatRs(_detail.DiscountPaisa))</span>
+                </div>
+                <div class="pov-totals-row grand">
+                    <span>Grand Total</span>
+                    <span>Rs @FormatRs(DisplayNetPaisa)</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="pov-footer-actions">
+            @if (IsOpen)
+            {
+                <button type="button" class="po-btn po-btn-primary" disabled="@_saving" @onclick="SaveAsync">
+                    @(_saving ? "Saving…" : "Save changes")
+                </button>
+                <button type="button" class="po-btn po-btn-outline" disabled="@_saving" @onclick="ReceiveAsync">Receive stock</button>
+            }
+            <a class="po-btn" href="/master/purchases">Back</a>
+        </div>
     }
 </div>
 
@@ -254,7 +303,6 @@
 
     private PurchaseOrderDetailDto? _detail;
     private readonly List<PartyDto> _suppliers = [];
-    private readonly List<ProductAdminDto> _products = [];
     private readonly List<LineEdit> _lines = [];
     private string _invoiceNo = string.Empty;
     private string _supplierId = string.Empty;
@@ -265,6 +313,18 @@
     private string? _success;
 
     private bool IsOpen => _detail is { IsReceived: false };
+
+    private decimal TotalQty => _lines.Sum(l => l.Quantity);
+
+    private long DisplaySubTotalPaisa =>
+        IsOpen
+            ? (long)Math.Round(_lines.Sum(l => l.Quantity * l.PurchasePriceRs) * 100m, MidpointRounding.AwayFromZero)
+            : (_detail?.SubTotalPaisa ?? 0);
+
+    private long DisplayNetPaisa =>
+        IsOpen
+            ? Math.Max(0, DisplaySubTotalPaisa - (long)Math.Round(_discountRs * 100m, MidpointRounding.AwayFromZero))
+            : (_detail?.NetPayablePaisa ?? 0);
 
     protected override async Task OnParametersSetAsync() => await LoadAsync();
 
@@ -279,13 +339,6 @@
                 IReadOnlyList<PartyDto> suppliers = await PartyService.GetSuppliersAsync();
                 _suppliers.Clear();
                 _suppliers.AddRange(suppliers);
-            }
-
-            if (_products.Count == 0)
-            {
-                IReadOnlyList<ProductAdminDto> products = await ProductService.ListAsync();
-                _products.Clear();
-                _products.AddRange(products);
             }
 
             PurchaseOrderDetailDto? detail = await PurchaseService.GetAsync(PurchaseOrderId);
@@ -389,7 +442,6 @@
         _success = null;
         try
         {
-            // Persist edits before receiving so stock matches the form.
             UpdateOpenPurchaseRequest request = BuildUpdateRequest();
             await PurchaseService.UpdateOpenPurchaseAsync(PurchaseOrderId, request);
             await PurchaseService.ReceiveStockAsync(PurchaseOrderId);
@@ -447,6 +499,46 @@
             DiscountPaisa = (long)Math.Round(_discountRs * 100m, MidpointRounding.AwayFromZero),
             Lines = lines
         };
+    }
+
+    private async Task OnLineProductSelectedAsync(int index, ProductAdminDto product)
+    {
+        if (index < 0 || index >= _lines.Count)
+        {
+            return;
+        }
+
+        LineEdit line = _lines[index];
+        line.ProductId = product.Id.ToString();
+        line.ProductName = product.IsBulk
+            ? $"{product.Name} (master)"
+            : $"{product.Name} ({product.Sku})";
+        if (line.PurchasePriceRs <= 0 && product.LatestCostPricePaisa > 0)
+        {
+            line.PurchasePriceRs = product.LatestCostPricePaisa / 100m;
+        }
+
+        if (line.RetailPriceRs <= 0 && product.LatestRetailPricePaisa > 0)
+        {
+            line.RetailPriceRs = product.LatestRetailPricePaisa / 100m;
+        }
+
+        int nextIndex = index + 1;
+        if (index == _lines.Count - 1)
+        {
+            AddLine();
+        }
+
+        await InvokeAsync(StateHasChanged);
+        await Task.Yield();
+        try
+        {
+            await Js.InvokeVoidAsync("webPosFocusById", $"mm-po-detail-product-{nextIndex}");
+        }
+        catch
+        {
+            /* ignore */
+        }
     }
 
     private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");

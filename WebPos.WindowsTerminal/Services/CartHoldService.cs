@@ -11,6 +11,10 @@ public sealed class HeldCartSnapshot
     public bool UseWalkIn { get; init; } = true;
 
     public long DiscountAmountPaisa { get; init; }
+
+    public bool WhatsAppReceipt { get; init; }
+
+    public bool PrintOnPrinter { get; init; }
 }
 
 public sealed class CartHoldService

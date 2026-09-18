@@ -41,6 +41,7 @@
                         <th>Products</th>
                         <th>Target margin %</th>
                         <th>Webshop</th>
+                        <th>POS Quick</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -51,6 +52,7 @@
                             <td>@c.ProductCount</td>
                             <td>@c.TargetMarginPercentage</td>
                             <td>@(c.ShowOnWebshop ? "Yes" : "No")</td>
+                            <td>@(c.ShowOnPosQuick ? "Yes" : "No")</td>
                         </tr>
                     }
                 </tbody>
@@ -72,6 +74,14 @@
                     <div class="mm-check">
                         <InputCheckbox @bind-Value="_form.ShowOnWebshop" />
                         <span>Show on webshop</span>
+                    </div>
+                    <div class="mm-check">
+                        <InputCheckbox @bind-Value="_form.ShowOnPosQuick" />
+                        <span>Show on POS Quick Links</span>
+                    </div>
+                    <div class="mm-field">
+                        <label for="cat-quick-sort">Quick link sort</label>
+                        <InputNumber id="cat-quick-sort" @bind-Value="_form.PosQuickSort" />
                     </div>
                 </div>
                 <div class="mm-form-actions">
@@ -143,7 +153,9 @@
         {
             Name = c.Name,
             TargetMarginPercentage = c.TargetMarginPercentage,
-            ShowOnWebshop = c.ShowOnWebshop
+            ShowOnWebshop = c.ShowOnWebshop,
+            ShowOnPosQuick = c.ShowOnPosQuick,
+            PosQuickSort = c.PosQuickSort
         };
         _error = null;
         _success = null;
@@ -160,7 +172,9 @@
             {
                 Name = _form.Name.Trim(),
                 TargetMarginPercentage = _form.TargetMarginPercentage,
-                ShowOnWebshop = _form.ShowOnWebshop
+                ShowOnWebshop = _form.ShowOnWebshop,
+                ShowOnPosQuick = _form.ShowOnPosQuick,
+                PosQuickSort = _form.PosQuickSort
             };
 
             if (_editingId is Guid id)
@@ -192,5 +206,7 @@
         public string Name { get; set; } = string.Empty;
         public int TargetMarginPercentage { get; set; }
         public bool ShowOnWebshop { get; set; }
+        public bool ShowOnPosQuick { get; set; }
+        public int PosQuickSort { get; set; }
     }
 }

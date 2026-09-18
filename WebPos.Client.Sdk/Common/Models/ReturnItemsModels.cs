@@ -4,7 +4,7 @@ public sealed class ReturnLineRequest
 {
     public required Guid ProductId { get; init; }
 
-    public required Guid BatchId { get; init; }
+    public Guid? BatchId { get; init; }
 
     public decimal Quantity { get; init; }
 

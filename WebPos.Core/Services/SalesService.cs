@@ -8,18 +8,21 @@ namespace WebPos.Core.Services;
 
 public sealed class SalesService : ISalesService
 {
-    private readonly WebPosDbContext _context;
+    private readonly IDbContextFactory<WebPosDbContext> _dbFactory;
+    private readonly IAmbientDbContextAccessor _ambient;
     private readonly ITransactionService _transactionService;
     private readonly IPartyLedgerService _partyLedgerService;
     private readonly ICashAccountService _cashAccountService;
 
     public SalesService(
-        WebPosDbContext context,
+        IDbContextFactory<WebPosDbContext> dbFactory,
+        IAmbientDbContextAccessor ambient,
         ITransactionService transactionService,
         IPartyLedgerService partyLedgerService,
         ICashAccountService cashAccountService)
     {
-        _context = context ?? throw new ArgumentNullException(nameof(context));
+        _dbFactory = dbFactory ?? throw new ArgumentNullException(nameof(dbFactory));
+        _ambient = ambient ?? throw new ArgumentNullException(nameof(ambient));
         _transactionService = transactionService ?? throw new ArgumentNullException(nameof(transactionService));
         _partyLedgerService = partyLedgerService ?? throw new ArgumentNullException(nameof(partyLedgerService));
         _cashAccountService = cashAccountService
@@ -30,6 +33,7 @@ public sealed class SalesService : ISalesService
         _transactionService.ExecuteInTransactionAsync(async ct =>
         {
             ValidateRequest(request);
+            WebPosDbContext context = _ambient.Required;
 
             long grossPaisa = request.Lines.Sum(l =>
                 (long)Math.Round(l.Quantity * l.UnitPricePaisa, MidpointRounding.AwayFromZero));
@@ -46,7 +50,7 @@ public sealed class SalesService : ISalesService
             }
 
             CashierShift? shift = request.TerminalId is Guid terminalId
-                ? await _context.CashierShifts.FirstOrDefaultAsync(candidate =>
+                ? await context.CashierShifts.FirstOrDefaultAsync(candidate =>
                     candidate.Id == request.ShiftId
                     && candidate.Status == "OPEN"
                     && candidate.TerminalId == terminalId
@@ -67,7 +71,7 @@ public sealed class SalesService : ISalesService
                     throw new InvalidOperationException("CREDIT sales require a customer.");
                 }
 
-                Party? customer = await _context.Parties
+                Party? customer = await context.Parties
                     .FirstOrDefaultAsync(p => p.Id == request.CustomerId.Value, ct);
 
                 if (customer is null || !string.Equals(customer.PartyType, "CUSTOMER", StringComparison.OrdinalIgnoreCase))
@@ -76,34 +80,63 @@ public sealed class SalesService : ISalesService
                 }
             }
 
-            List<Guid> batchIds = request.Lines.Select(l => l.BatchId).Distinct().ToList();
-            Dictionary<Guid, ProductBatch> batches = await _context.ProductBatches
-                .Where(b => batchIds.Contains(b.Id))
-                .ToDictionaryAsync(b => b.Id, ct);
+            List<Guid> productIds = request.Lines.Select(l => l.ProductId).Distinct().ToList();
+            Dictionary<Guid, Product> products = await context.Products
+                .Where(p => productIds.Contains(p.Id) && !p.IsDeleted)
+                .ToDictionaryAsync(p => p.Id, ct);
+
+            List<Guid> parentIds = products.Values
+                .Where(p => p.ParentProductId is Guid)
+                .Select(p => p.ParentProductId!.Value)
+                .Distinct()
+                .ToList();
+            Dictionary<Guid, Product> parents = parentIds.Count == 0
+                ? []
+                : await context.Products
+                    .Where(p => parentIds.Contains(p.Id) && !p.IsDeleted)
+                    .ToDictionaryAsync(p => p.Id, ct);
 
             foreach (SaleLineRequest line in request.Lines)
             {
-                if (!batches.TryGetValue(line.BatchId, out ProductBatch? batch))
+                if (!products.TryGetValue(line.ProductId, out Product? product))
                 {
-                    throw new InvalidOperationException($"Batch {line.BatchNumber} was not found.");
+                    throw new InvalidOperationException($"Product {line.ProductName} was not found.");
                 }
 
-                if (batch.ProductId != line.ProductId)
-                {
-                    throw new InvalidOperationException(
-                        $"Batch {line.BatchNumber} does not belong to product {line.ProductName}.");
-                }
-
-                if (line.UnitPricePaisa != batch.RetailPricePaisa)
+                if (line.UnitPricePaisa != product.RetailPricePaisa)
                 {
                     throw new InvalidOperationException(
                         $"The price for {line.ProductName} has changed. Refresh the product list and try again.");
                 }
 
-                if (line.Quantity > batch.CurrentQty)
+                if (product.ParentProductId is Guid parentId)
+                {
+                    if (product.DeductionMultiplier is not decimal mult || mult <= 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"Alias {line.ProductName} is missing a valid DeductionMultiplier.");
+                    }
+
+                    if (!parents.TryGetValue(parentId, out Product? parent))
+                    {
+                        throw new InvalidOperationException(
+                            $"Parent product for {line.ProductName} was not found.");
+                    }
+
+                    decimal parentNeeded = line.Quantity * mult;
+                    if (parent.StockQty < parentNeeded)
+                    {
+                        throw new InvalidOperationException(
+                            $"Insufficient bulk stock for {line.ProductName}. " +
+                            $"Available: {parent.StockQty:0.###} {parent.BaseUnit}, " +
+                            $"needed: {parentNeeded:0.###} {parent.BaseUnit}.");
+                    }
+                }
+                else if (product.StockQty < line.Quantity)
                 {
                     throw new InvalidOperationException(
-                        $"Insufficient stock for {line.ProductName} (batch {line.BatchNumber}). Available: {batch.CurrentQty}, requested: {line.Quantity}.");
+                        $"Insufficient stock for {line.ProductName}. " +
+                        $"Available: {product.StockQty:0.###}, requested: {line.Quantity}.");
                 }
             }
 
@@ -127,25 +160,57 @@ public sealed class SalesService : ISalesService
                 AmountPaidPaisa = paymentMethod == "CREDIT" ? 0 : netPaisa,
                 CreatedAt = now
             };
-            _context.SalesInvoices.Add(invoice);
+            context.SalesInvoices.Add(invoice);
 
             foreach (SaleLineRequest line in request.Lines)
             {
-                ProductBatch batch = batches[line.BatchId];
+                Product product = products[line.ProductId];
+                long unitCostPaisa;
+                decimal parentQtyDeducted = 0m;
 
-                SalesItem salesItem = new()
+                if (product.ParentProductId is Guid parentId)
+                {
+                    Product parent = parents[parentId];
+                    decimal mult = product.DeductionMultiplier!.Value;
+                    decimal parentQty = line.Quantity * mult;
+                    if (parent.StockQty < parentQty)
+                    {
+                        throw new InvalidOperationException(
+                            $"Insufficient parent stock for {line.ProductName}.");
+                    }
+
+                    parent.StockQty -= parentQty;
+                    parent.UpdatedAt = now;
+                    unitCostPaisa = (long)Math.Round(
+                        parent.CostPricePaisa * mult,
+                        MidpointRounding.AwayFromZero);
+                    parentQtyDeducted = parentQty;
+                }
+                else
+                {
+                    if (product.StockQty < line.Quantity)
+                    {
+                        throw new InvalidOperationException(
+                            $"Insufficient stock for {line.ProductName}.");
+                    }
+
+                    product.StockQty -= line.Quantity;
+                    product.UpdatedAt = now;
+                    unitCostPaisa = product.CostPricePaisa;
+                }
+
+                context.SalesItems.Add(new SalesItem
                 {
                     Id = Guid.NewGuid(),
                     InvoiceNo = request.InvoiceNo,
                     ProductId = line.ProductId,
-                    BatchId = line.BatchId,
+                    BatchId = null,
                     Quantity = line.Quantity,
                     UnitPricePaisa = line.UnitPricePaisa,
-                    UnitCostPaisa = batch.CostPricePaisa,
-                    DiscountAppliedPaisa = line.DiscountAppliedPaisa
-                };
-                _context.SalesItems.Add(salesItem);
-                batch.CurrentQty -= line.Quantity;
+                    UnitCostPaisa = unitCostPaisa,
+                    DiscountAppliedPaisa = line.DiscountAppliedPaisa,
+                    ParentQtyDeducted = parentQtyDeducted
+                });
             }
 
             string paymentAccount;

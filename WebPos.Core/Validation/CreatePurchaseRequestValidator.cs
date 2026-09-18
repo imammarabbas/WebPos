@@ -4,16 +4,17 @@ using WebPos.Core.Abstractions;
 using WebPos.Core.Constants;
 using WebPos.Core.Data;
 using WebPos.Core.Interfaces;
+using WebPos.Core.Services;
 
 namespace WebPos.Core.Validation;
 
 public sealed class CreatePurchaseRequestValidator : AbstractValidator<CreatePurchaseRequest>
 {
     public CreatePurchaseRequestValidator(
-        WebPosDbContext dbContext,
+        IDbContextFactory<WebPosDbContext> dbFactory,
         ITenantService tenantService)
     {
-        ArgumentNullException.ThrowIfNull(dbContext);
+        ArgumentNullException.ThrowIfNull(dbFactory);
         ArgumentNullException.ThrowIfNull(tenantService);
 
         RuleFor(request => request.SupplierId)
@@ -25,11 +26,15 @@ public sealed class CreatePurchaseRequestValidator : AbstractValidator<CreatePur
                     return false;
                 }
 
-                return await dbContext.Parties.AnyAsync(
-                    party =>
-                        party.Id == supplierId
-                        && party.TenantId == tenantService.TenantId
-                        && party.PartyType == PartyTypes.Supplier,
+                return await DbContextExecution.ExecuteAsync(
+                    dbFactory,
+                    async (context, ct) =>
+                        await context.Parties.AnyAsync(
+                            party =>
+                                party.Id == supplierId
+                                && party.TenantId == tenantService.TenantId
+                                && party.PartyType == PartyTypes.Supplier,
+                            ct),
                     cancellationToken);
             })
             .WithMessage(
@@ -44,11 +49,15 @@ public sealed class CreatePurchaseRequestValidator : AbstractValidator<CreatePur
                     return false;
                 }
 
-                return await dbContext.Users.AnyAsync(
-                    user =>
-                        user.Id == receiverId
-                        && user.TenantId == tenantService.TenantId
-                        && user.IsActive,
+                return await DbContextExecution.ExecuteAsync(
+                    dbFactory,
+                    async (context, ct) =>
+                        await context.Users.AnyAsync(
+                            user =>
+                                user.Id == receiverId
+                                && user.TenantId == tenantService.TenantId
+                                && user.IsActive,
+                            ct),
                     cancellationToken);
             })
             .WithMessage(
@@ -113,15 +122,57 @@ public sealed class CreatePurchaseRequestValidator : AbstractValidator<CreatePur
                     .Distinct()
                     .ToArray();
 
-                int found = await dbContext.Products.CountAsync(
-                    product =>
-                        productIds.Contains(product.Id)
-                        && product.TenantId == tenantService.TenantId,
-                    cancellationToken);
+                return await DbContextExecution.ExecuteAsync(
+                    dbFactory,
+                    async (context, ct) =>
+                    {
+                        int found = await context.Products.CountAsync(
+                            product =>
+                                productIds.Contains(product.Id)
+                                && product.TenantId == tenantService.TenantId,
+                            ct);
 
-                return found == productIds.Length;
+                        return found == productIds.Length;
+                    },
+                    cancellationToken);
             })
             .WithMessage(
                 "Every product on the purchase must belong to the current tenant.");
+
+        RuleFor(request => request.Lines)
+            .MustAsync(async (lines, cancellationToken) =>
+            {
+                if (!tenantService.IsResolved || tenantService.TenantId == Guid.Empty)
+                {
+                    return false;
+                }
+
+                if (lines is null || lines.Count == 0)
+                {
+                    return true;
+                }
+
+                Guid[] productIds = lines
+                    .Select(line => line.ProductId)
+                    .Distinct()
+                    .ToArray();
+
+                return await DbContextExecution.ExecuteAsync(
+                    dbFactory,
+                    async (context, ct) =>
+                    {
+                        int childCount = await context.Products.CountAsync(
+                            product =>
+                                productIds.Contains(product.Id)
+                                && product.TenantId == tenantService.TenantId
+                                && product.ParentProductId != null,
+                            ct);
+
+                        return childCount == 0;
+                    },
+                    cancellationToken);
+            })
+            .WithMessage(
+                "Cannot purchase a child pack. Buy the master product.");
     }
 }

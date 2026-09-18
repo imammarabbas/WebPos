@@ -76,7 +76,7 @@ public sealed class SalesInvoiceLineDto
 
 
 
-    public Guid BatchId { get; init; }
+    public Guid? BatchId { get; init; }
 
 
 

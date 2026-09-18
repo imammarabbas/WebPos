@@ -1,0 +1,354 @@
+.ro-backdrop {
+    z-index: 940;
+}
+
+.ro-panel {
+    --ro-ink: #0f172a;
+    --ro-muted: #94a3b8;
+    --ro-line: #eef2f6;
+    --ro-border: #e2e8f0;
+    --ro-soft: #f8fafc;
+    --ro-green-bg: #ecfdf5;
+    --ro-green: #047857;
+    --ro-navy: #0f172a;
+
+    width: min(980px, 94vw);
+    max-height: min(88vh, 820px);
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    padding: 1.1rem 1.2rem 1rem;
+    background: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.7);
+    border-radius: 18px;
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22);
+    color: var(--ro-ink);
+    box-sizing: border-box;
+}
+
+.ro-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-shrink: 0;
+}
+
+.ro-head-left {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    min-width: 0;
+}
+
+.ro-icon {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 12px;
+    background: var(--ro-navy);
+    color: #fff;
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+}
+
+.ro-head h2 {
+    margin: 0;
+    font-size: 1.35rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+}
+
+.ro-sub {
+    margin: 0.2rem 0 0;
+    color: var(--ro-muted);
+    font-size: 0.88rem;
+    font-weight: 500;
+}
+
+.ro-head-actions,
+.ro-foot-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex-shrink: 0;
+}
+
+.ro-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    min-height: 2.25rem;
+    padding: 0.35rem 0.85rem;
+    border: 1px solid var(--ro-border);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--ro-ink);
+    font: inherit;
+    font-size: 0.88rem;
+    font-weight: 650;
+    cursor: pointer;
+}
+
+.ro-btn:hover:not(:disabled) {
+    background: var(--ro-soft);
+}
+
+.ro-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.ro-btn-icon {
+    width: 2.25rem;
+    padding: 0;
+    font-size: 1rem;
+}
+
+.ro-btn-primary {
+    background: var(--ro-navy);
+    border-color: var(--ro-navy);
+    color: #fff;
+}
+
+.ro-btn-primary:hover:not(:disabled) {
+    background: #1e293b;
+}
+
+.ro-btn-ico {
+    font-size: 0.95rem;
+    line-height: 1;
+    opacity: 0.85;
+}
+
+.ro-view {
+    min-width: 4.8rem;
+}
+
+.ro-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    align-items: center;
+}
+
+.ro-alert {
+    padding: 0.65rem 0.8rem;
+    border-radius: 10px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #b91c1c;
+    font-weight: 650;
+}
+
+.ro-empty {
+    margin: 1.5rem 0;
+    text-align: center;
+    color: var(--ro-muted);
+    font-weight: 550;
+}
+
+.ro-table-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    border: 1px solid var(--ro-line);
+    border-radius: 14px;
+    background: #fff;
+}
+
+.ro-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.ro-table th,
+.ro-table td {
+    padding: 0.85rem 0.9rem;
+    text-align: left;
+    border-bottom: 1px solid var(--ro-line);
+    vertical-align: middle;
+}
+
+.ro-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #fff;
+    color: var(--ro-muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.ro-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.ro-date {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    line-height: 1.2;
+}
+
+.ro-date strong {
+    font-weight: 750;
+}
+
+.ro-date span {
+    color: var(--ro-muted);
+    font-size: 0.8rem;
+    font-weight: 550;
+}
+
+.ro-pill {
+    display: inline-flex;
+    align-items: center;
+    max-width: 12rem;
+    padding: 0.28rem 0.65rem;
+    border-radius: 999px;
+    background: #f1f5f9;
+    color: #334155;
+    font-size: 0.8rem;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ro-supplier {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    min-width: 0;
+}
+
+.ro-supplier > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 650;
+}
+
+.ro-avatar {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 999px;
+    background: #0f172a;
+    color: #fff;
+    display: grid;
+    place-items: center;
+    font-size: 0.72rem;
+    font-weight: 800;
+    flex-shrink: 0;
+}
+
+.ro-lines {
+    width: 1.85rem;
+    height: 1.85rem;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--ro-border);
+    border-radius: 999px;
+    font-weight: 750;
+    font-size: 0.82rem;
+}
+
+.ro-net {
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.ro-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.7rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 750;
+    white-space: nowrap;
+}
+
+.ro-status.ok {
+    background: var(--ro-green-bg);
+    color: var(--ro-green);
+}
+
+.ro-status.open {
+    background: #fff7ed;
+    color: #c2410c;
+}
+
+.ro-dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 999px;
+    background: currentColor;
+}
+
+.ro-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1rem;
+    flex-shrink: 0;
+    padding-top: 0.15rem;
+}
+
+.ro-foot-summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.55rem 0.75rem;
+    min-width: 0;
+}
+
+.ro-foot-label {
+    color: var(--ro-muted);
+    font-size: 0.85rem;
+    font-weight: 650;
+}
+
+.ro-total-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.4rem 0.85rem;
+    border-radius: 999px;
+    background: var(--ro-navy);
+    color: #fff;
+    font-weight: 800;
+    font-size: 0.9rem;
+}
+
+.ro-foot-meta {
+    color: var(--ro-muted);
+    font-size: 0.85rem;
+    font-weight: 550;
+}
+
+@media (max-width: 800px) {
+    .ro-panel {
+        width: min(100vw - 1rem, 94vw);
+        padding: 0.9rem;
+        max-height: 92vh;
+    }
+
+    .ro-table th:nth-child(4),
+    .ro-table td:nth-child(4) {
+        display: none;
+    }
+}
+
+/* Create PO panel sizing (visual styles live in CreatePurchaseOrderModal.razor.css) */
+.cpo-panel {
+    width: min(1600px, 98vw);
+    max-height: min(96vh, 980px);
+}
+

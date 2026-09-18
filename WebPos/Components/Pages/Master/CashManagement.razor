@@ -20,8 +20,10 @@
             <p>Daily sales cash stays in tills until you transfer. Card &amp; mobile settle to bank. Supplier / owner cash come from the account you choose.</p>
         </div>
         <div class="mm-form-actions" style="margin:0;">
-            <button type="button" class="mm-btn" @onclick='() => PrefillTransfer("till","bank")'>Transfer → Bank</button>
-            <button type="button" class="mm-btn" @onclick='() => PrefillTransfer("till","owner")'>Cash → Owner</button>
+            <button type="button" class="mm-btn" @onclick="OpenCashInForm">+ Cash In</button>
+            <button type="button" class="mm-btn" @onclick="OpenCashOutForm">+ Cash Out</button>
+            <button type="button" class="mm-btn" @onclick='() => PrefillTransfer("till","bank")'>Cash drop → Main Bank</button>
+            <button type="button" class="mm-btn" @onclick='() => PrefillTransfer("till","owner")'>Cash drop → Owner Safe</button>
             <button type="button" class="mm-btn mm-btn-primary" @onclick="OpenManageAccounts">+ Account</button>
         </div>
     </div>
@@ -33,6 +35,26 @@
     @if (!string.IsNullOrEmpty(_success))
     {
         <div class="mm-alert mm-alert-ok">@_success</div>
+    }
+
+    @foreach (CashAccountCardDto gap in DiscrepantTills)
+    {
+        long drawer = gap.DrawerExpectedCashPaisa ?? 0;
+        long difference = Math.Abs(gap.DerivedGlBalancePaisa - drawer);
+        <div class="mm-alert" style="border:1px solid #f59e0b;background:#fffbeb;color:#92400e;">
+            <strong>⚠ Cash reconciliation difference — @gap.Account.Name</strong>
+            <div style="margin-top:0.35rem;font-size:0.95rem;">
+                Registered / Expected: Rs @FormatRs(gap.DerivedGlBalancePaisa)<br />
+                Available / Drawer: Rs @FormatRs(gap.SpendablePaisa) (drawer Rs @FormatRs(drawer))<br />
+                Difference: Rs @FormatRs(difference)<br />
+                Status: UNRECONCILED — not automatically a shortage.
+            </div>
+            <div class="mm-form-actions" style="margin-top:0.5rem;">
+                <button type="button" class="mm-btn mm-btn-primary" @onclick="() => PrefillCashIn(gap, Math.Max(0, gap.DerivedGlBalancePaisa - drawer))">Cash In (recognize physical)</button>
+                <button type="button" class="mm-btn" @onclick="() => PrefillShortage(gap, Math.Max(0, gap.DerivedGlBalancePaisa - drawer))">Record cash shortage</button>
+                <button type="button" class="mm-btn" @onclick="() => PrefillCashDrop(gap)">Cash Drop</button>
+            </div>
+        </div>
     }
 
     @if (_summary is not null)
@@ -56,15 +78,19 @@
 
         <div class="cm-section-head">
             <h2>Cash position</h2>
-            <span class="mm-muted">@_summary.Accounts.Count accounts · Rs @FormatRs(_summary.TotalLiquidityPaisa) total</span>
+            <span class="mm-muted">@_summary.Accounts.Count accounts · Rs @FormatRs(_summary.TotalLiquidityPaisa) total · click a card for ledger</span>
         </div>
 
         <div class="cm-account-grid">
             @foreach (CashAccountCardDto card in _summary.Accounts)
             {
                 bool live = card.HasOpenShift;
-                long display = card.DrawerExpectedCashPaisa ?? card.DerivedGlBalancePaisa;
-                <div class="cm-account-card @(live ? "live" : null)">
+                long display = card.Account.Type == CashAccountType.Till
+                    ? card.SpendablePaisa
+                    : card.DerivedGlBalancePaisa;
+                <div class="cm-account-card @(live ? "live" : null)" role="button" tabindex="0"
+                     @onclick="() => OpenLedgerAsync(card)"
+                     @onkeydown="e => OnCardKeyAsync(e, card)">
                     <div class="cm-account-top">
                         <div>
                             <strong>@card.Account.Name</strong>
@@ -75,13 +101,28 @@
                     <div class="cm-account-balance">Rs @FormatRs(display)</div>
                     @if (card.Account.Type == CashAccountType.Till)
                     {
-                        <div class="mm-muted" style="font-size:0.8rem;">Drawer @(card.DrawerExpectedCashPaisa is long d ? FormatRs(d) : "—") · Ledger @FormatRs(card.DerivedGlBalancePaisa)</div>
+                        <div class="mm-muted" style="font-size:0.8rem;margin-top:0.15rem;">
+                            <div><strong>AVAILABLE / SPENDABLE</strong></div>
+                            <div>Expected / Registered: Rs @FormatRs(card.DrawerExpectedCashPaisa ?? 0) / @FormatRs(card.DerivedGlBalancePaisa)</div>
+                            <div>Physical (blind count): @(card.HasPhysicalCount ? $"Rs {FormatRs(card.PhysicalBlindCashPaisa!.Value)}" : "Not Counted")</div>
+                        </div>
+                        @if (card.UnreconciledCashInPaisa > 0 || card.UnreconciledCashOutPaisa > 0)
+                        {
+                            <div style="font-size:0.8rem;color:#92400e;margin-top:0.25rem;">
+                                ⚠ UNRECONCILED Rs @FormatRs(card.UnreconciledCashInPaisa + card.UnreconciledCashOutPaisa)
+                                (In @FormatRs(card.UnreconciledCashInPaisa) · Out @FormatRs(card.UnreconciledCashOutPaisa))
+                            </div>
+                        }
                     }
                     <div class="cm-io">
                         <span class="in">Today in +@FormatRs(card.TodayInPaisa)</span>
                         <span class="out">Today out −@FormatRs(card.TodayOutPaisa)</span>
                     </div>
-                    <button type="button" class="mm-btn" style="width:100%;margin-top:0.5rem;" @onclick="() => PrefillFromCard(card.Account.Id)">Use in transfer</button>
+                    <button type="button" class="mm-btn" style="width:100%;margin-top:0.5rem;"
+                            @onclick="() => PrefillFromCard(card.Account.Id)"
+                            @onclick:stopPropagation="true">
+                        Use in transfer
+                    </button>
                 </div>
             }
         </div>
@@ -90,6 +131,64 @@
     <div class="cm-split">
         <div class="mm-card">
             <h2>Cash movement</h2>
+            <p class="mm-muted" style="margin-top:0;">
+                Till outflows use Available = min(ledger, drawer). Gap is a warning — use Cash In to recognize physical cash already on the ledger, Shortage to write off missing cash, or Cash Drop for physical drawer cash. Mid-shift OK.
+            </p>
+            @if (_movementMode is "in" or "out")
+            {
+                <div class="mm-form-grid" style="margin-bottom:0.75rem;padding:0.75rem;border:1px solid #bfdbfe;border-radius:8px;background:#eff6ff;">
+                    <div class="mm-field">
+                        <label>@(_movementMode == "in" ? "Cash In (Rs)" : "Cash Out (Rs)")</label>
+                        <InputNumber @bind-Value="_movementRs" />
+                    </div>
+                    <div class="mm-field">
+                        <label>Till</label>
+                        <InputSelect @bind-Value="_movementTillId">
+                            <option value="">Select…</option>
+                            @foreach (CashAccountCardDto t in LiveTills)
+                            {
+                                <option value="@t.Account.Id">@t.Account.Name · Available @FormatRs(t.SpendablePaisa)</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    <div class="mm-field">
+                        <label>Reason</label>
+                        <InputSelect @bind-Value="_movementReason">
+                            @foreach (string r in _movementMode == "in" ? ShiftCashInReasons.All : ShiftCashOutReasons.All)
+                            {
+                                <option value="@r">@r</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    <div class="mm-field full">
+                        <label>Note</label>
+                        <InputText @bind-Value="_movementNote" placeholder="Optional" />
+                    </div>
+                    <div class="mm-form-actions">
+                        <button type="button" class="mm-btn mm-btn-primary" disabled="@_saving" @onclick="PostMovementAsync">
+                            @(_movementMode == "in" ? "Post Cash In" : "Post Cash Out")
+                        </button>
+                        <button type="button" class="mm-btn" @onclick="ClearMovementForm">Cancel</button>
+                    </div>
+                </div>
+            }
+            @if (_shortageTillId != Guid.Empty)
+            {
+                <div class="mm-form-grid" style="margin-bottom:0.75rem;padding:0.75rem;border:1px solid #fde68a;border-radius:8px;background:#fffbeb;">
+                    <div class="mm-field">
+                        <label>Cash shortage (Rs)</label>
+                        <InputNumber @bind-Value="_shortageRs" />
+                    </div>
+                    <div class="mm-field full">
+                        <label>Notes</label>
+                        <InputText @bind-Value="_shortageNotes" placeholder="Missing cash vs till ledger" />
+                    </div>
+                    <div class="mm-form-actions">
+                        <button type="button" class="mm-btn mm-btn-primary" disabled="@_saving" @onclick="PostShortageAsync">Post shortage</button>
+                        <button type="button" class="mm-btn" @onclick="ClearShortageForm">Cancel</button>
+                    </div>
+                </div>
+            }
             <div class="mm-form-grid">
                 <div class="mm-field">
                     <label>From</label>
@@ -124,6 +223,82 @@
                 <button type="button" class="mm-btn mm-btn-primary" disabled="@_saving" @onclick="TransferAsync">
                     @(_saving ? "Transferring…" : "+ Transfer")
                 </button>
+            </div>
+
+            <h3 style="margin-top:1.25rem;">Owner investment / loan</h3>
+            <p class="mm-muted" style="margin-top:0;">
+                External funding into an existing account — not a sale, not unregistered cash, not an expense.
+            </p>
+            <div class="mm-form-grid">
+                <div class="mm-field">
+                    <label>Type</label>
+                    <InputSelect @bind-Value="_fundKind">
+                        <option value="investment">Owner investment</option>
+                        <option value="loan-in">Loan received</option>
+                        <option value="loan-out">Loan repayment</option>
+                    </InputSelect>
+                </div>
+                <div class="mm-field">
+                    <label>Account</label>
+                    <InputSelect @bind-Value="_fundAccountId">
+                        <option value="">Select…</option>
+                        @foreach (CashAccountDto a in _accounts.Where(a => a.IsActive))
+                        {
+                            <option value="@a.Id">@a.Name · @a.AccountCode</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div class="mm-field">
+                    <label>Amount (Rs)</label>
+                    <InputNumber @bind-Value="_fundRs" />
+                </div>
+                <div class="mm-field full">
+                    <label>Note</label>
+                    <InputText @bind-Value="_fundNote" placeholder="Optional" />
+                </div>
+            </div>
+            <div class="mm-form-actions">
+                <button type="button" class="mm-btn mm-btn-primary" disabled="@_saving" @onclick="PostFundingAsync">
+                    @(_saving ? "Posting…" : "Post funding")
+                </button>
+            </div>
+
+            <h3 style="margin-top:1.25rem;">Unreconciled till adjustments</h3>
+            <div class="mm-table-wrap">
+                <table class="mm-table">
+                    <thead>
+                        <tr>
+                            <th>When</th>
+                            <th>Dir</th>
+                            <th>Reason</th>
+                            <th>Amount</th>
+                            <th>Align / Excess</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (_movements.Count == 0)
+                        {
+                            <tr><td colspan="6" class="mm-muted">No unreconciled Cash In / Out / shortage.</td></tr>
+                        }
+                        @foreach (TillCashMovementDto row in _movements)
+                        {
+                            <tr>
+                                <td>@row.CreatedAt.LocalDateTime.ToString("dd MMM HH:mm")</td>
+                                <td>@row.Direction</td>
+                                <td>@row.Reason</td>
+                                <td>Rs @FormatRs(row.AmountPaisa)</td>
+                                <td>@FormatRs(row.AlignPaisa) / @FormatRs(row.ExcessPaisa)</td>
+                                <td>
+                                    <button type="button" class="mm-btn" disabled="@_saving"
+                                            @onclick="() => ReconcileMovementAsync(row)">Link</button>
+                                    <button type="button" class="mm-btn" disabled="@_saving"
+                                            @onclick="() => ReverseMovementAsync(row)">Reverse</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
             </div>
 
             <h3 style="margin-top:1.25rem;">Recent transfers</h3>
@@ -162,9 +337,10 @@
             <h2>How money moves</h2>
             <ol>
                 <li>Cash sales land in the <strong>terminal till</strong> (drawer + till GL).</li>
-                <li>Transfer till → bank / owner when you take cash out of the drawer.</li>
-                <li>Pay suppliers from <strong>Owner</strong> or <strong>Bank</strong> so the till is not wrongfully reduced.</li>
-                <li>Add multiple EasyPaisa / bank wallets under Manage accounts.</li>
+                <li><strong>Cash In</strong> raises Available via ExpectedCash; till GL is debited only for cash not already on the ledger.</li>
+                <li><strong>Cash Out</strong> lowers Available for physical cash leaving without a document.</li>
+                <li>Cash drop (transfer till → bank / owner) is unchanged — mid-shift OK; amount ≤ Available.</li>
+                <li>Shortage writes off missing ledger cash; it does not freeze the shift.</li>
             </ol>
             <p class="mm-muted">Supplier settle with preferred account: <a href="/master/parties?tab=supplier-pay">Parties · Supplier Payment</a></p>
         </div>
@@ -209,10 +385,109 @@
     </div>
 }
 
+@if (_ledgerOpen)
+{
+    <div class="mm-modal-backdrop" @onclick="CloseLedger">
+        <div class="mm-modal cm-ledger-modal" @onclick:stopPropagation>
+            <div class="cm-ledger-head">
+                <div>
+                    <h2>@_ledgerTitle</h2>
+                    <p class="mm-muted" style="margin:0;">@_ledgerAccountCode · opening Rs @FormatRs(_ledger?.OpeningBalancePaisa ?? 0)</p>
+                </div>
+                <button type="button" class="mm-btn" @onclick="CloseLedger">Close</button>
+            </div>
+
+            <div class="cm-ledger-presets">
+                <button type="button" class="mm-btn @(_ledgerPreset == "today" ? "mm-btn-primary" : null)" @onclick='() => SetLedgerPresetAsync("today")'>Today</button>
+                <button type="button" class="mm-btn @(_ledgerPreset == "7" ? "mm-btn-primary" : null)" @onclick='() => SetLedgerPresetAsync("7")'>7D</button>
+                <button type="button" class="mm-btn @(_ledgerPreset == "30" ? "mm-btn-primary" : null)" @onclick='() => SetLedgerPresetAsync("30")'>30D</button>
+                <button type="button" class="mm-btn @(_ledgerPreset == "custom" ? "mm-btn-primary" : null)" @onclick='() => SetLedgerPresetAsync("custom")'>Custom</button>
+            </div>
+
+            @if (_ledgerPreset == "custom")
+            {
+                <div class="mm-form-grid" style="margin-bottom:0.75rem;">
+                    <div class="mm-field">
+                        <label>From</label>
+                        <InputText type="date" @bind-Value="_ledgerFromDate" />
+                    </div>
+                    <div class="mm-field">
+                        <label>To</label>
+                        <InputText type="date" @bind-Value="_ledgerToDate" />
+                    </div>
+                    <div class="mm-field" style="align-self:end;">
+                        <button type="button" class="mm-btn mm-btn-primary" disabled="@_ledgerLoading" @onclick="LoadLedgerAsync">Apply</button>
+                    </div>
+                </div>
+            }
+
+            @if (!string.IsNullOrEmpty(_ledgerError))
+            {
+                <div class="mm-alert mm-alert-error">@_ledgerError</div>
+            }
+
+            <div class="mm-table-wrap cm-ledger-table">
+                <table class="mm-table">
+                    <thead>
+                        <tr>
+                            <th>When</th>
+                            <th>Type</th>
+                            <th>Reference</th>
+                            <th>Terminal</th>
+                            <th>Debit In</th>
+                            <th>Credit Out</th>
+                            <th>Running</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (_ledgerLoading)
+                        {
+                            <tr><td colspan="7" class="mm-muted">Loading…</td></tr>
+                        }
+                        else if (_ledger is null || _ledger.Entries.Count == 0)
+                        {
+                            <tr><td colspan="7" class="mm-muted">No ledger lines in this range.</td></tr>
+                        }
+                        else
+                        {
+                            @foreach (CashAccountLedgerEntryDto row in _ledger.Entries)
+                            {
+                                <tr>
+                                    <td>@row.CreatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                    <td>@row.TransactionType</td>
+                                    <td>
+                                        @if (TryBuildReferenceHref(row, out string? href) && href is not null)
+                                        {
+                                            <a href="@href">@DisplayReference(row)</a>
+                                        }
+                                        else
+                                        {
+                                            @DisplayReference(row)
+                                        }
+                                    </td>
+                                    <td>@(row.TerminalName ?? "—")</td>
+                                    <td>@(row.DebitPaisa > 0 ? FormatRs(row.DebitPaisa) : "—")</td>
+                                    <td>@(row.CreditPaisa > 0 ? FormatRs(row.CreditPaisa) : "—")</td>
+                                    <td>Rs @FormatRs(row.RunningBalancePaisa)</td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+            @if (_ledger is not null)
+            {
+                <p class="mm-muted" style="margin:0.75rem 0 0;">Closing Rs @FormatRs(_ledger.ClosingBalancePaisa)</p>
+            }
+        </div>
+    </div>
+}
+
 @code {
     private CashBalancesSummaryDto? _summary;
     private readonly List<CashAccountDto> _accounts = [];
     private readonly List<CashTransferDto> _transfers = [];
+    private readonly List<TillCashMovementDto> _movements = [];
     private long _due7dPaisa;
     private string? _error;
     private string? _success;
@@ -229,7 +504,43 @@
     private string _newCode = string.Empty;
     private string _newMethodKey = string.Empty;
 
+    private Guid _shortageTillId;
+    private Guid _shortageShiftId;
+    private decimal _shortageRs;
+    private string _shortageNotes = string.Empty;
+
+    private string? _movementMode;
+    private string _movementTillId = string.Empty;
+    private decimal _movementRs;
+    private string _movementReason = ShiftCashInReasons.UnregisteredCash;
+    private string _movementNote = string.Empty;
+
+    private string _fundKind = "investment";
+    private string _fundAccountId = string.Empty;
+    private decimal _fundRs;
+    private string _fundNote = string.Empty;
+
+    private bool _ledgerOpen;
+    private bool _ledgerLoading;
+    private string? _ledgerError;
+    private string _ledgerTitle = string.Empty;
+    private string _ledgerAccountCode = string.Empty;
+    private string _ledgerPreset = "30";
+    private string _ledgerFromDate = DateTime.Today.AddDays(-30).ToString("yyyy-MM-dd");
+    private string _ledgerToDate = DateTime.Today.ToString("yyyy-MM-dd");
+    private CashAccountLedgerDto? _ledger;
+
     protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private IEnumerable<CashAccountCardDto> DiscrepantTills =>
+        _summary?.Accounts.Where(c =>
+            c.Account.Type == CashAccountType.Till
+            && c.DrawerExpectedCashPaisa is long drawer
+            && c.DerivedGlBalancePaisa > drawer) ?? [];
+
+    private IEnumerable<CashAccountCardDto> LiveTills =>
+        _summary?.Accounts.Where(c =>
+            c.Account.Type == CashAccountType.Till && c.HasOpenShift) ?? [];
 
     private async Task ReloadAsync()
     {
@@ -241,6 +552,10 @@
             _accounts.AddRange(await CashAccounts.ListAsync());
             _transfers.Clear();
             _transfers.AddRange(await CashTransfers.ListTransfersAsync(limit: 40));
+            _movements.Clear();
+            _movements.AddRange(await CashTransfers.ListTillCashMovementsAsync(
+                unreconciledOnly: true,
+                limit: 50));
 
             PartyFinanceKpisDto supplierKpis = await PartyLedger.GetPartyFinanceKpisAsync(PartyTypes.Supplier);
             _due7dPaisa = supplierKpis.DueThisWeekPaisa;
@@ -254,6 +569,300 @@
     private void PrefillFromCard(Guid accountId)
     {
         _fromAccountId = accountId.ToString();
+    }
+
+    private void OpenCashInForm()
+    {
+        ClearShortageForm();
+        _movementMode = "in";
+        _movementReason = ShiftCashInReasons.UnregisteredCash;
+        CashAccountCardDto? till = LiveTills.FirstOrDefault();
+        if (till is not null)
+        {
+            _movementTillId = till.Account.Id.ToString();
+            long gap = Math.Max(0, till.DerivedGlBalancePaisa - (till.DrawerExpectedCashPaisa ?? 0));
+            _movementRs = gap > 0 ? gap / 100m : 0;
+        }
+    }
+
+    private void OpenCashOutForm()
+    {
+        ClearShortageForm();
+        _movementMode = "out";
+        _movementReason = ShiftCashOutReasons.UnregisteredPayment;
+        CashAccountCardDto? till = LiveTills.FirstOrDefault();
+        if (till is not null)
+        {
+            _movementTillId = till.Account.Id.ToString();
+            _movementRs = 0;
+        }
+    }
+
+    private void PrefillCashIn(CashAccountCardDto card, long gapPaisa)
+    {
+        ClearShortageForm();
+        _movementMode = "in";
+        _movementTillId = card.Account.Id.ToString();
+        _movementRs = gapPaisa / 100m;
+        _movementReason = ShiftCashInReasons.UnregisteredCash;
+        _movementNote = "Recognize physical cash already on till ledger";
+    }
+
+    private void ClearMovementForm()
+    {
+        _movementMode = null;
+        _movementTillId = string.Empty;
+        _movementRs = 0;
+        _movementNote = string.Empty;
+        _movementReason = ShiftCashInReasons.UnregisteredCash;
+    }
+
+    private async Task PostMovementAsync()
+    {
+        _saving = true;
+        _error = null;
+        _success = null;
+        try
+        {
+            if (!Guid.TryParse(_movementTillId, out Guid tillId))
+            {
+                _error = "Select a live till.";
+                return;
+            }
+
+            CashAccountCardDto? card = _summary?.Accounts.FirstOrDefault(c => c.Account.Id == tillId);
+            if (card?.OpenShiftId is not Guid shiftId)
+            {
+                _error = "Till must have an open shift.";
+                return;
+            }
+
+            long amountPaisa = (long)Math.Round(_movementRs * 100m, MidpointRounding.AwayFromZero);
+            if (amountPaisa <= 0)
+            {
+                _error = "Enter an amount greater than zero.";
+                return;
+            }
+
+            if (_movementMode == "in")
+            {
+                TillCashMovementResult result = await CashTransfers.RecordTillCashInAsync(
+                    new RecordTillCashInRequest
+                    {
+                        ShiftId = shiftId,
+                        TillCashAccountId = tillId,
+                        AmountPaisa = amountPaisa,
+                        Reason = _movementReason,
+                        Note = string.IsNullOrWhiteSpace(_movementNote) ? null : _movementNote
+                    });
+                _success =
+                    $"Cash In posted. Available now Rs {FormatRs(CashSpendable.ForTill(result.TillGlBalanceAfterPaisa, result.ExpectedCashAfterPaisa))} " +
+                    $"(align {FormatRs(result.AlignPaisa)}, excess {FormatRs(result.ExcessPaisa)}).";
+            }
+            else
+            {
+                TillCashMovementResult result = await CashTransfers.RecordTillCashOutAsync(
+                    new RecordTillCashOutRequest
+                    {
+                        ShiftId = shiftId,
+                        TillCashAccountId = tillId,
+                        AmountPaisa = amountPaisa,
+                        Reason = _movementReason,
+                        Note = string.IsNullOrWhiteSpace(_movementNote) ? null : _movementNote
+                    });
+                _success = $"Cash Out posted ({FormatRs(result.AmountPaisa)} Rs).";
+            }
+
+            ClearMovementForm();
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.InnerException?.Message ?? ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task ReconcileMovementAsync(TillCashMovementDto row)
+    {
+        _saving = true;
+        _error = null;
+        _success = null;
+        try
+        {
+            await CashTransfers.ReconcileTillCashMovementAsync(new ReconcileTillCashMovementRequest
+            {
+                MovementId = row.Id,
+                LinkedReferenceType = "MANUAL",
+                LinkedReferenceId = Guid.NewGuid(),
+                Notes = "Linked from Cash Management"
+            });
+            _success = "Movement marked reconciled.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.InnerException?.Message ?? ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task ReverseMovementAsync(TillCashMovementDto row)
+    {
+        _saving = true;
+        _error = null;
+        _success = null;
+        try
+        {
+            await CashTransfers.ReverseTillCashMovementAsync(row.Id, notes: "Reversed from Cash Management");
+            _success = "Movement reversed.";
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.InnerException?.Message ?? ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void PrefillShortage(CashAccountCardDto card, long gapPaisa)
+    {
+        ClearMovementForm();
+        _shortageTillId = card.Account.Id;
+        _shortageShiftId = card.OpenShiftId ?? Guid.Empty;
+        _shortageRs = gapPaisa / 100m;
+        _shortageNotes = "Cash shortage — ledger vs drawer";
+        _fromAccountId = card.Account.Id.ToString();
+    }
+
+    private void PrefillCashDrop(CashAccountCardDto card)
+    {
+        _fromAccountId = card.Account.Id.ToString();
+        CashAccountDto? owner = PickAccount("owner");
+        if (owner is not null)
+        {
+            _toAccountId = owner.Id.ToString();
+        }
+
+        long drawer = card.DrawerExpectedCashPaisa ?? 0;
+        long spendable = card.SpendablePaisa;
+        _amountRs = spendable / 100m;
+        _notes = "Cash drop — physical drawer to owner safe";
+        ClearShortageForm();
+        ClearMovementForm();
+    }
+
+    private void ClearShortageForm()
+    {
+        _shortageTillId = Guid.Empty;
+        _shortageShiftId = Guid.Empty;
+        _shortageRs = 0;
+        _shortageNotes = string.Empty;
+    }
+
+    private async Task PostShortageAsync()
+    {
+        _saving = true;
+        _error = null;
+        _success = null;
+        try
+        {
+            if (_shortageTillId == Guid.Empty || _shortageShiftId == Guid.Empty)
+            {
+                _error = "Select a till with an open shift for shortage posting.";
+                return;
+            }
+
+            long shortagePaisa = (long)Math.Round(_shortageRs * 100m, MidpointRounding.AwayFromZero);
+            if (shortagePaisa <= 0)
+            {
+                _error = "Enter a shortage greater than zero.";
+                return;
+            }
+
+            TillShortageResult result = await CashTransfers.RecordTillShortageAsync(
+                new RecordTillShortageRequest
+                {
+                    ShiftId = _shortageShiftId,
+                    TillCashAccountId = _shortageTillId,
+                    ShortagePaisa = shortagePaisa,
+                    Notes = string.IsNullOrWhiteSpace(_shortageNotes) ? null : _shortageNotes
+                });
+
+            _success = $"Shortage {result.ReferenceNo} posted ({FormatRs(result.ShortagePaisa)} Rs).";
+            ClearShortageForm();
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.InnerException?.Message ?? ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task PostFundingAsync()
+    {
+        _saving = true;
+        _error = null;
+        _success = null;
+        try
+        {
+            if (!Guid.TryParse(_fundAccountId, out Guid accountId))
+            {
+                _error = "Select an account.";
+                return;
+            }
+
+            long amountPaisa = (long)Math.Round(_fundRs * 100m, MidpointRounding.AwayFromZero);
+            if (amountPaisa <= 0)
+            {
+                _error = "Enter an amount greater than zero.";
+                return;
+            }
+
+            CashAccountCardDto? card = _summary?.Accounts.FirstOrDefault(c => c.Account.Id == accountId);
+            Guid? shiftId = card?.OpenShiftId;
+
+            var request = new CapitalFundingRequest
+            {
+                CashAccountId = accountId,
+                AmountPaisa = amountPaisa,
+                Note = string.IsNullOrWhiteSpace(_fundNote) ? null : _fundNote,
+                ShiftId = shiftId
+            };
+
+            CapitalFundingResult result = _fundKind switch
+            {
+                "loan-in" => await CashTransfers.RecordLoanReceivedAsync(request),
+                "loan-out" => await CashTransfers.RecordLoanRepaymentAsync(request),
+                _ => await CashTransfers.RecordOwnerInvestmentAsync(request)
+            };
+
+            _success = $"{result.TransactionType} {result.ReferenceNo} posted ({FormatRs(result.AmountPaisa)} Rs).";
+            _fundRs = 0;
+            _fundNote = string.Empty;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.InnerException?.Message ?? ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
     }
 
     private void PrefillTransfer(string fromKind, string toKind)
@@ -275,10 +884,98 @@
         kind switch
         {
             "till" => _accounts.FirstOrDefault(a => a.Type == CashAccountType.Till && a.IsActive),
-            "bank" => _accounts.FirstOrDefault(a => a.Type == CashAccountType.Bank && a.IsActive),
-            "owner" => _accounts.FirstOrDefault(a => a.Type == CashAccountType.Owner && a.IsActive),
+            "bank" => _accounts.FirstOrDefault(a =>
+                a.IsActive && (a.AccountCode.Equals("BANK", StringComparison.OrdinalIgnoreCase)
+                    || a.Type == CashAccountType.Bank)),
+            "owner" => _accounts.FirstOrDefault(a =>
+                a.IsActive && (a.AccountCode.Equals("OWNER_CASH", StringComparison.OrdinalIgnoreCase)
+                    || a.Type == CashAccountType.Owner)),
             _ => null
         };
+
+    private async Task OnCardKeyAsync(KeyboardEventArgs e, CashAccountCardDto card)
+    {
+        if (e.Key is "Enter" or " ")
+        {
+            await OpenLedgerAsync(card);
+        }
+    }
+
+    private async Task OpenLedgerAsync(CashAccountCardDto card)
+    {
+        _ledgerOpen = true;
+        _ledgerTitle = card.Account.Name;
+        _ledgerAccountCode = card.Account.AccountCode;
+        _ledgerPreset = "30";
+        ApplyPresetDates("30");
+        await LoadLedgerAsync();
+    }
+
+    private void CloseLedger()
+    {
+        _ledgerOpen = false;
+        _ledger = null;
+        _ledgerError = null;
+    }
+
+    private async Task SetLedgerPresetAsync(string preset)
+    {
+        _ledgerPreset = preset;
+        if (preset != "custom")
+        {
+            ApplyPresetDates(preset);
+            await LoadLedgerAsync();
+        }
+    }
+
+    private void ApplyPresetDates(string preset)
+    {
+        DateTime today = DateTime.Today;
+        (DateTime from, DateTime to) = preset switch
+        {
+            "today" => (today, today),
+            "7" => (today.AddDays(-6), today),
+            "30" => (today.AddDays(-29), today),
+            _ => (
+                DateTime.TryParse(_ledgerFromDate, out DateTime f) ? f : today.AddDays(-29),
+                DateTime.TryParse(_ledgerToDate, out DateTime t) ? t : today)
+        };
+        _ledgerFromDate = from.ToString("yyyy-MM-dd");
+        _ledgerToDate = to.ToString("yyyy-MM-dd");
+    }
+
+    private async Task LoadLedgerAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_ledgerAccountCode))
+        {
+            return;
+        }
+
+        _ledgerLoading = true;
+        _ledgerError = null;
+        try
+        {
+            if (!DateTime.TryParse(_ledgerFromDate, out DateTime fromDate)
+                || !DateTime.TryParse(_ledgerToDate, out DateTime toDate))
+            {
+                _ledgerError = "Enter valid from/to dates.";
+                return;
+            }
+
+            DateTimeOffset from = new(fromDate.Year, fromDate.Month, fromDate.Day, 0, 0, 0, TimeSpan.Zero);
+            DateTimeOffset to = new(toDate.Year, toDate.Month, toDate.Day, 23, 59, 59, TimeSpan.Zero);
+            _ledger = await CashAccounts.GetLedgerByAccountCodeAsync(_ledgerAccountCode, from, to);
+        }
+        catch (Exception ex)
+        {
+            _ledgerError = ex.InnerException?.Message ?? ex.Message;
+            _ledger = null;
+        }
+        finally
+        {
+            _ledgerLoading = false;
+        }
+    }
 
     private async Task TransferAsync()
     {
@@ -299,6 +996,21 @@
             {
                 _error = "Enter an amount greater than zero.";
                 return;
+            }
+
+            CashAccountCardDto? fromCard = _summary?.Accounts.FirstOrDefault(c => c.Account.Id == fromId);
+            if (fromCard is not null)
+            {
+                long spendable = fromCard.Account.Type == CashAccountType.Till
+                    ? fromCard.SpendablePaisa
+                    : Math.Max(0, fromCard.DerivedGlBalancePaisa);
+                if (amountPaisa > spendable)
+                {
+                    _error =
+                        $"Insufficient spendable funds. Available Rs {FormatRs(spendable)} " +
+                        $"({spendable} paisa), requested Rs {FormatRs(amountPaisa)} ({amountPaisa} paisa).";
+                    return;
+                }
             }
 
             CashTransferResult result = await CashTransfers.TransferAsync(
@@ -357,6 +1069,33 @@
         {
             _saving = false;
         }
+    }
+
+    private static string DisplayReference(CashAccountLedgerEntryDto row) =>
+        string.IsNullOrWhiteSpace(row.ReferenceDetails)
+            ? row.ReferenceNo
+            : $"{row.ReferenceNo} · {row.ReferenceDetails}";
+
+    private static bool TryBuildReferenceHref(CashAccountLedgerEntryDto row, out string? href)
+    {
+        href = null;
+        string type = row.TransactionType ?? string.Empty;
+        string refNo = row.ReferenceNo ?? string.Empty;
+        if (type.Contains("SALE", StringComparison.OrdinalIgnoreCase)
+            || refNo.StartsWith("INV-", StringComparison.OrdinalIgnoreCase))
+        {
+            href = $"/master/reports?invoice={Uri.EscapeDataString(refNo)}";
+            return true;
+        }
+
+        if (type.Contains("PURCHASE", StringComparison.OrdinalIgnoreCase)
+            || type.Contains("SUPPLIER", StringComparison.OrdinalIgnoreCase))
+        {
+            href = "/master/parties?tab=supplier-ledger";
+            return true;
+        }
+
+        return false;
     }
 
     private static string FormatRs(long paisa) =>

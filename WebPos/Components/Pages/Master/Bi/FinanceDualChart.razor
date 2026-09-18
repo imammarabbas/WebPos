@@ -1,0 +1,56 @@
+@namespace WebPos.Components.Pages.Master.Bi
+@using WebPos.Core.Abstractions
+
+<svg class="bi-line" viewBox="0 0 @W @H" role="img" aria-label="@AriaLabel">
+    @if (_primary.Count > 1)
+    {
+        <polyline fill="none" stroke="#111827" stroke-width="2.25" points="@_primaryPoly" />
+        <polyline fill="none" stroke="#10b981" stroke-width="2" stroke-dasharray="5 4" points="@_secondaryPoly" />
+        @for (int i = 0; i < _primary.Count; i++)
+        {
+            <circle cx="@_primary[i].X" cy="@_primary[i].Y" r="2.5" fill="#111827" />
+        }
+    }
+    else
+    {
+        @((MarkupString)"""<text x="260" y="90" text-anchor="middle" fill="#9ca3af" font-size="12">No trend data</text>""")
+    }
+</svg>
+
+@code {
+    private const double W = 520;
+    private const double H = 180;
+    private const double PadL = 8;
+    private const double PadR = 8;
+    private const double PadT = 12;
+    private const double PadB = 20;
+
+    [Parameter] public IReadOnlyList<FinanceDailyPoint>? Points { get; set; }
+
+    [Parameter] public string AriaLabel { get; set; } = "Finance trend";
+
+    private List<(double X, double Y)> _primary = [];
+    private List<(double X, double Y)> _secondary = [];
+    private string _primaryPoly = string.Empty;
+    private string _secondaryPoly = string.Empty;
+
+    protected override void OnParametersSet()
+    {
+        IReadOnlyList<FinanceDailyPoint> pts = Points ?? [];
+        if (pts.Count == 0)
+        {
+            _primary = [];
+            _secondary = [];
+            return;
+        }
+
+        long max = Math.Max(1, pts.Max(p => Math.Max(p.PrimaryPaisa, p.SecondaryPaisa)));
+        double step = pts.Count <= 1 ? 0 : (W - PadL - PadR) / (pts.Count - 1);
+        double plotH = H - PadT - PadB;
+
+        _primary = pts.Select((p, i) => (PadL + i * step, PadT + plotH - p.PrimaryPaisa / (double)max * plotH)).ToList();
+        _secondary = pts.Select((p, i) => (PadL + i * step, PadT + plotH - p.SecondaryPaisa / (double)max * plotH)).ToList();
+        _primaryPoly = string.Join(" ", _primary.Select(p => $"{p.X:0.##},{p.Y:0.##}"));
+        _secondaryPoly = string.Join(" ", _secondary.Select(p => $"{p.X:0.##},{p.Y:0.##}"));
+    }
+}

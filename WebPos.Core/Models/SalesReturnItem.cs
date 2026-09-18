@@ -10,7 +10,7 @@ public class SalesReturnItem : BaseEntity
 
     public Guid ProductId { get; set; }
 
-    public Guid BatchId { get; set; }
+    public Guid? BatchId { get; set; }
 
     public decimal Quantity { get; set; }
 
@@ -22,5 +22,5 @@ public class SalesReturnItem : BaseEntity
 
     public Product Product { get; set; } = null!;
 
-    public ProductBatch Batch { get; set; } = null!;
+    public ProductBatch? Batch { get; set; }
 }

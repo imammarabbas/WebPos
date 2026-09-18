@@ -1,0 +1,173 @@
+@page "/master/finance"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using WebPos.Components.Pages.Master.Bi
+@using WebPos.Core.Abstractions
+@inject IBusinessPositionService PositionService
+@inject NavigationManager Navigation
+
+<PageTitle>Finance Dashboard · Cone Mart</PageTitle>
+
+<div class="mm-page">
+    <div class="mm-page-header">
+        <div>
+            <h1>Where do we stand?</h1>
+            <p>Today's business position at a glance — every card drills to detail</p>
+        </div>
+        <div class="mm-form-actions" style="margin:0;">
+            @foreach ((string id, string label) in Presets)
+            {
+                <button type="button" class="mm-btn @(_preset == id ? "mm-btn-primary" : null)" @onclick="() => SetPreset(id)">@label</button>
+            }
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+
+    @if (_position is not null)
+    {
+        <div class="cm-kpi-strip">
+            <a class="mm-kpi" href="/master/payments" style="text-decoration:none;color:inherit;">
+                <div class="mm-kpi-label">Available cash</div>
+                <div class="mm-kpi-value">Rs @FormatRs(_position.AvailableCashPaisa)</div>
+            </a>
+            <a class="mm-kpi" href="/master/accounts" style="text-decoration:none;color:inherit;">
+                <div class="mm-kpi-label">Bank</div>
+                <div class="mm-kpi-value">Rs @FormatRs(_position.BankPaisa)</div>
+            </a>
+            <a class="mm-kpi" href="/master/parties?role=CUSTOMER" style="text-decoration:none;color:inherit;">
+                <div class="mm-kpi-label">Customer receivable</div>
+                <div class="mm-kpi-value">Rs @FormatRs(_position.CustomerReceivablePaisa)</div>
+            </a>
+            <a class="mm-kpi" href="/master/parties?role=SUPPLIER" style="text-decoration:none;color:inherit;">
+                <div class="mm-kpi-label">Supplier payable</div>
+                <div class="mm-kpi-value">Rs @FormatRs(_position.SupplierPayablePaisa)</div>
+            </a>
+            <a class="mm-kpi" href="/master/stock-position" style="text-decoration:none;color:inherit;">
+                <div class="mm-kpi-label">Stock value</div>
+                <div class="mm-kpi-value">Rs @FormatRs(_position.StockValuePaisa)</div>
+            </a>
+            <a class="mm-kpi" href="/master/cash-stock-reconciliation" style="text-decoration:none;color:inherit;">
+                <div class="mm-kpi-label">Unrecorded physical cash</div>
+                <div class="mm-kpi-value">Rs @FormatRs(_position.UnrecordedPhysicalCashPaisa)</div>
+            </a>
+            <a class="mm-kpi" href="/master/cash-stock-reconciliation" style="text-decoration:none;color:inherit;">
+                <div class="mm-kpi-label">Stock difference</div>
+                <div class="mm-kpi-value">Rs @FormatRs(_position.StockDifferencePaisa)</div>
+            </a>
+        </div>
+
+        <div class="cm-kpi-strip" style="margin-top:0.75rem;">
+            <div class="mm-kpi"><div class="mm-kpi-label">Sales</div><div class="mm-kpi-value">Rs @FormatRs(_position.SalesPaisa)</div></div>
+            <div class="mm-kpi"><div class="mm-kpi-label">Purchases (COGS)</div><div class="mm-kpi-value">Rs @FormatRs(_position.PurchasesPaisa)</div></div>
+            <a class="mm-kpi" href="/master/expenses" style="text-decoration:none;color:inherit;">
+                <div class="mm-kpi-label">Expenses</div>
+                <div class="mm-kpi-value">Rs @FormatRs(_position.ExpensesPaisa)</div>
+            </a>
+            <div class="mm-kpi"><div class="mm-kpi-label">Owner capital</div><div class="mm-kpi-value">Rs @FormatRs(_position.OwnerCapitalPaisa)</div></div>
+            <div class="mm-kpi"><div class="mm-kpi-label">Loan outstanding</div><div class="mm-kpi-value">Rs @FormatRs(_position.LoanOutstandingPaisa)</div></div>
+            <div class="mm-kpi"><div class="mm-kpi-label">Unregistered cash (GL)</div><div class="mm-kpi-value">Rs @FormatRs(_position.UnregisteredCashLiabilityPaisa)</div></div>
+        </div>
+
+        <p class="mm-muted" style="margin-top:1rem;">
+            Period: @_position.From.LocalDateTime.ToString("dd MMM yyyy") — @_position.To.LocalDateTime.ToString("dd MMM yyyy HH:mm").
+            Unrecorded physical cash and Unregistered Cash GL are shown separately — not summed.
+        </p>
+
+        @if (_trends is not null)
+        {
+            <div class="mm-grid-2" style="margin-top:1.5rem;">
+                <div class="mm-card">
+                    <h2>Till cash (GL)</h2>
+                    <p class="mm-muted">Solid = combined till ledger balance at end of each day</p>
+                    <FinanceDualChart Points="@_trends.TillCashBalance" AriaLabel="Till cash balance trend" />
+                </div>
+                <div class="mm-card">
+                    <h2>Sales vs expenses</h2>
+                    <p class="mm-muted">Solid = sales · dashed = operating expenses (GL)</p>
+                    <FinanceDualChart Points="@_trends.SalesVsExpenses" AriaLabel="Sales versus expenses trend" />
+                </div>
+                <div class="mm-card">
+                    <h2>Cash In vs Cash Out</h2>
+                    <p class="mm-muted">Solid = Cash In · dashed = Cash Out</p>
+                    <FinanceDualChart Points="@_trends.CashInVsOut" AriaLabel="Cash in versus cash out trend" />
+                </div>
+                <div class="mm-card">
+                    <h2>Stock value</h2>
+                    <p class="mm-muted">Solid = expected stock value · dashed = unexplained difference</p>
+                    <FinanceDualChart Points="@_trends.StockValue" AriaLabel="Stock value trend" />
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private BusinessPositionDto? _position;
+    private FinanceTrendSeriesDto? _trends;
+    private string _preset = "today";
+    private string? _error;
+
+    private static readonly (string Id, string Label)[] Presets =
+    [
+        ("today", "Today"),
+        ("yesterday", "Yesterday"),
+        ("week", "This week"),
+        ("month", "This month"),
+        ("prev", "Previous month")
+    ];
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task SetPreset(string preset)
+    {
+        _preset = preset;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _error = null;
+        try
+        {
+            (DateTimeOffset from, DateTimeOffset to) = ResolveRange(_preset);
+            var query = new BusinessPositionQuery { From = from, To = to };
+            _position = await PositionService.GetPositionAsync(query);
+            _trends = await PositionService.GetFinanceTrendsAsync(query);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private static (DateTimeOffset From, DateTimeOffset To) ResolveRange(string preset)
+    {
+        DateTime today = DateTime.UtcNow.Date;
+        return preset switch
+        {
+            "yesterday" => (
+                new DateTimeOffset(today.AddDays(-1), TimeSpan.Zero),
+                new DateTimeOffset(today.AddTicks(-1), TimeSpan.Zero)),
+            "week" => (
+                new DateTimeOffset(today.AddDays(-(int)today.DayOfWeek), TimeSpan.Zero),
+                new DateTimeOffset(today.AddDays(1).AddTicks(-1), TimeSpan.Zero)),
+            "month" => (
+                new DateTimeOffset(new DateTime(today.Year, today.Month, 1), TimeSpan.Zero),
+                new DateTimeOffset(today.AddDays(1).AddTicks(-1), TimeSpan.Zero)),
+            "prev" => (
+                new DateTimeOffset(new DateTime(today.Year, today.Month, 1).AddMonths(-1), TimeSpan.Zero),
+                new DateTimeOffset(new DateTime(today.Year, today.Month, 1).AddTicks(-1), TimeSpan.Zero)),
+            _ => (
+                new DateTimeOffset(today, TimeSpan.Zero),
+                new DateTimeOffset(today.AddDays(1).AddTicks(-1), TimeSpan.Zero))
+        };
+    }
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N0");
+}

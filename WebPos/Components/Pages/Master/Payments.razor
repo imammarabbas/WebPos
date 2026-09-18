@@ -1,0 +1,375 @@
+@page "/master/payments"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Common.Models
+@using WebPos.Core.Abstractions
+@using WebPos.Core.Constants
+@using WebPos.Core.Models
+@using WebPos.Core.Services
+@inject ICashAccountService CashAccounts
+@inject IExpenseService ExpenseService
+@inject IShiftService ShiftService
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>Payments · Cone Mart</PageTitle>
+
+<div class="mm-page">
+    <div class="mm-page-header">
+        <div>
+            <h1>Payments</h1>
+            <p>Where can you spend money — and what are you paying for?</p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+    @if (!string.IsNullOrEmpty(_success))
+    {
+        <div class="mm-alert mm-alert-ok">@_success</div>
+    }
+
+    @if (_summary is not null)
+    {
+        <div class="cm-section-head">
+            <h2>Available to spend</h2>
+            <span class="mm-muted">Spendable balance per account — click to use as funding source</span>
+        </div>
+        <div class="cm-account-grid">
+            @foreach (CashAccountCardDto card in _summary.Accounts.Where(a => a.Account.IsActive))
+            {
+                long spendable = card.SpendablePaisa;
+                bool selected = _fromAccountId == card.Account.Id.ToString();
+                <div class="cm-account-card @(selected ? "live" : null)"
+                     role="button"
+                     tabindex="0"
+                     @onclick="() => SelectFromAccount(card)">
+                    <div class="cm-account-top">
+                        <div>
+                            <strong>@card.Account.Name</strong>
+                            <div class="mm-muted">@CashAccountTypes.ToStored(card.Account.Type)</div>
+                        </div>
+                        @if (selected)
+                        {
+                            <span class="cm-badge on">SELECTED</span>
+                        }
+                    </div>
+                    <div class="cm-account-balance">Rs @FormatRs(spendable)</div>
+                    <div class="mm-muted" style="font-size:0.8rem;">
+                        GL balance: Rs @FormatRs(card.DerivedGlBalancePaisa)
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    <div class="mm-grid-2" style="margin-top:1.5rem;">
+        <div class="mm-card">
+            <h2>Pay / spend</h2>
+            <div class="mm-form-grid">
+                <div class="mm-field full">
+                    <label for="pay-type">Payment type</label>
+                    <InputSelect id="pay-type" @bind-Value="_paymentType" @bind-Value:after="OnPaymentTypeChanged">
+                        <option value="EXPENSE">Expense / Rent / Overhead</option>
+                        <option value="SUPPLIER">Supplier payment</option>
+                        <option value="CUSTOMER">Customer refund / receive</option>
+                        <option value="TRANSFER">Transfer between accounts</option>
+                        <option value="CASH_DROP">Cash drop</option>
+                        <option value="INVESTMENT">Owner investment</option>
+                        <option value="LOAN">Loan received / repayment</option>
+                    </InputSelect>
+                </div>
+
+                @if (_paymentType == "EXPENSE")
+                {
+                    <div class="mm-field">
+                        <label for="pay-cat">What for? (expense category)</label>
+                        <InputSelect id="pay-cat" @bind-Value="_expenseCategory">
+                            @foreach (string c in ExpenseCategories.All.Where(c => c != ExpenseCategories.Discount))
+                            {
+                                <option value="@c">@c</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    <div class="mm-field">
+                        <label for="pay-amt">Amount (Rs)</label>
+                        <InputNumber id="pay-amt" @bind-Value="_amountRs" />
+                    </div>
+                    <div class="mm-field full">
+                        <label for="pay-from">From account</label>
+                        <InputSelect id="pay-from" @bind-Value="_fromAccountId" @bind-Value:after="OnFromAccountChanged">
+                            <option value="">Select funding account…</option>
+                            @foreach (CashAccountCardDto card in _summary?.Accounts.Where(a => a.Account.IsActive) ?? [])
+                            {
+                                <option value="@card.Account.Id">@card.Account.Name · Rs @FormatRs(card.SpendablePaisa) available</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    @if (_fromIsTill)
+                    {
+                        <div class="mm-field full">
+                            <label for="pay-shift">Open shift (required for till)</label>
+                            <InputSelect id="pay-shift" @bind-Value="_shiftId">
+                                <option value="">Select shift…</option>
+                                @foreach (OpenShiftDto s in _openShifts)
+                                {
+                                    <option value="@s.ShiftId">@FormatShift(s)</option>
+                                }
+                            </InputSelect>
+                        </div>
+                    }
+                    <div class="mm-field full">
+                        <label for="pay-desc">Description</label>
+                        <InputText id="pay-desc" @bind-Value="_description" />
+                    </div>
+                    <div class="mm-field">
+                        <label for="pay-ref">Reference</label>
+                        <InputText id="pay-ref" @bind-Value="_reference" />
+                    </div>
+                    @if (_selectedSpendable is long avail)
+                    {
+                        <div class="mm-field">
+                            <label>Available</label>
+                            <div class="mm-muted" style="padding-top:0.5rem;"><strong>Rs @FormatRs(avail)</strong></div>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <div class="mm-field full">
+                        <p class="mm-muted" style="margin:0;">
+                            @GetRedirectHint()
+                        </p>
+                    </div>
+                }
+            </div>
+
+            <div class="mm-form-actions">
+                @if (_paymentType == "EXPENSE")
+                {
+                    <button type="button" class="mm-btn mm-btn-primary" disabled="@_saving" @onclick="PostExpenseAsync">
+                        @(_saving ? "Posting…" : "Post expense")
+                    </button>
+                }
+                else
+                {
+                    <button type="button" class="mm-btn mm-btn-primary" @onclick="GoToSpecializedPage">
+                        Continue in @GetTargetPageName() →
+                    </button>
+                }
+            </div>
+        </div>
+
+        <div class="mm-card">
+            <h2>Quick actions</h2>
+            <div class="mm-form-actions" style="flex-direction:column;align-items:stretch;gap:0.5rem;">
+                <a class="mm-btn" href="/master/parties?role=SUPPLIER">Pay supplier</a>
+                <a class="mm-btn" href="/master/parties?role=CUSTOMER">Customer payment / refund</a>
+                <a class="mm-btn" href="/master/expenses">All expenses</a>
+                <a class="mm-btn" href="/master/cash">Cash management · transfers · drops</a>
+                <a class="mm-btn" href="/master/accounts">View all accounts</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private CashBalancesSummaryDto? _summary;
+    private readonly List<OpenShiftDto> _openShifts = [];
+    private string _paymentType = "EXPENSE";
+    private string _fromAccountId = string.Empty;
+    private string _shiftId = string.Empty;
+    private string _expenseCategory = ExpenseCategories.Rent;
+    private decimal _amountRs;
+    private string _description = string.Empty;
+    private string _reference = string.Empty;
+    private bool _saving;
+    private string? _error;
+    private string? _success;
+
+    private bool _fromIsTill =>
+        Guid.TryParse(_fromAccountId, out Guid id)
+        && (_summary?.Accounts.Any(c =>
+            c.Account.Id == id && c.Account.Type == CashAccountType.Till) ?? false);
+
+    private long? _selectedSpendable =>
+        Guid.TryParse(_fromAccountId, out Guid id)
+            ? _summary?.Accounts.FirstOrDefault(c => c.Account.Id == id)?.SpendablePaisa
+            : null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        _error = null;
+        try
+        {
+            _summary = await CashAccounts.GetBalancesSummaryAsync();
+            _openShifts.Clear();
+            _openShifts.AddRange(await ShiftService.ListOpenShiftsAsync());
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private void SelectFromAccount(CashAccountCardDto card)
+    {
+        _fromAccountId = card.Account.Id.ToString();
+        OnFromAccountChanged();
+    }
+
+    private void OnPaymentTypeChanged()
+    {
+        _error = null;
+        _success = null;
+    }
+
+    private void OnFromAccountChanged()
+    {
+        if (!_fromIsTill)
+        {
+            _shiftId = string.Empty;
+            return;
+        }
+
+        if (!Guid.TryParse(_fromAccountId, out Guid accountId))
+        {
+            return;
+        }
+
+        CashAccountDto? account = _summary?.Accounts
+            .Select(c => c.Account)
+            .FirstOrDefault(a => a.Id == accountId);
+        if (account?.TerminalId is Guid terminalId)
+        {
+            OpenShiftDto? match = _openShifts.FirstOrDefault(s => s.TerminalId == terminalId);
+            _shiftId = match?.ShiftId.ToString() ?? string.Empty;
+        }
+    }
+
+    private async Task PostExpenseAsync()
+    {
+        _saving = true;
+        _error = null;
+        _success = null;
+        try
+        {
+            long amountPaisa = (long)Math.Round(_amountRs * 100m, MidpointRounding.AwayFromZero);
+            if (amountPaisa <= 0)
+            {
+                _error = "Enter an amount greater than zero.";
+                return;
+            }
+
+            if (!Guid.TryParse(_fromAccountId, out Guid cashAccountId))
+            {
+                _error = "Select the account this expense is paid from.";
+                return;
+            }
+
+            Guid? shiftId = null;
+            if (_fromIsTill)
+            {
+                if (!Guid.TryParse(_shiftId, out Guid parsedShift) || parsedShift == Guid.Empty)
+                {
+                    _error = "Till expenses require an open shift.";
+                    return;
+                }
+
+                shiftId = parsedShift;
+            }
+
+            if (string.IsNullOrWhiteSpace(_description))
+            {
+                _error = "Description is required.";
+                return;
+            }
+
+            AuthenticationState state = await AuthStateProvider.GetAuthenticationStateAsync();
+            if (!Guid.TryParse(state.User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out Guid userId))
+            {
+                _error = "Could not resolve signed-in user.";
+                return;
+            }
+
+            CashAccountDto? fund = _summary?.Accounts.Select(c => c.Account)
+                .FirstOrDefault(a => a.Id == cashAccountId);
+            string paymentMethod = fund?.Type == CashAccountType.Till ? "CASH" : "BANK_TRANSFER";
+
+            RecordExpenseResult result = await ExpenseService.RecordShiftExpenseAsync(new RecordExpenseRequest
+            {
+                ShiftId = shiftId,
+                LoggedByUserId = userId,
+                Description = _description.Trim(),
+                ExpenseCategory = _expenseCategory,
+                ReceiptReference = _reference.Trim(),
+                PaymentMethod = paymentMethod,
+                CashAccountId = cashAccountId,
+                AmountPaisa = amountPaisa
+            });
+
+            _success = $"Posted {_expenseCategory} — voucher {result.VoucherNo}.";
+            _amountRs = 0;
+            _description = string.Empty;
+            _reference = string.Empty;
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.InnerException?.Message ?? ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void GoToSpecializedPage()
+    {
+        string url = _paymentType switch
+        {
+            "SUPPLIER" => "/master/parties?role=SUPPLIER",
+            "CUSTOMER" => "/master/parties?role=CUSTOMER",
+            "TRANSFER" => "/master/cash",
+            "CASH_DROP" => "/master/cash",
+            "INVESTMENT" => "/master/cash",
+            "LOAN" => "/master/cash",
+            _ => "/master/cash"
+        };
+        Navigation.NavigateTo(url);
+    }
+
+    private string GetRedirectHint() => _paymentType switch
+    {
+        "SUPPLIER" => "Supplier payments use the existing supplier ledger — you'll choose supplier, amount, and funding account there.",
+        "CUSTOMER" => "Customer refunds and payment receipts use the existing customer ledger.",
+        "TRANSFER" => "Account-to-account transfers are handled in Cash Management — no income or expense is created.",
+        "CASH_DROP" => "Cash drops (Till → Bank/Owner) use the existing Cash Drop flow in Cash Management.",
+        "INVESTMENT" => "Owner investment posts to Equity — not revenue. Use Cash Management.",
+        "LOAN" => "Loan received / repayment posts to Loan Liability — not revenue or ordinary expense.",
+        _ => string.Empty
+    };
+
+    private string GetTargetPageName() => _paymentType switch
+    {
+        "SUPPLIER" => "Supplier Payments",
+        "CUSTOMER" => "Customer Payments",
+        _ => "Cash Management"
+    };
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+
+    private static string FormatShift(OpenShiftDto s) =>
+        $"{s.TerminalName ?? s.TerminalId.ToString("N")[..8]} · {s.CashierName} · {s.OpenedAt.LocalDateTime:dd MMM HH:mm}";
+}

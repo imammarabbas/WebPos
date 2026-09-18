@@ -1,0 +1,161 @@
+@page "/master/stock-position"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using WebPos.Components.Shared
+@using WebPos.Core.Abstractions
+@inject IStockPositionService StockPositionService
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>Stock Position · Cone Mart</PageTitle>
+
+<div class="mm-page">
+    <div class="mm-page-header">
+        <div>
+            <h1>Stock position</h1>
+            <p>Expected stock from inventory — physical counts show unexplained differences (never auto-sale)</p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+    @if (!string.IsNullOrEmpty(_success))
+    {
+        <div class="mm-alert mm-alert-ok">@_success</div>
+    }
+
+    @if (_summary is not null)
+    {
+        <div class="cm-kpi-strip">
+            <div class="mm-kpi"><div class="mm-kpi-label">Expected stock</div><div class="mm-kpi-value">Rs @FormatRs(_summary.ExpectedValuePaisa)</div></div>
+            <div class="mm-kpi"><div class="mm-kpi-label">Physical stock</div><div class="mm-kpi-value">@(_summary.PhysicalValuePaisa is long physVal ? $"Rs {FormatRs(physVal)}" : "—")</div></div>
+            <div class="mm-kpi"><div class="mm-kpi-label">Missing / unexplained</div><div class="mm-kpi-value">Rs @FormatRs(_summary.MissingUnexplainedValuePaisa)</div></div>
+        </div>
+
+        <div class="mm-grid-2" style="margin-top:1.5rem;">
+            <div class="mm-card">
+                <h2>By product</h2>
+                <div class="mm-table-wrap">
+                    <table class="mm-table">
+                        <thead><tr><th>Product</th><th>Expected</th><th>Physical</th></tr></thead>
+                        <tbody>
+                            @foreach (StockProductValueDto p in _summary.ByProduct.Take(50))
+                            {
+                                <tr>
+                                    <td>@p.ProductName</td>
+                                    <td>@p.ExpectedQty.ToString("N2") · Rs @FormatRs(p.ExpectedValuePaisa)</td>
+                                    <td>@(p.PhysicalQty is decimal physQty ? $"{physQty:N2} · Rs {FormatRs(p.PhysicalValuePaisa ?? 0)}" : "—")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="mm-card">
+                <h2>Record physical count</h2>
+                <p class="mm-muted">Search for a master product and enter the counted quantity.</p>
+                <div class="mm-form-grid">
+                    <div class="mm-field full">
+                        <label>Product</label>
+                        <ProductSearchBox @bind-ProductId="_countProductId"
+                                            @bind-SelectedLabel="_countProductLabel"
+                                            InputId="stock-count-product"
+                                            MastersOnly="true"
+                                            Placeholder="Type name, SKU, or barcode…" />
+                    </div>
+                    <div class="mm-field">
+                        <label>Counted qty</label>
+                        <InputNumber @bind-Value="_countQty" />
+                    </div>
+                    <div class="mm-field full">
+                        <label>Note</label>
+                        <InputText @bind-Value="_countNote" />
+                    </div>
+                </div>
+                <div class="mm-form-actions">
+                    <button type="button" class="mm-btn mm-btn-primary" disabled="@_saving" @onclick="SaveCountAsync">Save count</button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private StockPositionSummaryDto? _summary;
+    private string _countProductId = string.Empty;
+    private string _countProductLabel = string.Empty;
+    private decimal _countQty;
+    private string _countNote = string.Empty;
+    private bool _saving;
+    private string? _error;
+    private string? _success;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _summary = await StockPositionService.GetPositionAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task SaveCountAsync()
+    {
+        _saving = true;
+        _error = null;
+        _success = null;
+        try
+        {
+            if (!Guid.TryParse(_countProductId, out Guid productId))
+            {
+                _error = "Select a product from search results.";
+                return;
+            }
+
+            AuthenticationState state = await AuthStateProvider.GetAuthenticationStateAsync();
+            Guid? userId = Guid.TryParse(state.User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out Guid uid)
+                ? uid
+                : null;
+
+            await StockPositionService.RecordPhysicalCountAsync(new RecordStockCountRequest
+            {
+                Note = _countNote,
+                CountedByUserId = userId,
+                Lines =
+                [
+                    new RecordStockCountLineRequest
+                    {
+                        ProductId = productId,
+                        CountedQty = _countQty
+                    }
+                ]
+            });
+
+            _success = "Physical count recorded.";
+            _countProductId = string.Empty;
+            _countProductLabel = string.Empty;
+            _countQty = 0;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+}

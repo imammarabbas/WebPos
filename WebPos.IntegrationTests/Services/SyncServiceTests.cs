@@ -143,9 +143,13 @@ public sealed class SyncServiceTests
             });
             await context.SaveChangesAsync();
 
+            IDbContextFactory<WebPosDbContext> dbFactory =
+                new TestDbContextFactory(options, tenantService);
+            var ambient = new AmbientDbContextAccessor();
             ISyncService syncService = new SyncService(
-                context,
-                new TransactionService(context),
+                dbFactory,
+                ambient,
+                new TransactionService(dbFactory),
                 tenantService);
 
             return new SyncHarness(context, syncService, tenantId);
@@ -282,6 +286,13 @@ public sealed class SyncServiceTests
         }
 
         public ValueTask DisposeAsync() => Context.DisposeAsync();
+    }
+
+    private sealed class TestDbContextFactory(
+        DbContextOptions<WebPosDbContext> options,
+        ITenantService tenant) : IDbContextFactory<WebPosDbContext>
+    {
+        public WebPosDbContext CreateDbContext() => new(options, tenant);
     }
 
     private sealed class TestTenantService(Guid tenantId) : ITenantService

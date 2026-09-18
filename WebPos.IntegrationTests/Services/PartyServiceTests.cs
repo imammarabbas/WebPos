@@ -124,15 +124,19 @@ public sealed class PartyServiceTests
             });
             await context.SaveChangesAsync();
 
-            var transactionService = new TransactionService(context);
+            IDbContextFactory<WebPosDbContext> dbFactory =
+                new TestDbContextFactory(options, tenantService);
+            var ambient = new AmbientDbContextAccessor();
+            var transactionService = new TransactionService(dbFactory);
             IPartyLedgerService ledgerService = new PartyLedgerService(
-                context,
+                dbFactory,
                 transactionService,
                 tenantService);
             IValidator<CreatePartyRequest> validator =
-                new CreatePartyRequestValidator(context, tenantService);
+                new CreatePartyRequestValidator(dbFactory, tenantService);
             IPartyService partyService = new PartyService(
-                context,
+                dbFactory,
+                ambient,
                 transactionService,
                 ledgerService,
                 tenantService,
@@ -142,6 +146,13 @@ public sealed class PartyServiceTests
         }
 
         public ValueTask DisposeAsync() => Context.DisposeAsync();
+    }
+
+    private sealed class TestDbContextFactory(
+        DbContextOptions<WebPosDbContext> options,
+        ITenantService tenant) : IDbContextFactory<WebPosDbContext>
+    {
+        public WebPosDbContext CreateDbContext() => new(options, tenant);
     }
 
     private sealed class TestTenantService(Guid tenantId) : ITenantService

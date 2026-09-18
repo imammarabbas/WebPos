@@ -14,16 +14,19 @@ public sealed class SyncService : ISyncService
     /// <summary>Delta cursors older than this require a full bootstrap.</summary>
     public static readonly TimeSpan MaxDeltaWindow = TimeSpan.FromDays(30);
 
-    private readonly WebPosDbContext _context;
+    private readonly IDbContextFactory<WebPosDbContext> _dbFactory;
+    private readonly IAmbientDbContextAccessor _ambient;
     private readonly ITransactionService _transactionService;
     private readonly ITenantService _tenantService;
 
     public SyncService(
-        WebPosDbContext context,
+        IDbContextFactory<WebPosDbContext> dbFactory,
+        IAmbientDbContextAccessor ambient,
         ITransactionService transactionService,
         ITenantService tenantService)
     {
-        _context = context ?? throw new ArgumentNullException(nameof(context));
+        _dbFactory = dbFactory ?? throw new ArgumentNullException(nameof(dbFactory));
+        _ambient = ambient ?? throw new ArgumentNullException(nameof(ambient));
         _transactionService = transactionService
             ?? throw new ArgumentNullException(nameof(transactionService));
         _tenantService = tenantService
@@ -39,7 +42,9 @@ public sealed class SyncService : ISyncService
         // Single ambient transaction => one consistent snapshot across all reads.
         return _transactionService.ExecuteInTransactionAsync(async ct =>
         {
-            List<SyncSupplierDto> suppliers = await _context.Parties
+            WebPosDbContext context = _ambient.Required;
+
+            List<SyncSupplierDto> suppliers = await context.Parties
                 .AsNoTracking()
                 .Where(party =>
                     party.TenantId == tenantId
@@ -58,7 +63,7 @@ public sealed class SyncService : ISyncService
                 })
                 .ToListAsync(ct);
 
-            List<SyncProductDto> products = await _context.Products
+            List<SyncProductDto> products = await context.Products
                 .AsNoTracking()
                 .Where(product =>
                     product.TenantId == tenantId
@@ -79,7 +84,7 @@ public sealed class SyncService : ISyncService
                 })
                 .ToListAsync(ct);
 
-            List<SyncShiftStatusDto> activeShifts = await _context.CashierShifts
+            List<SyncShiftStatusDto> activeShifts = await context.CashierShifts
                 .AsNoTracking()
                 .Where(shift =>
                     shift.TenantId == tenantId
@@ -105,7 +110,7 @@ public sealed class SyncService : ISyncService
         }, cancellationToken);
     }
 
-    public async Task<SyncDeltaResponse> GetDeltaAsync(
+    public Task<SyncDeltaResponse> GetDeltaAsync(
         DateTimeOffset lastSyncUtc,
         CancellationToken cancellationToken = default)
     {
@@ -126,55 +131,58 @@ public sealed class SyncService : ISyncService
                 + "Request a full bootstrap instead.");
         }
 
-        // UpdatedAt cursor: strictly-after comparison; soft-deleted rows are included
-        // so clients purge them from local stores.
-        List<SyncSupplierDto> suppliers = await _context.Parties
-            .AsNoTracking()
-            .Where(party =>
-                party.TenantId == tenantId
-                && party.PartyType == PartyTypes.Supplier
-                && party.UpdatedAt > lastSyncUtc)
-            .OrderBy(party => party.UpdatedAt)
-            .Select(party => new SyncSupplierDto
-            {
-                Id = party.Id,
-                Name = party.Name,
-                PhoneNumber = party.PhoneNumber,
-                Address = party.Address,
-                CurrentBalancePaisa = party.CurrentBalancePaisa,
-                IsDeleted = party.IsDeleted,
-                UpdatedAt = party.UpdatedAt
-            })
-            .ToListAsync(cancellationToken);
-
-        List<SyncProductDto> products = await _context.Products
-            .AsNoTracking()
-            .Where(product =>
-                product.TenantId == tenantId
-                && product.UpdatedAt > lastSyncUtc)
-            .OrderBy(product => product.UpdatedAt)
-            .Select(product => new SyncProductDto
-            {
-                Id = product.Id,
-                Name = product.Name,
-                Sku = product.Sku,
-                Barcode = product.Barcode,
-                ShortCode = product.ShortCode,
-                IsLoose = product.IsLoose,
-                BaseUnit = product.BaseUnit,
-                ConversionMultiplier = product.ConversionMultiplier,
-                IsDeleted = product.IsDeleted,
-                UpdatedAt = product.UpdatedAt
-            })
-            .ToListAsync(cancellationToken);
-
-        return new SyncDeltaResponse
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
-            SchemaVersion = SchemaVersion,
-            ServerTimeUtc = now,
-            Suppliers = suppliers,
-            Products = products
-        };
+            // UpdatedAt cursor: strictly-after comparison; soft-deleted rows are included
+            // so clients purge them from local stores.
+            List<SyncSupplierDto> suppliers = await context.Parties
+                .AsNoTracking()
+                .Where(party =>
+                    party.TenantId == tenantId
+                    && party.PartyType == PartyTypes.Supplier
+                    && party.UpdatedAt > lastSyncUtc)
+                .OrderBy(party => party.UpdatedAt)
+                .Select(party => new SyncSupplierDto
+                {
+                    Id = party.Id,
+                    Name = party.Name,
+                    PhoneNumber = party.PhoneNumber,
+                    Address = party.Address,
+                    CurrentBalancePaisa = party.CurrentBalancePaisa,
+                    IsDeleted = party.IsDeleted,
+                    UpdatedAt = party.UpdatedAt
+                })
+                .ToListAsync(ct);
+
+            List<SyncProductDto> products = await context.Products
+                .AsNoTracking()
+                .Where(product =>
+                    product.TenantId == tenantId
+                    && product.UpdatedAt > lastSyncUtc)
+                .OrderBy(product => product.UpdatedAt)
+                .Select(product => new SyncProductDto
+                {
+                    Id = product.Id,
+                    Name = product.Name,
+                    Sku = product.Sku,
+                    Barcode = product.Barcode,
+                    ShortCode = product.ShortCode,
+                    IsLoose = product.IsLoose,
+                    BaseUnit = product.BaseUnit,
+                    ConversionMultiplier = product.ConversionMultiplier,
+                    IsDeleted = product.IsDeleted,
+                    UpdatedAt = product.UpdatedAt
+                })
+                .ToListAsync(ct);
+
+            return new SyncDeltaResponse
+            {
+                SchemaVersion = SchemaVersion,
+                ServerTimeUtc = now,
+                Suppliers = suppliers,
+                Products = products
+            };
+        }, cancellationToken);
     }
 
     private void EnsureTenantResolved()

@@ -1,0 +1,1196 @@
+@page "/master/products/new"
+@page "/master/products/{ProductId:guid}"
+@layout MasterLayout
+@attribute [Authorize(Roles = "Owner,Manager")]
+@rendermode InteractiveServer
+@implements IDisposable
+@using System.Globalization
+@using System.Text.RegularExpressions
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.EntityFrameworkCore
+@using Npgsql
+@using WebPos.Core
+@using WebPos.Core.Abstractions
+@using WebPos.Core.Services
+@inject IProductAdminService ProductService
+@inject ICategoryService CategoryService
+@inject ProductRapidEntryState RapidEntry
+@inject NavigationManager Navigation
+
+<PageTitle>@(_isEdit ? "Edit product" : "New product") · Cone Mart</PageTitle>
+
+<div class="mm-page mm-page-editor">
+    <div class="mm-page-header">
+        <div>
+            <h1>@(_isEdit ? "Edit product" : "New product")</h1>
+            <p>
+                @KindSubtitle
+            </p>
+        </div>
+        <div class="mm-editor-actions">
+            <a class="mm-btn" href="/master/products">Cancel</a>
+            <button type="button" class="mm-btn mm-btn-save" disabled="@_saving" @onclick="SaveAsync">
+                @(_saving ? "Saving…" : "Save product")
+            </button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="mm-alert mm-alert-error">@_error</div>
+    }
+    @if (!string.IsNullOrEmpty(_success))
+    {
+        <div class="mm-alert mm-alert-ok">@_success</div>
+    }
+
+    <EditForm @key="_formKey" Model="_form" OnValidSubmit="SaveAsync" @onsubmit:preventDefault>
+        <div class="mm-card mm-type-section">
+            <div class="mm-type-section-head">
+                <span>Product type</span>
+                <small>Determines inventory &amp; pricing behavior.</small>
+            </div>
+            <div class="mm-type-cards" role="listbox" aria-label="Product type">
+                <button type="button"
+                        class="mm-type-card @(_form.Kind == ProductKind.Independent ? "selected" : null)"
+                        @onclick="() => SetKindAsync(ProductKind.Independent)">
+                    <strong>Independent</strong>
+                    <span>Standalone SKU with own price, stock, barcode. Sells by itself.</span>
+                    <em>e.g. Bottle, snack, book</em>
+                </button>
+                <button type="button"
+                        class="mm-type-card @(_form.Kind == ProductKind.BulkParent ? "selected" : null)"
+                        @onclick="() => SetKindAsync(ProductKind.BulkParent)">
+                    <strong>Parent Product</strong>
+                    <span>Bulk warehouse. Holds stock for child packs.</span>
+                    <em>e.g. 25kg rice sack</em>
+                </button>
+                <button type="button"
+                        class="mm-type-card @(_form.Kind == ProductKind.Child ? "selected" : null)"
+                        @onclick="() => SetKindAsync(ProductKind.Child)">
+                    <strong>Child Variant</strong>
+                    <span>Retail pack of a bulk parent. Deducts parent stock.</span>
+                    <em>e.g. Rice 50g / 1kg</em>
+                </button>
+            </div>
+        </div>
+
+        @if (_form.Kind == ProductKind.Child)
+        {
+            <div class="mm-card">
+                <div class="mm-identity-head">
+                    <div class="mm-form-section-title" style="margin-bottom:0;">
+                        <span class="mm-form-section-num">1</span>
+                        Parent and pack <span class="mm-req">*</span>
+                    </div>
+                    <span class="mm-mandatory-pill">Mandatory for Child</span>
+                </div>
+                @if (SelectedBulkParent is ProductAdminDto selected)
+                {
+                    <div class="mm-parent-chip">
+                        <strong>@selected.Name</strong>
+                        <span>@selected.Sku · @selected.BaseUnit</span>
+                    </div>
+                }
+                <div class="mm-parent-picker">
+                    <input id="p-parent-search"
+                           class="mm-parent-search"
+                           placeholder="Search master by name, SKU, or short code…"
+                           value="@_parentSearch"
+                           @oninput="OnParentSearchInput" />
+                    <div class="mm-parent-list" role="listbox">
+                        @if (_bulkParents.Count == 0)
+                        {
+                            <div class="mm-parent-empty">No bulk warehouse items match.</div>
+                        }
+                        else
+                        {
+                            @foreach (ProductAdminDto parent in _bulkParents)
+                            {
+                                <button type="button"
+                                        class="mm-parent-option @(_form.ParentProductId == parent.Id.ToString() ? "selected" : null)"
+                                        @onclick="() => SelectParent(parent)">
+                                    <span class="mm-parent-option-mark">@ParentInitials(parent.Name)</span>
+                                    <span class="mm-parent-option-copy">
+                                        <strong>@parent.Name</strong>
+                                        <small>@parent.Sku · Rs @((parent.LatestCostPricePaisa / 100m).ToString("0.##")) / @parent.BaseUnit</small>
+                                    </span>
+                                </button>
+                            }
+                        }
+                    </div>
+                </div>
+                <div class="mm-field" style="margin-top:1rem;">
+                    <label for="p-pack">Pack size</label>
+                    <div class="mm-pack-chips">
+                        @foreach (string chip in PackSizeChips)
+                        {
+                            <button type="button"
+                                    class="mm-pack-chip @(_form.PackSizeText == chip ? "selected" : null)"
+                                    @onclick="() => SetPackSize(chip)">
+                                @chip
+                            </button>
+                        }
+                    </div>
+                    <input id="p-pack"
+                           @ref="_packInput"
+                           placeholder="@PackSizePlaceholder"
+                           value="@_form.PackSizeText"
+                           @oninput="OnPackSizeInput" />
+                    @if (TryCurrentPack(out decimal multiplier, out string? packError))
+                    {
+                        <small class="text-muted">Deducts @multiplier.ToString("0.###") @SelectedParentUnit per pack sold.</small>
+                    }
+                    else if (!string.IsNullOrWhiteSpace(_form.PackSizeText) && packError is not null)
+                    {
+                        <small class="mm-field-warn">@packError</small>
+                    }
+                    else
+                    {
+                        <small class="text-muted">Type or pick a pack size. Cost is taken from the parent automatically.</small>
+                    }
+                </div>
+            </div>
+
+            <div class="mm-card">
+                <div class="mm-identity-head">
+                    <div class="mm-form-section-title" style="margin-bottom:0;">
+                        <span class="mm-form-section-num">2</span>
+                        Identity
+                    </div>
+                    <div class="mm-identity-badges">
+                        <span class="mm-scanner-mode">Scanner-First Mode</span>
+                    </div>
+                </div>
+                <div class="mm-form-stack">
+                    <div class="mm-field">
+                        <label for="p-name">Product Name <span class="mm-req">*</span></label>
+                        <input id="p-name"
+                               @ref="_nameInput"
+                               value="@_form.Name"
+                               @oninput="e => _form.Name = e.Value?.ToString() ?? string.Empty"
+                               @onkeydown="OnNameKeyDown" />
+                    </div>
+                    <div class="mm-field">
+                        <label for="p-barcode">Barcode</label>
+                        <div class="mm-input-with-action">
+                            <input id="p-barcode"
+                                   class="mm-barcode-input"
+                                   @ref="_barcodeInput"
+                                   value="@_form.Barcode"
+                                   autocomplete="off"
+                                   placeholder="Scan or type barcode"
+                                   @oninput="OnBarcodeInput"
+                                   @onkeydown="OnBarcodeKeyDown" />
+                            <button type="button" class="mm-gen-btn mm-gen-btn-fill" title="Generate barcode" @onclick="GenerateBarcode">Generate</button>
+                        </div>
+                    </div>
+                    <div class="mm-identity-row">
+                        <div class="mm-field">
+                            <label for="p-short">Short code</label>
+                            <div class="mm-input-with-action">
+                                <InputText id="p-short" @bind-Value="_form.ShortCode" placeholder="e.g. DM500" />
+                                <button type="button" class="mm-gen-btn" title="Generate short code" @onclick="GenerateShortCode">Gen</button>
+                            </div>
+                        </div>
+                        <div class="mm-field">
+                            <label for="p-sku">SKU</label>
+                            <div class="mm-input-with-action">
+                                <InputText id="p-sku" @bind-Value="_form.Sku" placeholder="Auto" />
+                                <button type="button" class="mm-gen-btn" title="Generate SKU from name" @onclick="GenerateSku">Gen</button>
+                            </div>
+                        </div>
+                        <div class="mm-field">
+                            <label for="p-cat">Category</label>
+                            <InputSelect id="p-cat" @bind-Value="_form.CategoryId">
+                                <option value="">— None —</option>
+                                @foreach (CategoryDto c in _categories)
+                                {
+                                    <option value="@c.Id">@c.Name</option>
+                                }
+                            </InputSelect>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mm-card">
+                <div class="mm-form-section-title">
+                    <span class="mm-form-section-num">3</span>
+                    Sell price and margin
+                </div>
+                <div class="mm-form-stack">
+                    <div class="mm-identity-row">
+                        <div class="mm-field">
+                            <label for="p-retail">Sell price (Rs) <span class="mm-req">*</span></label>
+                            <input id="p-retail"
+                                   class="mm-sell-input"
+                                   type="number"
+                                   step="0.01"
+                                   min="0"
+                                   value="@FormatOptionalDecimal(_form.RetailRs)"
+                                   @oninput="OnRetailRsInput" />
+                        </div>
+                        <div class="mm-field">
+                            <label for="p-child-margin">Margin %</label>
+                            <input id="p-child-margin"
+                                   type="number"
+                                   step="0.1"
+                                   min="0"
+                                   value="@FormatOptionalDecimal(_form.MarginPercent)"
+                                   @oninput="OnChildMarginInput" />
+                        </div>
+                    </div>
+                    <div class="mm-derived-cost">
+                        Pack cost from parent: Rs @DerivedChildCostRs.ToString("0.##")
+                    </div>
+                    <div class="mm-check" style="margin-top:0.75rem;">
+                        <InputCheckbox @bind-Value="_form.ShowOnPosQuick" />
+                        <span>Show on POS Quick Links</span>
+                    </div>
+                    @if (_form.ShowOnPosQuick)
+                    {
+                        <div class="mm-field" style="max-width:8rem;">
+                            <label for="p-quick-sort">Quick sort</label>
+                            <InputNumber id="p-quick-sort" @bind-Value="_form.PosQuickSort" />
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="mm-card">
+                <div class="mm-identity-head">
+                    <div class="mm-form-section-title" style="margin-bottom:0;">
+                        <span class="mm-form-section-num">1</span>
+                        Barcode and name
+                    </div>
+                    <div class="mm-identity-badges">
+                        <span class="mm-scanner-mode">Scanner-First Mode</span>
+                    </div>
+                </div>
+                <div class="mm-form-stack">
+                    <div class="mm-field">
+                        <label for="p-barcode">
+                            Barcode
+                            <span class="mm-scanner-pill">Scanner Input • Focused First</span>
+                        </label>
+                        <div class="mm-input-with-action">
+                            <input id="p-barcode"
+                                   class="mm-barcode-input"
+                                   @ref="_barcodeInput"
+                                   value="@_form.Barcode"
+                                   autocomplete="off"
+                                   placeholder="Scan or type barcode"
+                                   @oninput="OnBarcodeInput"
+                                   @onkeydown="OnBarcodeKeyDown" />
+                            <button type="button" class="mm-gen-btn mm-gen-btn-fill" title="Generate barcode" @onclick="GenerateBarcode">Generate</button>
+                        </div>
+                        <small class="text-muted">Supports EAN-13, UPC-A, Code128 • Scanner sends Enter automatically.</small>
+                    </div>
+                    <div class="mm-field">
+                        <label for="p-name">Product Name <span class="mm-req">*</span></label>
+                        <input id="p-name"
+                               @ref="_nameInput"
+                               value="@_form.Name"
+                               @oninput="e => _form.Name = e.Value?.ToString() ?? string.Empty"
+                               @onkeydown="OnNameKeyDown" />
+                    </div>
+                </div>
+            </div>
+
+            <div class="mm-card">
+                <div class="mm-identity-head">
+                    <div class="mm-form-section-title" style="margin-bottom:0;">
+                        <span class="mm-form-section-num">2</span>
+                        Details
+                    </div>
+                    <div class="mm-identity-badges">
+                        <span class="mm-identity-chip">@IdentityChip</span>
+                    </div>
+                </div>
+                <div class="mm-form-stack">
+                    <div class="mm-identity-row">
+                        <div class="mm-field">
+                            <label for="p-short">Short code</label>
+                            <div class="mm-input-with-action">
+                                <InputText id="p-short" @bind-Value="_form.ShortCode" placeholder="e.g. TSH001" />
+                                <button type="button" class="mm-gen-btn" title="Generate short code" @onclick="GenerateShortCode">Gen</button>
+                            </div>
+                        </div>
+                        <div class="mm-field">
+                            <label for="p-sku">SKU</label>
+                            <div class="mm-input-with-action">
+                                <InputText id="p-sku" @bind-Value="_form.Sku" />
+                                <button type="button" class="mm-gen-btn" title="Generate SKU from name" @onclick="GenerateSku">Gen</button>
+                            </div>
+                        </div>
+                        @if (_form.Kind != ProductKind.BulkParent)
+                        {
+                            <div class="mm-field">
+                                <label for="p-retail">Sell price (Rs) <span class="mm-req">*</span></label>
+                                <input id="p-retail"
+                                       class="mm-sell-input"
+                                       type="number"
+                                       step="0.01"
+                                       min="0"
+                                       value="@FormatOptionalDecimal(_form.RetailRs)"
+                                       @oninput="OnRetailRsInput" />
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="mm-field">
+                                <label for="p-margin">Default margin %</label>
+                                <input id="p-margin"
+                                       type="number"
+                                       step="0.1"
+                                       min="0"
+                                       value="@FormatOptionalDecimal(_form.DefaultMarginPercent)"
+                                       @oninput="OnParentMarginInput" />
+                            </div>
+                        }
+                    </div>
+                    <div class="mm-field">
+                        <label for="p-cat">Category</label>
+                        <InputSelect id="p-cat" @bind-Value="_form.CategoryId">
+                            <option value="">— None —</option>
+                            @foreach (CategoryDto c in _categories)
+                            {
+                                <option value="@c.Id">@c.Name</option>
+                            }
+                        </InputSelect>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mm-card">
+                <div class="mm-form-section-title">
+                    <span class="mm-form-section-num">3</span>
+                    Cost and unit
+                    <small>@(
+                        _form.Kind == ProductKind.BulkParent
+                            ? "Warehouse catalog. Receive stock on the terminal with a supplier."
+                            : "Catalog cost. Receive stock on the terminal (F9) with a supplier."
+                    )</small>
+                </div>
+                <div class="mm-inv-grid mm-inv-grid-3">
+                    <div class="mm-field">
+                        <label for="p-cost">Cost price (Rs)</label>
+                        <input id="p-cost"
+                               type="number"
+                               step="0.01"
+                               min="0"
+                               value="@FormatOptionalDecimal(_form.CostRs)"
+                               @oninput="OnCostRsInput" />
+                        @if (!_isEdit)
+                        {
+                            <small class="text-muted">Receive this master on the terminal (F9) with a supplier to add stock.</small>
+                        }
+                    </div>
+                    @if (_isEdit)
+                    {
+                        <div class="mm-field">
+                            <label>Current stock</label>
+                            <input value="@FormatOptionalDecimal(_form.CurrentStockQty)" disabled />
+                            <small class="text-muted">Stock changes only via receive, sale, or return.</small>
+                        </div>
+                    }
+                    <div class="mm-field">
+                        <label for="p-unit">Stock unit</label>
+                        <InputSelect id="p-unit" @bind-Value="_form.BaseUnit">
+                            @foreach (string unit in UnitChoices)
+                            {
+                                <option value="@unit">@unit</option>
+                            }
+                        </InputSelect>
+                        <small class="text-muted">Unit used for POS stock and child pack deductions.</small>
+                    </div>
+                    <div class="mm-field">
+                        <label for="p-purchase-unit">Purchase unit</label>
+                        <InputSelect id="p-purchase-unit" @bind-Value="_form.PurchaseUnit">
+                            <option value="">Same as stock unit</option>
+                            @foreach (string unit in PurchaseUnitChoices)
+                            {
+                                <option value="@unit">@unit</option>
+                            }
+                        </InputSelect>
+                        <small class="text-muted">How you buy from suppliers (e.g. kg, bag, dozen).</small>
+                    </div>
+                    <div class="mm-field">
+                        <label for="p-conv">Stock units per purchase unit</label>
+                        <input id="p-conv"
+                               type="number"
+                               min="1"
+                               step="1"
+                               value="@_form.ConversionMultiplier"
+                               @oninput="OnConversionMultiplierInput" />
+                        <small class="text-muted">@PurchaseConversionHelper</small>
+                    </div>
+                </div>
+                <div class="mm-check" style="margin-top:0.75rem;">
+                    <InputCheckbox @bind-Value="_form.ShowOnPosQuick" />
+                    <span>Show on POS Quick Links</span>
+                </div>
+                @if (_form.ShowOnPosQuick)
+                {
+                    <div class="mm-field" style="max-width:8rem;margin-top:0.5rem;">
+                        <label for="p-quick-sort-ind">Quick sort</label>
+                        <InputNumber id="p-quick-sort-ind" @bind-Value="_form.PosQuickSort" />
+                    </div>
+                }
+            </div>
+        }
+
+        @if (!_isEdit)
+        {
+            <button type="button" class="mm-btn mm-btn-quick-save" disabled="@_saving" @onclick="SaveAsync">
+                @(_saving ? "Saving…" : "Save product")
+            </button>
+        }
+    </EditForm>
+
+    @if (!_isEdit && RapidEntry.Recent.Count > 0)
+    {
+        <div class="mm-card mm-recent-created">
+            <div class="mm-form-section-title">
+                Recently created
+                <small>This session · click a row to edit</small>
+            </div>
+            <div class="mm-table-wrap">
+                <table class="mm-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Barcode</th>
+                            <th>When</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (RecentProductEntry row in RapidEntry.Recent)
+                        {
+                            <tr class="clickable" @onclick="() => OpenRecent(row.Id)">
+                                <td>@row.Name</td>
+                                <td>@KindLabel(row.Kind)</td>
+                                <td>@(string.IsNullOrWhiteSpace(row.Barcode) ? "—" : row.Barcode)</td>
+                                <td>@row.CreatedAt.ToLocalTime().ToString("HH:mm:ss")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public Guid? ProductId { get; set; }
+
+    private static readonly string[] MassPackSizeChips = ["50g", "100g", "250g", "500g", "1kg"];
+    private static readonly string[] DefaultUnits = ["PCS", "kg", "dozens"];
+    private static readonly string[] PurchaseUnitPresets = ["PCS", "kg", "g", "dozens", "Bag", "Piece"];
+
+    private IReadOnlyList<string> PackSizeChips
+    {
+        get
+        {
+            string u = SelectedParentUnit.Trim().ToLowerInvariant();
+            if (u is "pcs" or "pc" or "piece" or "pieces" or "ea" or "each")
+            {
+                return ["1", "2", "6", "12", "1dozen"];
+            }
+
+            if (u is "doz" or "dozen" or "dozens")
+            {
+                return ["1", "2", "3", "6", "12"];
+            }
+
+            if (u is "kg" or "g" or "gram" or "grams")
+            {
+                return MassPackSizeChips;
+            }
+
+            return ["1", "2", "5", "10"];
+        }
+    }
+
+    private string PackSizePlaceholder =>
+        SelectedParentUnit.Trim().ToLowerInvariant() switch
+        {
+            "pcs" or "pc" or "piece" or "pieces" => "e.g. 12 or 1dozen",
+            "doz" or "dozen" or "dozens" => "e.g. 1 or 2",
+            _ => "50g or 1kg"
+        };
+
+    private readonly List<CategoryDto> _categories = [];
+    private readonly List<ProductAdminDto> _bulkParents = [];
+    private ProductForm _form = new();
+    private bool _saving;
+    private string? _error;
+    private string? _success;
+    private int _formKey;
+    private bool _focusBarcode;
+    private bool _bound;
+    private Guid? _boundProductId;
+    private string _parentSearch = string.Empty;
+    private CancellationTokenSource? _parentSearchCts;
+    private ElementReference _barcodeInput;
+    private ElementReference _nameInput;
+    private ElementReference _packInput;
+
+    private bool _isEdit => ProductId is Guid;
+
+    private string KindSubtitle =>
+        _form.Kind switch
+        {
+            ProductKind.Child => "Select a bulk master, set pack size and sell price. Cost comes from the parent.",
+            ProductKind.BulkParent => "Warehouse only. Purchased on F9, hidden from the sales terminal.",
+            _ => "Scanner-first rapid entry. Category and type stay sticky after save."
+        };
+
+    private string IdentityChip =>
+        _form.Kind == ProductKind.BulkParent
+            ? "Short Code • SKU • Barcode • Name • Margin"
+            : "Short Code • SKU • Barcode • Name • Sell Price";
+
+    private string PurchaseConversionHelper
+    {
+        get
+        {
+            string stock = string.IsNullOrWhiteSpace(_form.BaseUnit) ? "PCS" : _form.BaseUnit.Trim();
+            string purchase = string.IsNullOrWhiteSpace(_form.PurchaseUnit) ? stock : _form.PurchaseUnit.Trim();
+            int mult = Math.Max(1, _form.ConversionMultiplier);
+            return $"1 {purchase} = {mult} {stock}";
+        }
+    }
+
+    private IEnumerable<string> UnitChoices
+    {
+        get
+        {
+            string current = string.IsNullOrWhiteSpace(_form.BaseUnit) ? "PCS" : _form.BaseUnit;
+            if (DefaultUnits.Contains(current, StringComparer.OrdinalIgnoreCase))
+            {
+                return DefaultUnits;
+            }
+
+            return DefaultUnits.Prepend(current);
+        }
+    }
+
+    private IEnumerable<string> PurchaseUnitChoices
+    {
+        get
+        {
+            string current = _form.PurchaseUnit?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(current)
+                || PurchaseUnitPresets.Contains(current, StringComparer.OrdinalIgnoreCase))
+            {
+                return PurchaseUnitPresets;
+            }
+
+            return PurchaseUnitPresets.Prepend(current);
+        }
+    }
+
+    private string SelectedParentUnit
+    {
+        get
+        {
+            ProductAdminDto? parent = SelectedBulkParent;
+            return string.IsNullOrWhiteSpace(parent?.BaseUnit) ? "kg" : parent.BaseUnit;
+        }
+    }
+
+    private ProductAdminDto? SelectedBulkParent
+    {
+        get
+        {
+            if (!Guid.TryParse(_form.ParentProductId, out Guid parentId))
+            {
+                return null;
+            }
+
+            return _bulkParents.FirstOrDefault(p => p.Id == parentId);
+        }
+    }
+
+    private decimal DerivedChildCostRs
+    {
+        get
+        {
+            if (SelectedBulkParent is not ProductAdminDto parent)
+            {
+                return 0m;
+            }
+
+            decimal parentCost = parent.LatestCostPricePaisa / 100m;
+            if (TryCurrentPack(out decimal multiplier, out _))
+            {
+                return Math.Round(parentCost * multiplier, 2, MidpointRounding.AwayFromZero);
+            }
+
+            return parentCost;
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_bound && _boundProductId == ProductId)
+        {
+            return;
+        }
+
+        _bound = true;
+        _boundProductId = ProductId;
+        try
+        {
+            _categories.Clear();
+            _categories.AddRange(await CategoryService.ListAsync());
+
+            if (ProductId is Guid id)
+            {
+                await LoadExistingAsync(id);
+            }
+            else
+            {
+                ApplyStickyCreate();
+                if (_form.Kind == ProductKind.Child)
+                {
+                    await LoadBulkParentsAsync();
+                    if (SelectedBulkParent is ProductAdminDto stickyParent)
+                    {
+                        _form.MarginPercent = stickyParent.DefaultMarginPercent;
+                        ApplySuggestedChildRetail();
+                    }
+                }
+
+                _focusBarcode = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_focusBarcode)
+        {
+            return;
+        }
+
+        _focusBarcode = false;
+        try
+        {
+            await _barcodeInput.FocusAsync();
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private void ApplyStickyCreate()
+    {
+        _form = new ProductForm
+        {
+            CategoryId = RapidEntry.CategoryId,
+            Kind = RapidEntry.Kind,
+            ParentProductId = RapidEntry.Kind == ProductKind.Child ? RapidEntry.ParentProductId : string.Empty,
+            BaseUnit = "PCS"
+        };
+    }
+
+    private async Task LoadExistingAsync(Guid id)
+    {
+        ProductAdminDto p = await ProductService.GetAsync(id);
+        ProductKind kind = p.ParentProductId is not null
+            ? ProductKind.Child
+            : p.IsBulk ? ProductKind.BulkParent : ProductKind.Independent;
+
+        string parentUnit = p.BaseUnit;
+        if (kind == ProductKind.Child)
+        {
+            await LoadBulkParentsAsync(p.ParentProductId);
+            ProductAdminDto? parent = _bulkParents.FirstOrDefault(x => x.Id == p.ParentProductId);
+            if (!string.IsNullOrWhiteSpace(parent?.BaseUnit))
+            {
+                parentUnit = parent.BaseUnit;
+            }
+        }
+
+        _form = new ProductForm
+        {
+            Name = p.Name,
+            Sku = p.Sku,
+            Barcode = p.Barcode,
+            ShortCode = p.ShortCode,
+            CategoryId = p.CategoryId?.ToString() ?? string.Empty,
+            BaseUnit = string.IsNullOrWhiteSpace(p.BaseUnit) ? "PCS" : p.BaseUnit,
+            PurchaseUnit = p.PurchaseUnit ?? string.Empty,
+            ConversionMultiplier = p.ConversionMultiplier <= 0 ? 1 : p.ConversionMultiplier,
+            MinStockQty = p.MinStockQty,
+            Brand = p.Brand,
+            ShowOnWebshop = p.ShowOnWebshop,
+            ShowOnPosQuick = p.ShowOnPosQuick,
+            PosQuickSort = p.PosQuickSort,
+            Kind = kind,
+            ParentProductId = p.ParentProductId?.ToString() ?? string.Empty,
+            DeductionMultiplier = p.DeductionMultiplier,
+            PackSizeText = p.DeductionMultiplier is decimal d
+                ? PackSizeParser.Format(d, parentUnit)
+                : string.Empty,
+            CostRs = kind == ProductKind.Child ? null : p.LatestCostPricePaisa / 100m,
+            RetailRs = kind == ProductKind.BulkParent ? null : p.LatestRetailPricePaisa / 100m,
+            CurrentStockQty = kind == ProductKind.Child ? null : p.AvailableStock,
+            DefaultMarginPercent = kind == ProductKind.BulkParent ? p.DefaultMarginPercent : 20m,
+            MarginPercent = kind == ProductKind.Child
+                ? (_bulkParents.FirstOrDefault(x => x.Id == p.ParentProductId)?.DefaultMarginPercent ?? 20m)
+                : 20m
+        };
+        _formKey++;
+    }
+
+    private async Task SetKindAsync(ProductKind kind)
+    {
+        _form.Kind = kind;
+        if (kind != ProductKind.Child)
+        {
+            _form.PackSizeText = string.Empty;
+            _form.DeductionMultiplier = null;
+            return;
+        }
+
+        await LoadBulkParentsAsync();
+        if (SelectedBulkParent is ProductAdminDto parent)
+        {
+            _form.MarginPercent = parent.DefaultMarginPercent;
+            ApplySuggestedChildRetail();
+        }
+    }
+
+    private void SelectParent(ProductAdminDto parent)
+    {
+        _form.ParentProductId = parent.Id.ToString();
+        _form.MarginPercent = parent.DefaultMarginPercent;
+        ApplySuggestedChildRetail();
+    }
+
+    private static string ParentInitials(string name)
+    {
+        string trimmed = name.Trim();
+        if (trimmed.Length == 0)
+        {
+            return "P";
+        }
+
+        string[] parts = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 1)
+        {
+            return parts[0][..Math.Min(3, parts[0].Length)].ToUpperInvariant();
+        }
+
+        return string.Concat(parts[0][0], parts[1][0]).ToUpperInvariant();
+    }
+
+    private async Task OnParentSearchInput(ChangeEventArgs e)
+    {
+        _parentSearch = e.Value?.ToString() ?? string.Empty;
+        _parentSearchCts?.Cancel();
+        _parentSearchCts?.Dispose();
+        _parentSearchCts = new CancellationTokenSource();
+        CancellationToken token = _parentSearchCts.Token;
+        try
+        {
+            await Task.Delay(250, token);
+            await LoadBulkParentsAsync();
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    private async Task LoadBulkParentsAsync(Guid? includeId = null)
+    {
+        Guid? keep = includeId;
+        if (keep is null && Guid.TryParse(_form.ParentProductId, out Guid parsed))
+        {
+            keep = parsed;
+        }
+
+        if (keep is null && Guid.TryParse(RapidEntry.ParentProductId, out Guid sticky))
+        {
+            keep = sticky;
+        }
+
+        IReadOnlyList<ProductAdminDto> parents = await ProductService.ListBulkParentsAsync(
+            _parentSearch,
+            take: 50,
+            includeId: keep);
+        _bulkParents.Clear();
+        _bulkParents.AddRange(parents);
+    }
+
+    private void SetPackSize(string chip)
+    {
+        _form.PackSizeText = chip;
+        ApplySuggestedChildRetail();
+    }
+
+    private void OnPackSizeInput(ChangeEventArgs e)
+    {
+        _form.PackSizeText = e.Value?.ToString() ?? string.Empty;
+        ApplySuggestedChildRetail();
+    }
+
+    private bool TryCurrentPack(out decimal multiplier, out string? error)
+    {
+        error = null;
+        multiplier = 0;
+        if (_form.Kind != ProductKind.Child)
+        {
+            return false;
+        }
+
+        return PackSizeParser.TryParse(_form.PackSizeText, SelectedParentUnit, out multiplier, out error);
+    }
+
+    private void OnBarcodeInput(ChangeEventArgs e) =>
+        _form.Barcode = e.Value?.ToString() ?? string.Empty;
+
+    private async Task OnBarcodeKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key is not ("Enter" or "NumpadEnter"))
+        {
+            return;
+        }
+
+        await _nameInput.FocusAsync();
+    }
+
+    private async Task OnNameKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key is not ("Enter" or "NumpadEnter"))
+        {
+            return;
+        }
+
+        if (_form.Kind == ProductKind.Child)
+        {
+            try
+            {
+                await _packInput.FocusAsync();
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+    }
+
+    private void GenerateBarcode()
+    {
+        _form.Barcode = $"2{DateTime.UtcNow:yyMMddHHmmss}";
+    }
+
+    private void GenerateSku()
+    {
+        string source = string.IsNullOrWhiteSpace(_form.Name) ? _form.Barcode : _form.Name;
+        string slug = Regex.Replace(source.Trim().ToUpperInvariant(), @"[^A-Z0-9]+", "-").Trim('-');
+        if (slug.Length > 40)
+        {
+            slug = slug[..40].Trim('-');
+        }
+
+        _form.Sku = string.IsNullOrWhiteSpace(slug) ? $"SKU-{Guid.NewGuid():N}"[..16] : slug;
+    }
+
+    private void GenerateShortCode()
+    {
+        string digits = new string((_form.Barcode ?? string.Empty).Where(char.IsDigit).ToArray());
+        _form.ShortCode = digits.Length >= 4
+            ? digits[^4..]
+            : Random.Shared.Next(1000, 9999).ToString();
+    }
+
+    private void OnCostRsInput(ChangeEventArgs e) =>
+        _form.CostRs = ParseOptionalDecimal(e.Value?.ToString());
+
+    private void OnRetailRsInput(ChangeEventArgs e) =>
+        _form.RetailRs = ParseOptionalDecimal(e.Value?.ToString());
+
+    private void OnParentMarginInput(ChangeEventArgs e) =>
+        _form.DefaultMarginPercent = ParseOptionalDecimal(e.Value?.ToString()) ?? 0m;
+
+    private void OnConversionMultiplierInput(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int n)
+            && n > 0)
+        {
+            _form.ConversionMultiplier = n;
+            return;
+        }
+
+        _form.ConversionMultiplier = 1;
+    }
+
+    private void OnChildMarginInput(ChangeEventArgs e)
+    {
+        _form.MarginPercent = ParseOptionalDecimal(e.Value?.ToString()) ?? 0m;
+        ApplySuggestedChildRetail();
+    }
+
+    private void ApplySuggestedChildRetail()
+    {
+        if (_form.Kind != ProductKind.Child || !TryCurrentPack(out decimal multiplier, out _))
+        {
+            return;
+        }
+
+        decimal suggested = Math.Round(
+            DerivedChildCostRs * (1m + (_form.MarginPercent / 100m)),
+            2,
+            MidpointRounding.AwayFromZero);
+        _form.RetailRs = suggested;
+    }
+
+    private static decimal? ParseOptionalDecimal(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        return decimal.TryParse(raw, out decimal value) ? value : null;
+    }
+
+    private static string FormatOptionalDecimal(decimal? value) =>
+        value is null ? string.Empty : value.Value.ToString("0.##");
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _error = null;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_form.Name))
+            {
+                _error = "Product name is required.";
+                return;
+            }
+
+            if (_form.Kind != ProductKind.BulkParent && _form.RetailRs is null or <= 0)
+            {
+                _error = "Sell price is required.";
+                return;
+            }
+
+            Guid? categoryId = Guid.TryParse(_form.CategoryId, out Guid cid) ? cid : null;
+            Guid? parentId = null;
+            decimal? deduction = null;
+            bool isBulk = _form.Kind == ProductKind.BulkParent;
+
+            if (_form.Kind == ProductKind.Child)
+            {
+                if (!Guid.TryParse(_form.ParentProductId, out Guid pid))
+                {
+                    _error = "Select a bulk parent product.";
+                    return;
+                }
+
+                parentId = pid;
+                if (!TryCurrentPack(out decimal multiplier, out string? packError))
+                {
+                    _error = packError ?? "Enter a pack size such as 50g or 1kg.";
+                    return;
+                }
+
+                deduction = multiplier;
+            }
+
+            long? costPaisa = parentId is null && _form.CostRs is decimal costRs
+                ? ToPaisa(costRs)
+                : null;
+            long retailPaisa = isBulk ? 0L : ToPaisa(_form.RetailRs);
+
+            var request = new UpsertProductRequest
+            {
+                Name = _form.Name.Trim(),
+                Sku = _form.Sku.Trim(),
+                Barcode = _form.Barcode.Trim(),
+                ShortCode = _form.ShortCode.Trim(),
+                Brand = _form.Brand,
+                CategoryId = categoryId,
+                ShowOnWebshop = _form.ShowOnWebshop,
+                ShowOnPosQuick = _form.ShowOnPosQuick,
+                PosQuickSort = _form.PosQuickSort,
+                BaseUnit = parentId is null
+                    ? (string.IsNullOrWhiteSpace(_form.BaseUnit) ? "PCS" : _form.BaseUnit.Trim())
+                    : SelectedParentUnit,
+                PurchaseUnit = parentId is null
+                    ? (_form.PurchaseUnit?.Trim() ?? string.Empty)
+                    : string.Empty,
+                ConversionMultiplier = parentId is null
+                    ? Math.Max(1, _form.ConversionMultiplier)
+                    : 1,
+                MinStockQty = _form.MinStockQty,
+                IsLoose = false,
+                IsBulk = isBulk,
+                DefaultMarginPercent = isBulk ? _form.DefaultMarginPercent : 20m,
+                ParentProductId = parentId,
+                DeductionMultiplier = deduction,
+                OpeningRetailPricePaisa = !_isEdit ? retailPaisa : null,
+                OpeningCostPricePaisa = !_isEdit && parentId is null ? costPaisa : null,
+                CostPricePaisa = parentId is null ? costPaisa : null,
+                RetailPricePaisa = retailPaisa
+            };
+
+            if (ProductId is Guid id)
+            {
+                await ProductService.UpdateAsync(id, request);
+                Navigation.NavigateTo("/master/products");
+                return;
+            }
+
+            ProductAdminDto created = await ProductService.CreateAsync(request);
+            RapidEntry.Capture(_form.Kind, _form.CategoryId, _form.ParentProductId);
+            RapidEntry.RememberCreated(new RecentProductEntry
+            {
+                Id = created.Id,
+                Name = created.Name,
+                Barcode = created.Barcode,
+                Kind = _form.Kind,
+                CreatedAt = DateTimeOffset.Now
+            });
+            _success = "Product created.";
+            ApplyStickyCreate();
+            _formKey++;
+            _focusBarcode = true;
+        }
+        catch (Exception ex) when (IsUniqueViolation(ex))
+        {
+            _error = UniqueViolationMessage(ex);
+        }
+        catch (KeyNotFoundException)
+        {
+            _error = "Product was not found.";
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.InnerException?.Message ?? ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static bool IsUniqueViolation(Exception ex)
+    {
+        for (Exception? current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+            {
+                return true;
+            }
+
+            if (current is DbUpdateException dbEx
+                && dbEx.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string UniqueViolationMessage(Exception ex)
+    {
+        string detail = CollectExceptionText(ex);
+        if (detail.Contains("barcode", StringComparison.OrdinalIgnoreCase)
+            || detail.Contains("IX_products_barcode", StringComparison.OrdinalIgnoreCase))
+        {
+            return "A product with this barcode already exists.";
+        }
+
+        if (detail.Contains("sku", StringComparison.OrdinalIgnoreCase)
+            || detail.Contains("IX_products_sku", StringComparison.OrdinalIgnoreCase))
+        {
+            return "A product with this SKU already exists.";
+        }
+
+        return "A product with these details already exists.";
+    }
+
+    private static string CollectExceptionText(Exception ex)
+    {
+        var parts = new List<string>();
+        for (Exception? current = ex; current is not null; current = current.InnerException)
+        {
+            parts.Add(current.Message);
+            if (current is PostgresException pg)
+            {
+                parts.Add(pg.ConstraintName ?? string.Empty);
+                parts.Add(pg.Detail ?? string.Empty);
+            }
+        }
+
+        return string.Join(' ', parts);
+    }
+
+    private static long ToPaisa(decimal? rupees) =>
+        rupees is null
+            ? 0L
+            : (long)Math.Round(rupees.Value * 100m, MidpointRounding.AwayFromZero);
+
+    private static string KindLabel(ProductKind kind) =>
+        kind switch
+        {
+            ProductKind.BulkParent => "Parent",
+            ProductKind.Child => "Child",
+            _ => "Independent"
+        };
+
+    private void OpenRecent(Guid productId) =>
+        Navigation.NavigateTo($"/master/products/{productId}");
+
+    public void Dispose()
+    {
+        _parentSearchCts?.Cancel();
+        _parentSearchCts?.Dispose();
+    }
+
+    private sealed class ProductForm
+    {
+        public ProductKind Kind { get; set; } = ProductKind.Independent;
+        public string Name { get; set; } = string.Empty;
+        public string Sku { get; set; } = string.Empty;
+        public string Barcode { get; set; } = string.Empty;
+        public string ShortCode { get; set; } = string.Empty;
+        public string CategoryId { get; set; } = string.Empty;
+        public string Brand { get; set; } = string.Empty;
+        public bool ShowOnWebshop { get; set; }
+        public bool ShowOnPosQuick { get; set; }
+        public int PosQuickSort { get; set; }
+        public string BaseUnit { get; set; } = "PCS";
+        public string PurchaseUnit { get; set; } = string.Empty;
+        public int ConversionMultiplier { get; set; } = 1;
+        public decimal MinStockQty { get; set; } = 10m;
+        public string ParentProductId { get; set; } = string.Empty;
+        public decimal? DeductionMultiplier { get; set; }
+        public string PackSizeText { get; set; } = string.Empty;
+        public decimal? CostRs { get; set; }
+        public decimal? RetailRs { get; set; }
+        public decimal? CurrentStockQty { get; set; }
+        public decimal DefaultMarginPercent { get; set; } = 20m;
+        public decimal MarginPercent { get; set; } = 20m;
+    }
+}

@@ -13,6 +13,7 @@
 @inject IPartyLedgerService LedgerService
 @inject IProcurementService ProcurementService
 @inject IShiftService ShiftService
+@inject ICashAccountService CashAccounts
 @inject NavigationManager Navigation
 @inject IJSRuntime Js
 
@@ -175,6 +176,8 @@
     private readonly List<RecentPartyPaymentDto> _recent = [];
     private readonly List<OpenShiftDto> _openShifts = [];
     private readonly List<OpenSlipRow> _openSlips = [];
+    private readonly List<CashAccountDto> _fundingAccounts = [];
+    private readonly Dictionary<string, long> _fundingSpendablePaisa = new(StringComparer.OrdinalIgnoreCase);
 
     private Guid? _partyId;
     private string _payKind = "PAYMENT"; // PAYMENT | ADVANCE | ADJUSTMENT
@@ -182,6 +185,7 @@
     private decimal _discountRs;
     private string _payDate = DateTime.Today.ToString("yyyy-MM-dd");
     private string _payMethod = "CASH";
+    private string _fundingAccountCode = "OWNER_CASH";
     private string _selectedShiftId = string.Empty;
     private string _reference = string.Empty;
     private string _notes = string.Empty;
@@ -202,6 +206,13 @@
     private bool IsPaymentTab => _tab is TabCustomerPay or TabSupplierPay;
     private bool IsCustomerContext => _tab is TabCustomerPay or TabCustomerLedger;
     private string ActiveRole => IsCustomerContext ? PartyTypes.Customer : PartyTypes.Supplier;
+    private bool ShowsFundingSource => _payMethod == "CASH" && _payKind != "ADJUSTMENT";
+    private bool IsTillFunding =>
+        _fundingAccounts.Any(a =>
+            a.AccountCode.Equals(_fundingAccountCode, StringComparison.OrdinalIgnoreCase)
+            && a.Type == CashAccountType.Till)
+        || _fundingAccountCode.StartsWith("CASH:TILL:", StringComparison.OrdinalIgnoreCase);
+    private bool ShowsOpenShiftPicker => ShowsFundingSource && IsTillFunding;
 
     private IEnumerable<PartyDto> FilteredManageParties =>
         string.IsNullOrWhiteSpace(_partyFilter)
@@ -278,14 +289,34 @@
                     <div class="mm-field">
                         <label>Method</label>
                         <InputSelect @bind-Value="_payMethod" @bind-Value:after="OnMethodChanged">
-                            <option value="CASH">Cash (Till)</option>
+                            <option value="CASH">Cash</option>
                             <option value="BANK_TRANSFER">Bank transfer</option>
                             <option value="EASYPAISA">EasyPaisa</option>
                             <option value="JAZZCASH">JazzCash</option>
                         </InputSelect>
                     </div>
 
-                    @if (_payMethod == "CASH" && _payKind != "ADJUSTMENT")
+                    @if (ShowsFundingSource)
+                    {
+                        <div class="mm-field full">
+                            <label>Funding Source</label>
+                            <InputSelect @bind-Value="_fundingAccountCode" @bind-Value:after="OnFundingChanged">
+                                @foreach (CashAccountDto account in _fundingAccounts)
+                                {
+                                    <option value="@account.AccountCode">
+                                        @FormatFundingLabel(account, _fundingSpendablePaisa)
+                                    </option>
+                                }
+                            </InputSelect>
+                            <p class="mm-muted" style="margin:0.35rem 0 0;font-size:0.85rem;">
+                                @(IsTillFunding
+                                    ? "Till payouts use physical drawer cash (min of ledger and drawer). Open shift required."
+                                    : "Treasury payouts use account ledger balance; no open shift needed.")
+                            </p>
+                        </div>
+                    }
+
+                    @if (ShowsOpenShiftPicker)
                     {
                         <div class="mm-field full">
                             <label>Open till / shift</label>
@@ -305,8 +336,8 @@
                     }
 
                     <div class="mm-field">
-                        <label>Reference / receipt #</label>
-                        <InputText @bind-Value="_reference" />
+                        <label>Reference / invoice #</label>
+                        <InputText @bind-Value="_reference" placeholder="Required for supplier payments" />
                     </div>
                     <div class="mm-field">
                         <label>Notes</label>
@@ -539,6 +570,30 @@
             _kpis = await LedgerService.GetPartyFinanceKpisAsync(ActiveRole);
             _openShifts.Clear();
             _openShifts.AddRange(await ShiftService.ListOpenShiftsAsync());
+            _fundingAccounts.Clear();
+            _fundingSpendablePaisa.Clear();
+            IReadOnlyList<CashAccountDto> allAccounts = await CashAccounts.ListAsync();
+            _fundingAccounts.AddRange(
+                allAccounts
+                    .Where(a => a.IsActive)
+                    .OrderBy(a => a.Type == CashAccountType.Till ? 0 : 1)
+                    .ThenBy(a => a.SortOrder)
+                    .ThenBy(a => a.Name));
+
+            foreach (CashAccountDto account in _fundingAccounts)
+            {
+                try
+                {
+                    CashSpendableBalanceDto spendable = await CashAccounts.GetSpendableBalanceAsync(account.Id);
+                    _fundingSpendablePaisa[account.AccountCode] = spendable.SpendablePaisa;
+                }
+                catch
+                {
+                    /* best-effort hint */
+                }
+            }
+
+            PreferActiveTillForCash();
             SyncSelectedParty();
             if (IsPaymentTab)
             {
@@ -621,7 +676,66 @@
         if (_payMethod != "CASH")
         {
             _selectedShiftId = string.Empty;
+            return;
         }
+
+        PreferActiveTillForCash();
+        OnFundingChanged();
+    }
+
+    private void OnFundingChanged()
+    {
+        if (!IsTillFunding)
+        {
+            _selectedShiftId = string.Empty;
+            return;
+        }
+
+        CashAccountDto? till = _fundingAccounts.FirstOrDefault(a =>
+            a.AccountCode.Equals(_fundingAccountCode, StringComparison.OrdinalIgnoreCase));
+        if (till?.TerminalId is Guid terminalId)
+        {
+            OpenShiftDto? match = _openShifts.FirstOrDefault(s => s.TerminalId == terminalId);
+            if (match is not null)
+            {
+                _selectedShiftId = match.ShiftId.ToString();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Supplier/customer Method=CASH defaults to the live till (open shift), not Owner.
+    /// </summary>
+    private void PreferActiveTillForCash()
+    {
+        if (_payMethod != "CASH" || _payKind == "ADJUSTMENT" || _fundingAccounts.Count == 0)
+        {
+            return;
+        }
+
+        CashAccountDto? liveTill = _fundingAccounts.FirstOrDefault(a =>
+            a.Type == CashAccountType.Till
+            && a.IsActive
+            && a.TerminalId is Guid tid
+            && _openShifts.Any(s => s.TerminalId == tid));
+
+        if (liveTill is null)
+        {
+            if (!_fundingAccounts.Any(a =>
+                    a.AccountCode.Equals(_fundingAccountCode, StringComparison.OrdinalIgnoreCase)))
+            {
+                _fundingAccountCode = _fundingAccounts
+                    .FirstOrDefault(a => a.AccountCode.Equals("OWNER_CASH", StringComparison.OrdinalIgnoreCase))
+                    ?.AccountCode
+                    ?? _fundingAccounts[0].AccountCode;
+            }
+
+            return;
+        }
+
+        _fundingAccountCode = liveTill.AccountCode;
+        OpenShiftDto? shift = _openShifts.FirstOrDefault(s => s.TerminalId == liveTill.TerminalId);
+        _selectedShiftId = shift?.ShiftId.ToString() ?? string.Empty;
     }
 
     private async Task LoadRecentAsync()
@@ -745,6 +859,23 @@
                 return;
             }
 
+            if (!IsCustomerContext
+                && _payKind == "PAYMENT"
+                && string.IsNullOrWhiteSpace(_reference))
+            {
+                _error = "Reference / invoice ID is required for supplier payments.";
+                return;
+            }
+
+            if (_payKind == "PAYMENT"
+                && ShowsFundingSource
+                && _fundingSpendablePaisa.TryGetValue(_fundingAccountCode, out long available)
+                && amountPaisa > available)
+            {
+                _error = InsufficientCashBalanceException.StandardMessage;
+                return;
+            }
+
             if (_payKind == "ADJUSTMENT")
             {
                 string notes = string.IsNullOrWhiteSpace(_notes) ? "Adjustment" : _notes.Trim();
@@ -766,9 +897,15 @@
             {
                 if (_payMethod == "CASH")
                 {
-                    if (!Guid.TryParse(_selectedShiftId, out _))
+                    if (string.IsNullOrWhiteSpace(_fundingAccountCode))
                     {
-                        _error = "Select an open till/shift for cash payments.";
+                        _error = "Select a funding source.";
+                        return;
+                    }
+
+                    if (IsTillFunding && !Guid.TryParse(_selectedShiftId, out _))
+                    {
+                        _error = "Select an open till/shift for till-funded payments.";
                         return;
                     }
                 }
@@ -817,7 +954,8 @@
                     baseRef = $"{baseRef} — {_notes.Trim()}";
                 }
 
-                Guid? shiftId = _payMethod == "CASH" && Guid.TryParse(_selectedShiftId, out Guid sid)
+                string? accountCode = _payMethod == "CASH" ? _fundingAccountCode : null;
+                Guid? shiftId = IsTillFunding && Guid.TryParse(_selectedShiftId, out Guid sid)
                     ? sid
                     : null;
 
@@ -830,6 +968,7 @@
                         PaymentMethod = _payMethod,
                         ReferenceNo = baseRef,
                         ShiftId = shiftId,
+                        AccountCode = accountCode,
                         Allocations = allocations.Count > 0 ? allocations : null
                     });
                 }
@@ -842,6 +981,7 @@
                         PaymentMethod = _payMethod,
                         ReferenceNo = baseRef,
                         ShiftId = shiftId,
+                        AccountCode = accountCode,
                         Allocations = allocations.Count > 0 ? allocations : null
                     });
                 }
@@ -1024,6 +1164,31 @@
     }
 
     private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2", CultureInfo.InvariantCulture);
+
+    private static string FormatFundingLabel(
+        CashAccountDto account,
+        IReadOnlyDictionary<string, long> spendableByCode)
+    {
+        string name;
+        if (account.Type == CashAccountType.Till)
+        {
+            string term = string.IsNullOrWhiteSpace(account.TerminalName)
+                ? account.Name
+                : account.TerminalName;
+            name = $"Till — {term}";
+        }
+        else
+        {
+            name = account.Name;
+        }
+
+        if (spendableByCode.TryGetValue(account.AccountCode, out long spendable))
+        {
+            return $"{name} — Available Rs {FormatRs(spendable)}";
+        }
+
+        return name;
+    }
 
     private static string FormatShift(OpenShiftDto s) =>
         $"{s.CashierName} · {s.TerminalName ?? s.TerminalId.ToString()[..8]} · Rs {FormatRs(s.ExpectedCashPaisa)}";

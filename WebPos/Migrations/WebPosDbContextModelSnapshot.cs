@@ -35,6 +35,12 @@ namespace WebPos.Migrations
                         .HasColumnType("character varying(50)")
                         .HasColumnName("account_code");
 
+                    b.Property<long>("BalancePaisa")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("balance_paisa");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean")
                         .HasColumnName("is_active");
@@ -90,7 +96,10 @@ namespace WebPos.Migrations
                     b.HasIndex("TenantId", "Type", "SortOrder")
                         .HasDatabaseName("IX_cash_accounts_tenant_type_sort");
 
-                    b.ToTable("cash_accounts", (string)null);
+                    b.ToTable("cash_accounts", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_cash_accounts_balance_paisa_non_negative", "\"balance_paisa\" >= 0");
+                        });
                 });
 
             modelBuilder.Entity("WebPos.Core.Models.CashierShift", b =>
@@ -179,6 +188,18 @@ namespace WebPos.Migrations
                     b.Property<Guid?>("ParentCategoryId")
                         .HasColumnType("uuid")
                         .HasColumnName("parent_category_id");
+
+                    b.Property<int>("PosQuickSort")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("pos_quick_sort");
+
+                    b.Property<bool>("ShowOnPosQuick")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("show_on_pos_quick");
 
                     b.Property<bool>("ShowOnWebshop")
                         .HasColumnType("boolean")
@@ -615,9 +636,32 @@ namespace WebPos.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("conversion_multiplier");
 
+                    b.Property<long>("CostPricePaisa")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("cost_price_paisa");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
+
+                    b.Property<decimal?>("DeductionMultiplier")
+                        .HasColumnType("numeric(12,3)")
+                        .HasColumnName("deduction_multiplier");
+
+                    b.Property<decimal>("DefaultMarginPercent")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(6, 2)
+                        .HasColumnType("numeric(6,2)")
+                        .HasDefaultValue(20m)
+                        .HasColumnName("default_margin_percent");
+
+                    b.Property<bool>("IsBulk")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_bulk");
 
                     b.Property<bool>("IsDeleted")
                         .ValueGeneratedOnAdd()
@@ -644,6 +688,16 @@ namespace WebPos.Migrations
                         .HasColumnType("character varying(150)")
                         .HasColumnName("name");
 
+                    b.Property<Guid?>("ParentProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("parent_product_id");
+
+                    b.Property<int>("PosQuickSort")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("pos_quick_sort");
+
                     b.Property<string>("PurchaseUnit")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -652,6 +706,12 @@ namespace WebPos.Migrations
                         .HasDefaultValue("")
                         .HasColumnName("purchase_unit");
 
+                    b.Property<long>("RetailPricePaisa")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("retail_price_paisa");
+
                     b.Property<string>("ShortCode")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -659,6 +719,12 @@ namespace WebPos.Migrations
                         .HasColumnType("character varying(10)")
                         .HasDefaultValue("")
                         .HasColumnName("short_code");
+
+                    b.Property<bool>("ShowOnPosQuick")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("show_on_pos_quick");
 
                     b.Property<bool>("ShowOnWebshop")
                         .HasColumnType("boolean")
@@ -669,6 +735,12 @@ namespace WebPos.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)")
                         .HasColumnName("sku");
+
+                    b.Property<decimal>("StockQty")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(12,3)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("stock_qty");
 
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
@@ -685,10 +757,18 @@ namespace WebPos.Migrations
 
                     b.HasIndex("CategoryId");
 
+                    b.HasIndex("ParentProductId");
+
                     b.HasIndex("Sku")
                         .IsUnique();
 
                     b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "Name")
+                        .HasDatabaseName("IX_products_tenant_name_active")
+                        .HasFilter("is_deleted = FALSE");
+
+                    b.HasIndex("TenantId", "ParentProductId");
 
                     b.HasIndex("TenantId", "ShortCode")
                         .IsUnique()
@@ -1228,7 +1308,7 @@ namespace WebPos.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
-                    b.Property<Guid>("BatchId")
+                    b.Property<Guid?>("BatchId")
                         .HasColumnType("uuid")
                         .HasColumnName("batch_id");
 
@@ -1241,6 +1321,12 @@ namespace WebPos.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
                         .HasColumnName("invoice_no");
+
+                    b.Property<decimal>("ParentQtyDeducted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("numeric(12,3)")
+                        .HasDefaultValue(0m)
+                        .HasColumnName("parent_qty_deducted");
 
                     b.Property<Guid>("ProductId")
                         .HasColumnType("uuid")
@@ -1328,7 +1414,7 @@ namespace WebPos.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
-                    b.Property<Guid>("BatchId")
+                    b.Property<Guid?>("BatchId")
                         .HasColumnType("uuid")
                         .HasColumnName("batch_id");
 
@@ -1369,6 +1455,93 @@ namespace WebPos.Migrations
                     b.HasIndex("TenantId");
 
                     b.ToTable("sales_return_items", (string)null);
+                });
+
+            modelBuilder.Entity("WebPos.Core.Models.ShiftCashMovement", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<long>("AlignPaisa")
+                        .HasColumnType("bigint")
+                        .HasColumnName("align_paisa");
+
+                    b.Property<long>("AmountPaisa")
+                        .HasColumnType("bigint")
+                        .HasColumnName("amount_paisa");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by_user_id");
+
+                    b.Property<string>("Direction")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)")
+                        .HasColumnName("direction");
+
+                    b.Property<long>("ExcessPaisa")
+                        .HasColumnType("bigint")
+                        .HasColumnName("excess_paisa");
+
+                    b.Property<Guid?>("LinkedReferenceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("linked_reference_id");
+
+                    b.Property<string>("LinkedReferenceType")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("linked_reference_type");
+
+                    b.Property<string>("Note")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("note");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("reason");
+
+                    b.Property<Guid>("ShiftId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("shift_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("TillCashAccountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("till_cash_account_id");
+
+                    b.Property<Guid?>("TransactionGroupId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("transaction_group_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TillCashAccountId");
+
+                    b.HasIndex("ShiftId", "Status");
+
+                    b.ToTable("shift_cash_movements", (string)null);
                 });
 
             modelBuilder.Entity("WebPos.Core.Models.ShiftExpense", b =>
@@ -1445,6 +1618,77 @@ namespace WebPos.Migrations
                         .IsUnique();
 
                     b.ToTable("shift_expenses", (string)null);
+                });
+
+            modelBuilder.Entity("WebPos.Core.Models.StockCount", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CountedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("counted_at");
+
+                    b.Property<Guid?>("CountedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("counted_by_user_id");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("note");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("stock_counts", (string)null);
+                });
+
+            modelBuilder.Entity("WebPos.Core.Models.StockCountLine", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("BatchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("batch_id");
+
+                    b.Property<decimal>("CountedQty")
+                        .HasColumnType("numeric(12,3)")
+                        .HasColumnName("counted_qty");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
+                    b.Property<Guid>("StockCountId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("stock_count_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BatchId");
+
+                    b.HasIndex("ProductId");
+
+                    b.HasIndex("StockCountId");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("stock_count_lines", (string)null);
                 });
 
             modelBuilder.Entity("WebPos.Core.Models.Tenant", b =>
@@ -1781,6 +2025,11 @@ namespace WebPos.Migrations
                         .HasForeignKey("CategoryId")
                         .OnDelete(DeleteBehavior.Restrict);
 
+                    b.HasOne("WebPos.Core.Models.Product", "ParentProduct")
+                        .WithMany("ChildAliases")
+                        .HasForeignKey("ParentProductId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("WebPos.Core.Models.Tenant", null)
                         .WithMany()
                         .HasForeignKey("TenantId")
@@ -1788,6 +2037,8 @@ namespace WebPos.Migrations
                         .IsRequired();
 
                     b.Navigation("Category");
+
+                    b.Navigation("ParentProduct");
                 });
 
             modelBuilder.Entity("WebPos.Core.Models.ProductBatch", b =>
@@ -2072,8 +2323,7 @@ namespace WebPos.Migrations
                     b.HasOne("WebPos.Core.Models.ProductBatch", "Batch")
                         .WithMany("SalesItems")
                         .HasForeignKey("BatchId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("WebPos.Core.Models.SalesInvoice", "Invoice")
                         .WithMany("Items")
@@ -2137,8 +2387,7 @@ namespace WebPos.Migrations
                     b.HasOne("WebPos.Core.Models.ProductBatch", "Batch")
                         .WithMany("SalesReturnItems")
                         .HasForeignKey("BatchId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("WebPos.Core.Models.Product", "Product")
                         .WithMany()
@@ -2165,6 +2414,31 @@ namespace WebPos.Migrations
                     b.Navigation("SalesReturn");
                 });
 
+            modelBuilder.Entity("WebPos.Core.Models.ShiftCashMovement", b =>
+                {
+                    b.HasOne("WebPos.Core.Models.CashierShift", "Shift")
+                        .WithMany()
+                        .HasForeignKey("ShiftId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("WebPos.Core.Models.CashAccount", "TillCashAccount")
+                        .WithMany()
+                        .HasForeignKey("TillCashAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Shift");
+
+                    b.Navigation("TillCashAccount");
+                });
+
             modelBuilder.Entity("WebPos.Core.Models.ShiftExpense", b =>
                 {
                     b.HasOne("WebPos.Core.Models.User", null)
@@ -2185,6 +2459,47 @@ namespace WebPos.Migrations
                         .IsRequired();
 
                     b.Navigation("Shift");
+                });
+
+            modelBuilder.Entity("WebPos.Core.Models.StockCount", b =>
+                {
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WebPos.Core.Models.StockCountLine", b =>
+                {
+                    b.HasOne("WebPos.Core.Models.ProductBatch", "Batch")
+                        .WithMany()
+                        .HasForeignKey("BatchId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("WebPos.Core.Models.Product", "Product")
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("WebPos.Core.Models.StockCount", "StockCount")
+                        .WithMany("Lines")
+                        .HasForeignKey("StockCountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("WebPos.Core.Models.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Batch");
+
+                    b.Navigation("Product");
+
+                    b.Navigation("StockCount");
                 });
 
             modelBuilder.Entity("WebPos.Core.Models.Terminal", b =>
@@ -2238,6 +2553,8 @@ namespace WebPos.Migrations
             modelBuilder.Entity("WebPos.Core.Models.Product", b =>
                 {
                     b.Navigation("Batches");
+
+                    b.Navigation("ChildAliases");
                 });
 
             modelBuilder.Entity("WebPos.Core.Models.ProductBatch", b =>
@@ -2291,6 +2608,11 @@ namespace WebPos.Migrations
             modelBuilder.Entity("WebPos.Core.Models.SalesReturn", b =>
                 {
                     b.Navigation("Items");
+                });
+
+            modelBuilder.Entity("WebPos.Core.Models.StockCount", b =>
+                {
+                    b.Navigation("Lines");
                 });
 #pragma warning restore 612, 618
         }

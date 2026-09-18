@@ -44,6 +44,26 @@ public sealed class ShiftController(IShiftService shiftService) : ControllerBase
         return Ok(report);
     }
 
+    [HttpGet("suggested-opening")]
+    [ProducesResponseType(typeof(SuggestedOpeningCashDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<SuggestedOpeningCashDto>> GetSuggestedOpening(
+        [FromQuery] Guid? terminalId,
+        CancellationToken cancellationToken)
+    {
+        Guid resolvedTerminalId = terminalId is Guid id && id != Guid.Empty
+            ? id
+            : ResolveEnrollmentTerminalId();
+        if (resolvedTerminalId == Guid.Empty)
+        {
+            return BadRequest(new { error = "Terminal id is required." });
+        }
+
+        SuggestedOpeningCashDto suggestion = await _shiftService.GetSuggestedOpeningCashAsync(
+            resolvedTerminalId,
+            cancellationToken);
+        return Ok(suggestion);
+    }
+
     [HttpGet("open")]
     [ProducesResponseType(typeof(OpenShiftDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]

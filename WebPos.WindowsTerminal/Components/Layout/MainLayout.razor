@@ -1,13 +1,80 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
+@inject NavigationManager Navigation
+@implements IDisposable
 
-<div class="page terminal-layout">
-    <div class="sidebar">
-        <NavMenu />
-    </div>
+<div class="page terminal-layout @(IsFullscreen ? "sales-fullscreen" : null)">
+    @if (!IsFullscreen)
+    {
+        <div class="sidebar">
+            <NavMenu />
+        </div>
+    }
 
     <main>
-        <article class="content px-4">
-            @Body
+        <article class="content @(IsFullscreen ? "sales-content" : "px-4")">
+            <ErrorBoundary @ref="_errorBoundary">
+                <ChildContent>
+                    @Body
+                </ChildContent>
+                <ErrorContent Context="ex">
+                    <div class="alert-red" role="alert" style="margin:1rem;padding:1rem;border-radius:8px;">
+                        <strong>Something went wrong on this screen.</strong>
+                        <p style="margin:0.5rem 0;">@(ex.Message)</p>
+                        <button type="button" class="link-btn" @onclick="RecoverUi">Try again</button>
+                    </div>
+                </ErrorContent>
+            </ErrorBoundary>
         </article>
     </main>
 </div>
+
+@code {
+    private ErrorBoundary? _errorBoundary;
+
+    private static readonly string[] FullscreenPaths =
+    [
+        "/",
+        "/login",
+        "/enroll",
+        "/start-shift",
+        "/sales",
+        "/customers",
+        "/suppliers",
+        "/products",
+        "/recent-bills",
+        "/returns",
+        "/close-shift"
+    ];
+
+    private bool IsFullscreen
+    {
+        get
+        {
+            string path = Navigation.ToAbsoluteUri(Navigation.Uri).AbsolutePath.TrimEnd('/');
+            if (string.IsNullOrEmpty(path))
+            {
+                path = "/";
+            }
+
+            return FullscreenPaths.Any(p =>
+                path.Equals(p, StringComparison.OrdinalIgnoreCase)
+                || (p != "/" && path.StartsWith(p + "/", StringComparison.OrdinalIgnoreCase)));
+        }
+    }
+
+    protected override void OnInitialized() => Navigation.LocationChanged += OnLocationChanged;
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        _errorBoundary?.Recover();
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => Navigation.LocationChanged -= OnLocationChanged;
+
+    private void RecoverUi()
+    {
+        _errorBoundary?.Recover();
+        StateHasChanged();
+    }
+}

@@ -11,6 +11,10 @@ public sealed class UpsertCategoryRequest
     public int TargetMarginPercentage { get; init; }
 
     public bool ShowOnWebshop { get; init; }
+
+    public bool ShowOnPosQuick { get; init; }
+
+    public int PosQuickSort { get; init; }
 }
 
 public sealed class CategoryDto
@@ -24,6 +28,10 @@ public sealed class CategoryDto
     public int TargetMarginPercentage { get; init; }
 
     public bool ShowOnWebshop { get; init; }
+
+    public bool ShowOnPosQuick { get; init; }
+
+    public int PosQuickSort { get; init; }
 
     public int ProductCount { get; init; }
 }

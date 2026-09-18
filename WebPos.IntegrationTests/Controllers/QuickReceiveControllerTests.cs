@@ -76,7 +76,7 @@ public sealed class QuickReceiveControllerTests
         IReadOnlyList<SalesProductDto>? products =
             await ApiTestClient.ReadJsonAsync<IReadOnlyList<SalesProductDto>>(forSale, JsonOptions);
         products.Should().Contain(p =>
-            p.ProductId == seed.ProductId && p.BatchNumber == "QR-BATCH-1" && p.AvailableStock == 5m);
+            p.ProductId == seed.ProductId && p.AvailableStock == 5m);
     }
 
     [Fact]
@@ -91,6 +91,11 @@ public sealed class QuickReceiveControllerTests
         {
             WebPosDbContext db = scope.ServiceProvider.GetRequiredService<WebPosDbContext>();
             seed = await SeedHelper.SeedSalePrerequisitesAsync(db);
+
+            Product product = await db.Products
+                .IgnoreQueryFilters()
+                .SingleAsync(p => p.Id == seed.ProductId);
+            product.StockQty = 0m;
 
             ProductBatch batch = await db.ProductBatches
                 .IgnoreQueryFilters()
@@ -142,6 +147,199 @@ public sealed class QuickReceiveControllerTests
             await ApiTestClient.ReadJsonAsync<IReadOnlyList<SalesProductDto>>(forReceive, JsonOptions);
         receiveProducts.Should().Contain(p => p.ProductId == seed.ProductId && p.AvailableStock == 0m);
         receiveProducts.Should().Contain(p => p.ProductId == orphanId && p.AvailableStock == 0m);
+    }
+
+    [Fact]
+    public async Task ForReceive_ShouldAttachChildAliasTermsAndOmitChildTarget()
+    {
+        await using SalesApiFactory factory = new();
+        HttpClient client = factory.CreateClient();
+        await factory.EnsureTenantAsync();
+        SaleSeedData seed;
+        Guid parentId = Guid.NewGuid();
+        Guid childId = Guid.NewGuid();
+        const string childBarcode = "8901111222333";
+        const string childSku = "CHANA-50G";
+        const string childShortCode = "WC50";
+        const string childName = "White Chana 50g";
+
+        using (IServiceScope scope = factory.Services.CreateScope())
+        {
+            WebPosDbContext db = scope.ServiceProvider.GetRequiredService<WebPosDbContext>();
+            seed = await SeedHelper.SeedSalePrerequisitesAsync(db);
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+
+            db.Products.Add(new Product
+            {
+                Id = parentId,
+                TenantId = seed.TenantId,
+                Name = "White Chana",
+                Sku = $"SKU-{parentId:N}"[..20],
+                Barcode = $"BC-{parentId:N}"[..20],
+                ShortCode = "WCM",
+                Brand = "Test",
+                BaseUnit = "kg",
+                ConversionMultiplier = 1,
+                IsBulk = true,
+                ShowOnWebshop = false,
+                MinStockQty = 1m,
+                StockQty = 0m,
+                CostPricePaisa = 8_000L,
+                RetailPricePaisa = 0,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            db.Products.Add(new Product
+            {
+                Id = childId,
+                TenantId = seed.TenantId,
+                Name = childName,
+                Sku = childSku,
+                Barcode = childBarcode,
+                ShortCode = childShortCode,
+                Brand = "Test",
+                BaseUnit = "PCS",
+                ConversionMultiplier = 1,
+                IsBulk = false,
+                ParentProductId = parentId,
+                DeductionMultiplier = 0.05m,
+                ShowOnWebshop = false,
+                MinStockQty = 1m,
+                StockQty = 0m,
+                CostPricePaisa = 0,
+                RetailPricePaisa = 5_000L,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using HttpResponseMessage forReceive = await ApiTestClient.SendAsync(
+            client,
+            factory,
+            HttpMethod.Get,
+            "/api/products/for-receive",
+            seed.TenantId,
+            seed.TerminalId);
+        forReceive.StatusCode.Should().Be(HttpStatusCode.OK);
+        IReadOnlyList<SalesProductDto>? receiveProducts =
+            await ApiTestClient.ReadJsonAsync<IReadOnlyList<SalesProductDto>>(forReceive, JsonOptions);
+
+        receiveProducts.Should().NotBeNull();
+        receiveProducts.Should().NotContain(p => p.ProductId == childId);
+
+        SalesProductDto parent = receiveProducts.Should().ContainSingle(p => p.ProductId == parentId).Subject;
+        parent.IsBulk.Should().BeTrue();
+        parent.AvailableStock.Should().Be(0m);
+        parent.AliasSearchTerms.Should().Contain(childName);
+        parent.AliasSearchTerms.Should().Contain(childBarcode);
+        parent.AliasSearchTerms.Should().Contain(childSku);
+        parent.AliasSearchTerms.Should().Contain(childShortCode);
+    }
+
+    [Fact]
+    public async Task ForSale_ShouldOmitBulkParentAndIncludeChild()
+    {
+        await using SalesApiFactory factory = new();
+        HttpClient client = factory.CreateClient();
+        await factory.EnsureTenantAsync();
+        SaleSeedData seed;
+        Guid parentId = Guid.NewGuid();
+        Guid childId = Guid.NewGuid();
+        const string parentBarcode = "8900000111222";
+
+        using (IServiceScope scope = factory.Services.CreateScope())
+        {
+            WebPosDbContext db = scope.ServiceProvider.GetRequiredService<WebPosDbContext>();
+            seed = await SeedHelper.SeedSalePrerequisitesAsync(db);
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+
+            db.Products.Add(new Product
+            {
+                Id = parentId,
+                TenantId = seed.TenantId,
+                Name = "White Chana Bulk",
+                Sku = $"SKU-{parentId:N}"[..20],
+                Barcode = parentBarcode,
+                ShortCode = "WCB",
+                Brand = "Test",
+                BaseUnit = "kg",
+                ConversionMultiplier = 1,
+                IsBulk = true,
+                DefaultMarginPercent = 25m,
+                ShowOnWebshop = false,
+                MinStockQty = 1m,
+                StockQty = 10m,
+                CostPricePaisa = 8_000L,
+                RetailPricePaisa = 12_000L,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            db.Products.Add(new Product
+            {
+                Id = childId,
+                TenantId = seed.TenantId,
+                Name = "White Chana 50g",
+                Sku = $"SKU-{childId:N}"[..20],
+                Barcode = "8900000111333",
+                ShortCode = "WC5",
+                Brand = "Test",
+                BaseUnit = "PCS",
+                ConversionMultiplier = 1,
+                IsBulk = false,
+                ParentProductId = parentId,
+                DeductionMultiplier = 0.05m,
+                ShowOnWebshop = false,
+                MinStockQty = 1m,
+                StockQty = 0m,
+                RetailPricePaisa = 5_000L,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using HttpResponseMessage forSale = await ApiTestClient.SendAsync(
+            client,
+            factory,
+            HttpMethod.Get,
+            "/api/products/for-sale",
+            seed.TenantId,
+            seed.TerminalId);
+        forSale.StatusCode.Should().Be(HttpStatusCode.OK);
+        IReadOnlyList<SalesProductDto>? saleProducts =
+            await ApiTestClient.ReadJsonAsync<IReadOnlyList<SalesProductDto>>(forSale, JsonOptions);
+
+        saleProducts.Should().NotContain(p => p.ProductId == parentId);
+        SalesProductDto childSale = saleProducts.Should().Contain(p => p.ProductId == childId).Subject;
+        childSale.AvailableStock.Should().Be(200m);
+        childSale.PackingSize.Should().Be("50g");
+
+        using HttpResponseMessage byBarcode = await ApiTestClient.SendAsync(
+            client,
+            factory,
+            HttpMethod.Get,
+            $"/api/products/by-barcode/{parentBarcode}",
+            seed.TenantId,
+            seed.TerminalId);
+        byBarcode.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        SaleMasterDto? master =
+            await ApiTestClient.ReadJsonAsync<SaleMasterDto>(byBarcode, JsonOptions);
+        master.Should().NotBeNull();
+        master!.ProductId.Should().Be(parentId);
+        master.Children.Should().Contain(c => c.ProductId == childId && c.PackingSize == "50g");
+
+        using HttpResponseMessage mastersResponse = await ApiTestClient.SendAsync(
+            client,
+            factory,
+            HttpMethod.Get,
+            "/api/products/for-sale/masters",
+            seed.TenantId,
+            seed.TerminalId);
+        mastersResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        IReadOnlyList<SaleMasterDto>? masters =
+            await ApiTestClient.ReadJsonAsync<IReadOnlyList<SaleMasterDto>>(mastersResponse, JsonOptions);
+        masters.Should().Contain(m => m.ProductId == parentId && m.Children.Any(c => c.ProductId == childId));
     }
 
     [Fact]
@@ -316,6 +514,9 @@ public sealed class QuickReceiveControllerTests
                 BaseUnit = "PCS",
                 ConversionMultiplier = 1,
                 ShowOnWebshop = false,
+                StockQty = 10m,
+                CostPricePaisa = 10_000L,
+                RetailPricePaisa = SeedHelper.RetailPricePaisa,
                 CreatedAt = now,
                 UpdatedAt = now
             });

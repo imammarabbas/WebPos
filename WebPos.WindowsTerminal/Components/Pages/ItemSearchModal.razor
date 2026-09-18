@@ -1,0 +1,194 @@
+@using Common.Models
+@using System.Globalization
+
+@if (Visible)
+{
+    <div class="modal-backdrop" @onclick="Close">
+        <div class="sf-modal sf-search-modal" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="sf-modal-head">
+                <h2>Item Search · F2</h2>
+                <button type="button" class="link-btn" @onclick="Close">Close</button>
+            </div>
+            <input class="scan-input"
+                   type="search"
+                   placeholder="Name, barcode, SKU, or short code…"
+                   @ref="_input"
+                   @bind="_query"
+                   @bind:event="oninput"
+                   @onkeydown="OnKeyDown"
+                   autocomplete="off" />
+            <ul class="sf-search-list" role="listbox">
+                @foreach ((object hit, int i) in Hits.Select((h, i) => (h, i)))
+                {
+                    <li class="@(i == _highlight ? "active" : null)"
+                        role="option"
+                        @onclick="() => ChooseAsync(hit)">
+                        @if (hit is SalesProductDto p)
+                        {
+                            <strong>@p.Name</strong>
+                            <span>@DisplayProductMeta(p)</span>
+                        }
+                        else if (hit is SaleMasterDto m)
+                        {
+                            <strong>@m.Name</strong>
+                            <span>Master · @((m.Children?.Count) ?? 0) packing(s) · @m.ShortCode</span>
+                        }
+                    </li>
+                }
+            </ul>
+            @if (Hits.Count == 0 && _query.Trim().Length > 0)
+            {
+                <p class="muted">No matches.</p>
+            }
+            else if (_query.Trim().Length == 0)
+            {
+                <p class="muted">Type a name, barcode, SKU, or short code to search.</p>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public string InitialQuery { get; set; } = string.Empty;
+    [Parameter] public IReadOnlyList<SalesProductDto> Products { get; set; } = [];
+    [Parameter] public IReadOnlyList<SaleMasterDto> Masters { get; set; } = [];
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<SalesProductDto> OnProductSelected { get; set; }
+    [Parameter] public EventCallback<SaleMasterDto> OnMasterSelected { get; set; }
+
+    private ElementReference _input;
+    private string _query = string.Empty;
+    private int _highlight;
+    private bool _wasVisible;
+
+    private IReadOnlyList<object> Hits
+    {
+        get
+        {
+            string q = _query.Trim();
+            if (q.Length == 0)
+            {
+                return [];
+            }
+
+            List<object> list = [];
+            foreach (SaleMasterDto m in Masters
+                         .Where(m => MatchesMaster(m, q))
+                         .OrderBy(m => ExactMaster(m, q) ? 0 : 1)
+                         .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+                         .Take(8))
+            {
+                list.Add(m);
+            }
+
+            foreach (SalesProductDto p in Products
+                         .Where(p => MatchesProduct(p, q))
+                         .OrderBy(p => ExactProduct(p, q) ? 0 : 1)
+                         .ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+                         .Take(16 - list.Count))
+            {
+                list.Add(p);
+            }
+
+            return list;
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Visible && !_wasVisible)
+        {
+            _query = InitialQuery ?? string.Empty;
+            _highlight = 0;
+        }
+
+        _wasVisible = Visible;
+        await Task.CompletedTask;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Visible)
+        {
+            try { await _input.FocusAsync(); } catch { /* ignore */ }
+        }
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            await Close();
+            return;
+        }
+
+        if (e.Key == "ArrowDown")
+        {
+            _highlight = Math.Min(_highlight + 1, Math.Max(Hits.Count - 1, 0));
+            return;
+        }
+
+        if (e.Key == "ArrowUp")
+        {
+            _highlight = Math.Max(_highlight - 1, 0);
+            return;
+        }
+
+        if (e.Key == "Enter" && Hits.Count > 0)
+        {
+            int idx = Math.Clamp(_highlight, 0, Hits.Count - 1);
+            await ChooseAsync(Hits[idx]);
+        }
+    }
+
+    private async Task ChooseAsync(object hit)
+    {
+        if (hit is SaleMasterDto master)
+        {
+            await OnMasterSelected.InvokeAsync(master);
+            return;
+        }
+
+        if (hit is SalesProductDto product)
+        {
+            await OnProductSelected.InvokeAsync(product);
+        }
+    }
+
+    private async Task Close() => await OnClose.InvokeAsync();
+
+    private static bool MatchesProduct(SalesProductDto p, string q) =>
+        p.Name.Contains(q, StringComparison.OrdinalIgnoreCase)
+        || p.ShortCode.Contains(q, StringComparison.OrdinalIgnoreCase)
+        || p.Barcode.Contains(q, StringComparison.OrdinalIgnoreCase)
+        || p.Sku.Contains(q, StringComparison.OrdinalIgnoreCase);
+
+    private static bool MatchesMaster(SaleMasterDto m, string q) =>
+        m.Name.Contains(q, StringComparison.OrdinalIgnoreCase)
+        || m.ShortCode.Contains(q, StringComparison.OrdinalIgnoreCase)
+        || m.Barcode.Contains(q, StringComparison.OrdinalIgnoreCase)
+        || m.Sku.Contains(q, StringComparison.OrdinalIgnoreCase);
+
+    private static bool ExactProduct(SalesProductDto p, string q) =>
+        string.Equals(p.Name, q, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(p.ShortCode, q, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(p.Barcode, q, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(p.Sku, q, StringComparison.OrdinalIgnoreCase);
+
+    private static bool ExactMaster(SaleMasterDto m, string q) =>
+        string.Equals(m.Name, q, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(m.ShortCode, q, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(m.Barcode, q, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(m.Sku, q, StringComparison.OrdinalIgnoreCase);
+
+    private static string DisplayProductMeta(SalesProductDto p)
+    {
+        string code = !string.IsNullOrWhiteSpace(p.ShortCode) ? p.ShortCode : p.Barcode;
+        string pack = string.IsNullOrWhiteSpace(p.PackingSize) ? "" : $" · {p.PackingSize}";
+        return $"{code}{pack} · Rs {FormatRs(p.UnitPricePaisa)}";
+    }
+
+    private static string FormatRs(long paisa) =>
+        (paisa / 100m).ToString("N2", CultureInfo.InvariantCulture);
+}

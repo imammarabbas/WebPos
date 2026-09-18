@@ -21,9 +21,16 @@ public sealed class ProcurementController(IProcurementService procurementService
         [FromBody] RecordMilkCollectionRequest request,
         CancellationToken cancellationToken)
     {
-        RecordMilkCollectionResult result =
-            await _procurementService.RecordMilkCollectionAsync(request, cancellationToken);
-        return Ok(result);
+        try
+        {
+            RecordMilkCollectionResult result =
+                await _procurementService.RecordMilkCollectionAsync(request, cancellationToken);
+            return Ok(result);
+        }
+        catch (InsufficientCashBalanceException ex)
+        {
+            return BadRequest(new { error = ex.Message, code = "INSUFFICIENT_FUNDS" });
+        }
     }
 
     [HttpPost("supplier-payment")]
@@ -33,9 +40,20 @@ public sealed class ProcurementController(IProcurementService procurementService
         [FromBody] RecordSupplierPaymentRequest request,
         CancellationToken cancellationToken)
     {
-        RecordSupplierPaymentResult result =
-            await _procurementService.RecordSupplierPaymentAsync(request, cancellationToken);
-        return Ok(result);
+        try
+        {
+            RecordSupplierPaymentResult result =
+                await _procurementService.RecordSupplierPaymentAsync(request, cancellationToken);
+            return Ok(result);
+        }
+        catch (TillDiscrepancyException ex)
+        {
+            return BadRequest(new { error = ex.Message, code = "TILL_DISCREPANCY", gapPaisa = ex.GapPaisa });
+        }
+        catch (InsufficientCashBalanceException ex)
+        {
+            return BadRequest(new { error = ex.Message, code = "INSUFFICIENT_FUNDS" });
+        }
     }
 
     [HttpPost("customer-payment")]
@@ -45,8 +63,15 @@ public sealed class ProcurementController(IProcurementService procurementService
         [FromBody] RecordCustomerPaymentRequest request,
         CancellationToken cancellationToken)
     {
-        RecordCustomerPaymentResult result =
-            await _procurementService.RecordCustomerPaymentAsync(request, cancellationToken);
-        return Ok(result);
+        try
+        {
+            RecordCustomerPaymentResult result =
+                await _procurementService.RecordCustomerPaymentAsync(request, cancellationToken);
+            return Ok(result);
+        }
+        catch (InsufficientCashBalanceException ex)
+        {
+            return BadRequest(new { error = ex.Message, code = "INSUFFICIENT_FUNDS" });
+        }
     }
 }

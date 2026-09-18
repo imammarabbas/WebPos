@@ -23,7 +23,8 @@ using WebPos.Client.Sdk.Security;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Local override only for Development — must not override Docker Production (Server=postgres).
+// Development local file is optional. Re-add environment variables afterward so
+// ConnectionStrings__DefaultConnection (and Docker compose) always win over the file.
 if (builder.Environment.IsDevelopment())
 {
     builder.Configuration.AddJsonFile(
@@ -31,6 +32,29 @@ if (builder.Environment.IsDevelopment())
         optional: true,
         reloadOnChange: true);
 }
+
+builder.Configuration.AddEnvironmentVariables();
+
+static string FormatPostgresTarget(string? connectionString)
+{
+    if (string.IsNullOrWhiteSpace(connectionString))
+    {
+        return "(ConnectionStrings:DefaultConnection unset)";
+    }
+
+    try
+    {
+        var cs = new Npgsql.NpgsqlConnectionStringBuilder(connectionString);
+        return $"Host={cs.Host};Port={cs.Port};Database={cs.Database};Username={cs.Username};Password=***";
+    }
+    catch (Exception ex)
+    {
+        return $"(invalid connection string: {ex.Message})";
+    }
+}
+
+string? startupConnectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+Console.WriteLine($"[WebPos] Active Postgres target: {FormatPostgresTarget(startupConnectionString)}");
 
 // Fill missing Security:* values for local / docker-compose zero-config boots.
 WebPos.DevSecurityBootstrap.Apply(builder);
@@ -52,13 +76,15 @@ builder.Services.AddScoped<SyncSchemaVersionFilter>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ITenantService, HttpContextTenantService>();
 
-// --- Data (Scoped per request/circuit) ---
+// --- Data ---
+// Scoped DbContext remains for health checks / migrate / request-scoped API code.
+// Blazor-safe domain services use IDbContextFactory (+ ambient AsyncLocal in TransactionService).
 builder.Services.AddDbContext<WebPosDbContext>(options =>
     options.UseNpgsql(
         builder.Configuration.GetConnectionString("DefaultConnection"),
         npgsql => npgsql.MigrationsAssembly("WebPos")));
 
-// Scoped factory: each CreateDbContext() is a new instance (Blazor-safe concurrent reads).
+// Scoped factory: each CreateDbContext() is a new instance (Blazor-safe concurrent ops).
 builder.Services.AddDbContextFactory<WebPosDbContext>(options =>
     options.UseNpgsql(
         builder.Configuration.GetConnectionString("DefaultConnection"),
@@ -181,6 +207,9 @@ if (!app.Environment.IsEnvironment("Testing"))
     {
         if (context.Database.IsRelational())
         {
+            string? conn = app.Configuration.GetConnectionString("DefaultConnection");
+            string safeTarget = FormatPostgresTarget(conn);
+            app.Logger.LogInformation("Applying EF Core migrations to {PostgresTarget}", safeTarget);
             await context.Database.MigrateAsync();
             app.Logger.LogInformation(
                 "EF Core migrations applied (schema create/update is automatic — no backup.sql required).");
@@ -192,10 +221,22 @@ if (!app.Environment.IsEnvironment("Testing"))
     }
     catch (Exception ex)
     {
-        // Fail fast: an unmigrated or unreachable DB should not silently continue.
+        string? conn = app.Configuration.GetConnectionString("DefaultConnection");
+        string safeTarget = FormatPostgresTarget(conn);
+        bool authFailed = ex is Npgsql.PostgresException { SqlState: "28P01" }
+            || ex.InnerException is Npgsql.PostgresException { SqlState: "28P01" };
+
+        string hint = authFailed
+            ? "Password authentication failed (28P01). Align Password with POSTGRES_PASSWORD / " +
+              "ConnectionStrings__DefaultConnection, or reset the Docker volume: " +
+              "docker compose down -v && docker compose up -d postgres"
+            : "Ensure PostgreSQL is running and ConnectionStrings:DefaultConnection is reachable.";
+
         app.Logger.LogCritical(
             ex,
-            "Database migrate/seed failed. Fix the connection string / PostgreSQL service and restart.");
+            "Database migrate/seed failed for {PostgresTarget}. {Hint}",
+            safeTarget,
+            hint);
         throw;
     }
 }

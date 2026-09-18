@@ -1,37 +1,42 @@
 using Microsoft.EntityFrameworkCore;
 using WebPos.Core.Data;
 using WebPos.Core.Models;
+using WebPos.Core.Services;
 
 namespace WebPos.Core.Security;
 
 public class AuthService
 {
-    private readonly WebPosDbContext _context;
+    private readonly IDbContextFactory<WebPosDbContext> _dbFactory;
 
-    public AuthService(WebPosDbContext context)
+    public AuthService(IDbContextFactory<WebPosDbContext> dbFactory)
     {
-        _context = context ?? throw new ArgumentNullException(nameof(context));
+        _dbFactory = dbFactory ?? throw new ArgumentNullException(nameof(dbFactory));
     }
 
-    public async Task<User?> AuthenticateAsync(
+    public Task<User?> AuthenticateAsync(
         string username,
         string password,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
         {
-            return null;
+            return Task.FromResult<User?>(null);
         }
 
         string normalized = username.Trim();
-        List<User> candidates = await _context.Users
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .Include(u => u.Role)
-            .Where(u => u.IsActive && u.Username.ToLower() == normalized.ToLower())
-            .ToListAsync(cancellationToken);
+        return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
+        {
+            List<User> candidates = await context.Users
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Include(u => u.Role)
+                .Where(u => u.IsActive && u.Username.ToLower() == normalized.ToLower())
+                .ToListAsync(ct);
 
-        return candidates.FirstOrDefault(u =>
-            CryptoHelper.VerifyPassword(password, u.PasswordHash));
+            return candidates.FirstOrDefault(u =>
+                CryptoHelper.VerifyPassword(password, u.PasswordHash));
+        },
+        cancellationToken);
     }
 }

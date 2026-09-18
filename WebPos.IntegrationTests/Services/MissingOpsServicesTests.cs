@@ -83,9 +83,9 @@ public sealed class MissingOpsServicesTests
                 });
 
         result.TotalCreditDeductionPaisa.Should().Be(200_00);
-        ProductBatch batch = await harness.Context.ProductBatches
-            .SingleAsync(item => item.Id == batchId);
-        batch.CurrentQty.Should().Be(8m);
+        Product product = await harness.Context.Products
+            .SingleAsync(item => item.Id == productId);
+        product.StockQty.Should().Be(8m);
 
         Party supplier = await harness.Context.Parties.SingleAsync(party => party.Id == supplierId);
         supplier.CurrentBalancePaisa.Should().Be(800_00);
@@ -195,30 +195,35 @@ public sealed class MissingOpsServicesTests
             });
             await context.SaveChangesAsync();
 
-            var transactionService = new TransactionService(context);
+            IDbContextFactory<WebPosDbContext> dbFactory =
+                new TestDbContextFactory(options, tenantService);
+            var ambient = new AmbientDbContextAccessor();
+            var transactionService = new TransactionService(dbFactory);
             IPartyLedgerService partyLedgerService = new PartyLedgerService(
-                context,
+                dbFactory,
                 transactionService,
                 tenantService);
             // PartyService is constructed after validators in dedicated Party tests;
             // procurement harness uses a lightweight supplier resolver stub below.
             var partyService = new ProcurementSupplierPartyService(context, tenantService);
-            var cashAccountService = new CashAccountService(context, tenantService);
+            var cashAccountService = new CashAccountService(dbFactory, ambient, tenantService);
             return new ServiceHarness(
                 context,
                 new ProcurementService(
-                    context,
+                    dbFactory,
+                    ambient,
                     transactionService,
                     partyLedgerService,
                     partyService,
                     cashAccountService,
                     tenantService),
                 new PurchaseReturnService(
-                    context,
+                    dbFactory,
+                    ambient,
                     transactionService,
                     partyLedgerService,
                     tenantService),
-                new ShiftService(context, transactionService, tenantService),
+                new ShiftService(dbFactory, ambient, transactionService, tenantService, cashAccountService),
                 tenantId);
         }
 
@@ -336,6 +341,9 @@ public sealed class MissingOpsServicesTests
                 Brand = "WebPos",
                 BaseUnit = "PCS",
                 ConversionMultiplier = 1,
+                StockQty = 10m,
+                CostPricePaisa = 100_00,
+                RetailPricePaisa = 150_00,
                 CreatedAt = now,
                 UpdatedAt = now
             });
@@ -460,5 +468,12 @@ public sealed class MissingOpsServicesTests
         public Task<IReadOnlyList<WebPos.Core.Abstractions.PartyDto>> GetSuppliersAsync(
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
+    }
+
+    private sealed class TestDbContextFactory(
+        DbContextOptions<WebPosDbContext> options,
+        ITenantService tenant) : IDbContextFactory<WebPosDbContext>
+    {
+        public WebPosDbContext CreateDbContext() => new(options, tenant);
     }
 }

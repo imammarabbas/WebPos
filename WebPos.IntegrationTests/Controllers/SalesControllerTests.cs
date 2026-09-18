@@ -182,7 +182,6 @@ public sealed class SalesControllerTests
 
         product.Should().NotBeNull();
         product!.ProductId.Should().Be(seed.ProductId);
-        product.BatchId.Should().Be(seed.BatchId);
         product.Barcode.Should().Be(seed.Barcode);
         product.UnitPricePaisa.Should().Be(seed.UnitPricePaisa);
         product.AvailableStock.Should().Be(10m);

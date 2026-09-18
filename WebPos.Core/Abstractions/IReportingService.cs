@@ -120,6 +120,11 @@ public interface IReportingService
         BiDashboardQuery query,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<Common.Models.CashierSalesSummaryDto>> GetSalesByCashierAsync(
+        DateTimeOffset from,
+        DateTimeOffset to,
+        CancellationToken cancellationToken = default);
+
     Task<string> ExportExpenseReportCsvAsync(
         DateTimeOffset from,
         DateTimeOffset to,
