@@ -58,6 +58,9 @@ public static class PilotDataSeeder
     public static readonly Guid PilotCustomerId =
         Guid.Parse("00000000-0000-0000-0000-000000000501");
 
+    private static string PilotSecret(string? value, string fallback) =>
+        string.IsNullOrWhiteSpace(value) ? fallback : value;
+
     public static async Task SeedAsync(
         WebPosDbContext context,
         IPinHasher pinHasher,
@@ -72,12 +75,12 @@ public static class PilotDataSeeder
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
         Guid masterTenantId = TenantDefaults.MasterTenantId;
-        string adminPassword = configuration["Pilot:AdminPassword"] ?? "admin123";
-        string ownerPassword = configuration["Pilot:OwnerPassword"] ?? "ammar123";
-        string managerPin = configuration["Pilot:ManagerPin"] ?? "8642";
-        string ownerPin = configuration["Pilot:OwnerPin"] ?? "9753";
-        string cashierPin = configuration["Pilot:CashierPin"] ?? "2468";
-        string abcCashierPin = configuration["Pilot:AbcCashierPin"] ?? "1357";
+        string adminPassword = PilotSecret(configuration["Pilot:AdminPassword"], "admin123");
+        string ownerPassword = PilotSecret(configuration["Pilot:OwnerPassword"], "ammar123");
+        string managerPin = PilotSecret(configuration["Pilot:ManagerPin"], "8642");
+        string ownerPin = PilotSecret(configuration["Pilot:OwnerPin"], "9753");
+        string cashierPin = PilotSecret(configuration["Pilot:CashierPin"], "2468");
+        string abcCashierPin = PilotSecret(configuration["Pilot:AbcCashierPin"], "1357");
         string? pilotTerminalIdRaw = configuration["Pilot:TerminalId"];
         Guid pilotTerminalId = Guid.TryParse(pilotTerminalIdRaw, out Guid parsed)
             ? parsed
