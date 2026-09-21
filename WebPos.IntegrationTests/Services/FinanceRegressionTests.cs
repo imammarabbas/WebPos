@@ -60,7 +60,7 @@ public sealed class FinanceRegressionTests
     }
 
     [Fact]
-    public async Task Case03_AvailableCash_IsMinOfTillGlAndExpected()
+    public async Task Case03_AvailableCash_FollowsLiveDrawerExpected()
     {
         await using IntegrationTestScope scope = _fixture.CreateScope();
         (_, CashAccountDto till, CashierShift shift) = await SeedTillAsync(scope, 100_000L, 60_000L);

@@ -273,7 +273,31 @@ public sealed class CashTreasuryTests
     }
 
     [Fact]
-    public async Task SupplierPayment_TillAccountCode_WithoutShift_ShouldReject()
+    public async Task SupplierPayment_TillAccountCode_WithoutShift_AttachesOpenShift()
+    {
+        await using IntegrationTestScope scope = _fixture.CreateScope();
+        (SaleSeedData seed, CashAccountDto till, CashierShift shift) =
+            await SeedTillAsync(scope, glPaisa: 50_000L, drawerPaisa: 50_000L);
+        PartyDto supplier = await CreateSupplierAsync(scope);
+
+        await scope.ProcurementService.RecordSupplierPaymentAsync(
+            new RecordSupplierPaymentRequest
+            {
+                SupplierId = supplier.Id,
+                AmountPaisa = 1_000L,
+                PaymentMethod = "CASH",
+                ReferenceNo = $"TILL-{Guid.NewGuid():N}"[..18],
+                ShiftId = null,
+                AccountCode = till.AccountCode
+            });
+
+        await scope.DbContext.Entry(shift).ReloadAsync();
+        shift.ExpectedCashPaisa.Should().Be(49_000L);
+        (await scope.CashAccountService.GetAccountBalancePaisaAsync(till.Id)).Should().Be(49_000L);
+    }
+
+    [Fact]
+    public async Task SupplierPayment_FromOpeningFloat_ShouldPostWithoutPriorCashIn()
     {
         await using IntegrationTestScope scope = _fixture.CreateScope();
         SaleSeedData seed = await SeedHelper.SeedSalePrerequisitesAsync(scope.DbContext);
@@ -285,29 +309,35 @@ public sealed class CashTreasuryTests
         CashAccountDto till = await scope.CashAccountService.EnsureTillAccountsAsync(
             seed.TerminalId,
             "Pilot Till");
+        CashierShift shift = await scope.DbContext.CashierShifts
+            .SingleAsync(s => s.Id == seed.ShiftId);
+        shift.OpeningCashPaisa = 190_000L;
+        shift.ExpectedCashPaisa = 190_000L;
+        await scope.DbContext.SaveChangesAsync();
 
-        PartyDto supplier = await scope.PartyService.CreatePartyAsync(new CreatePartyRequest
+        CashSpendableBalanceDto spendable = await scope.CashAccountService.GetSpendableBalanceAsync(
+            till.Id,
+            shift.Id);
+        spendable.SpendablePaisa.Should().Be(190_000L);
+        spendable.GlBalancePaisa.Should().Be(0L);
+
+        PartyDto supplier = await CreateSupplierAsync(scope);
+        await scope.ProcurementService.RecordSupplierPaymentAsync(new RecordSupplierPaymentRequest
         {
-            Role = PartyTypes.Supplier,
-            Name = $"Sup-{Guid.NewGuid():N}"[..18],
-            PhoneNumber = $"03{Guid.NewGuid():N}"[..11],
-            Address = "Lahore",
-            CreditLimitPaisa = 0
+            SupplierId = supplier.Id,
+            AmountPaisa = 50_000L,
+            PaymentMethod = "CASH",
+            ReferenceNo = $"FLOAT-{Guid.NewGuid():N}"[..18],
+            ShiftId = seed.ShiftId,
+            CashAccountId = till.Id
         });
 
-        Func<Task> act = () => scope.ProcurementService.RecordSupplierPaymentAsync(
-            new RecordSupplierPaymentRequest
-            {
-                SupplierId = supplier.Id,
-                AmountPaisa = 1_000L,
-                PaymentMethod = "CASH",
-                ReferenceNo = $"TILL-{Guid.NewGuid():N}"[..18],
-                ShiftId = null,
-                AccountCode = till.AccountCode
-            });
+        await scope.DbContext.Entry(shift).ReloadAsync();
+        shift.ExpectedCashPaisa.Should().Be(140_000L);
+        (await scope.CashAccountService.GetAccountBalancePaisaAsync(till.Id)).Should().Be(0L);
 
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*open shift*till*");
+        PartyDto reloaded = await scope.PartyService.GetSupplierAsync(supplier.Id);
+        reloaded.CurrentBalancePaisa.Should().Be(-50_000L);
     }
 
     [Fact]
@@ -693,8 +723,8 @@ public sealed class CashTreasuryTests
 
         long glAfter = await scope.CashAccountService.GetAccountBalancePaisaAsync(till.Id);
         (glAfter - glBefore).Should().Be(cashIn);
-        // Available = min(GL 70k, ExpectedCash 100k)
-        CashSpendable.ForTill(glAfter, shift.ExpectedCashPaisa).Should().Be(70_000L);
+        // Available follows the live drawer (100k), not min(GL, drawer).
+        CashSpendable.ForTill(glAfter, shift.ExpectedCashPaisa).Should().Be(100_000L);
 
         List<GeneralLedgerEntry> legs = await scope.DbContext.GeneralLedgerEntries.AsNoTracking()
             .Where(e => e.TransactionType == "CASH_IN" && e.TransactionGroupId == result.TransactionGroupId)

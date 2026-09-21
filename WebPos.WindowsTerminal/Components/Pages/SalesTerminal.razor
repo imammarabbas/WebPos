@@ -123,22 +123,25 @@
                             {
                                 if (row < cartLines.Count)
                                 {
-                                    CartLine line = cartLines[row];
-                                    bool selected = row == _selectedLineIndex;
-                                    <tr class="@(selected ? "selected" : null) @(row % 2 == 1 ? "zebra" : null)" @onclick="() => _selectedLineIndex = row">
-                                        <td class="col-sr">@(row + 1)</td>
+                                    int index = row;
+                                    CartLine line = cartLines[index];
+                                    bool selected = index == _selectedLineIndex;
+                                    <tr class="@(selected ? "selected" : null) @(index % 2 == 1 ? "zebra" : null)"
+                                        @onmousedown="() => SelectLine(index)"
+                                        @onclick="() => SelectLine(index)">
+                                        <td class="col-sr">@(index + 1)</td>
                                         <td class="col-code">@ItemCode(line.Product)</td>
                                         <td class="col-desc">@(line.Product.Name ?? string.Empty)</td>
                                         <td class="col-pack">@(string.IsNullOrWhiteSpace(line.Product.PackingSize) ? "—" : line.Product.PackingSize)</td>
                                         <td class="col-qty">
-                                            <input id="@($"pos-qty-{row}")"
+                                            <input id="@($"pos-qty-{index}")"
                                                    class="sf-cell-input"
                                                    type="text"
                                                    inputmode="decimal"
                                                    value="@GetQtyText(line)"
                                                    @oninput="e => OnQtyChanged(line, e)"
-                                                   @onfocus='() => OnLineFieldFocus(row, "qty")'
-                                                   @onkeydown="e => OnQtyKeyDown(e, row)"
+                                                   @onfocus='() => OnLineFieldFocus(index, "qty")'
+                                                   @onkeydown="e => OnQtyKeyDown(e, index)"
                                                    disabled="@_isBusy" />
                                         </td>
                                         <td class="col-price">
@@ -147,7 +150,7 @@
                                                    inputmode="decimal"
                                                    value="@GetPriceText(line)"
                                                    @oninput="e => OnPriceChanged(line, e)"
-                                                   @onfocus='() => OnLineFieldFocus(row, "price")'
+                                                   @onfocus='() => OnLineFieldFocus(index, "price")'
                                            disabled="@_isBusy" />
                                         </td>
                                         <td class="col-total">
@@ -156,7 +159,7 @@
                                                    inputmode="decimal"
                                                    value="@GetTotalText(line)"
                                                    @oninput="e => OnTotalChanged(line, e)"
-                                                   @onfocus='() => OnLineFieldFocus(row, "total")'
+                                                   @onfocus='() => OnLineFieldFocus(index, "total")'
                                            disabled="@_isBusy" />
                                         </td>
                                         <td class="col-act">
@@ -164,8 +167,9 @@
                                                     class="sp-row-del"
                                                     title="Remove line"
                                                     disabled="@_isBusy"
-                                                    @onclick="() => DeleteLineAt(row)"
-                                                    @onclick:stopPropagation="true">
+                                                    @onclick="() => DeleteLineAt(index)"
+                                                    @onclick:stopPropagation="true"
+                                                    @onmousedown:stopPropagation="true">
                                                 🗑
                                             </button>
                                         </td>
@@ -1256,10 +1260,13 @@
 
         if (e.Key == "ArrowDown")
         {
-            if (ScanHits.Count > 0)
+            if (_showScanDropdown && ScanHits.Count > 0)
             {
-                _showScanDropdown = true;
                 _scanHighlight = Math.Min(_scanHighlight + 1, ScanHits.Count - 1);
+            }
+            else
+            {
+                MoveSelectedLine(1);
             }
 
             return;
@@ -1267,7 +1274,21 @@
 
         if (e.Key == "ArrowUp")
         {
-            _scanHighlight = Math.Max(_scanHighlight - 1, 0);
+            if (_showScanDropdown && ScanHits.Count > 0)
+            {
+                _scanHighlight = Math.Max(_scanHighlight - 1, 0);
+            }
+            else
+            {
+                MoveSelectedLine(-1);
+            }
+
+            return;
+        }
+
+        if (e.Key == "Delete")
+        {
+            DeleteSelectedLine();
             return;
         }
 
@@ -1438,6 +1459,34 @@
         }
     }
 
+    private void SelectLine(int index)
+    {
+        if (index < 0 || index >= CartService.Lines.Count)
+        {
+            return;
+        }
+
+        _selectedLineIndex = index;
+    }
+
+    private void MoveSelectedLine(int delta)
+    {
+        int count = CartService.Lines.Count;
+        if (count == 0)
+        {
+            return;
+        }
+
+        if (delta > 0)
+        {
+            _selectedLineIndex = Math.Min(count - 1, Math.Max(0, _selectedLineIndex) + 1);
+        }
+        else
+        {
+            _selectedLineIndex = Math.Max(0, (_selectedLineIndex < 0 ? count : _selectedLineIndex) - 1);
+        }
+    }
+
     private void DeleteSelectedLine()
     {
         DeleteLineAt(_selectedLineIndex);
@@ -1456,12 +1505,15 @@
 
     private void OnLineFieldFocus(int row, string field)
     {
-        _selectedLineIndex = row;
+        SelectLine(row);
         _focusedField = field;
     }
 
     private bool IsEditableFieldFocused =>
         _focusedField is "search" or "qty" or "price" or "total" or "discount" or "payment";
+
+    private bool IsLineEditorFocused =>
+        _focusedField is "qty" or "price" or "total" or "discount" or "payment";
 
     private string GetTotalText(CartLine line) =>
         _totalText.TryGetValue(line.Product.ProductId, out string? text)
@@ -2209,25 +2261,17 @@
                 return;
             }
 
-            int count = CartService.Lines.Count;
-            if (count == 0)
-            {
-                return;
-            }
-
-            if (e.Key == "ArrowDown")
-            {
-                _selectedLineIndex = Math.Min(count - 1, Math.Max(0, _selectedLineIndex) + 1);
-            }
-            else
-            {
-                _selectedLineIndex = Math.Max(0, (_selectedLineIndex < 0 ? count : _selectedLineIndex) - 1);
-            }
-
+            MoveSelectedLine(e.Key == "ArrowDown" ? 1 : -1);
             return;
         }
 
-        if ((e.Key is "Delete" or "Backspace") && !IsEditableFieldFocused)
+        if (e.Key == "Delete" && !IsLineEditorFocused)
+        {
+            DeleteSelectedLine();
+            return;
+        }
+
+        if (e.Key == "Backspace" && !IsEditableFieldFocused)
         {
             DeleteSelectedLine();
             return;

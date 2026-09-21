@@ -2357,7 +2357,16 @@
 }
 
 .sp-grid tbody tr.selected {
-    background: #dbeafe;
+    background: #93c5fd;
+    box-shadow: inset 3px 0 0 #1d4ed8;
+}
+
+.sp-grid tbody tr.selected td.col-desc {
+    font-weight: 700;
+}
+
+.sp-grid tbody tr.selected.zebra {
+    background: #bfdbfe;
 }
 
 .sp-grid tbody tr.sp-empty-row td {
