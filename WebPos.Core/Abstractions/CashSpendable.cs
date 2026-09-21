@@ -78,8 +78,16 @@ public static class CashSpendable
     public static long ForNonTill(long glBalancePaisa) =>
         Math.Max(0L, glBalancePaisa);
 
-    public static long ForTill(long glBalancePaisa, long expectedCashPaisa) =>
-        Math.Max(0L, Math.Min(glBalancePaisa, expectedCashPaisa));
+    /// <summary>
+    /// Live till spendable follows the physical drawer trail
+    /// (Opening + POS sales + injections − payouts), not min(GL, drawer).
+    /// GL is still booked on outflow so <c>balance_paisa</c> never goes negative.
+    /// </summary>
+    public static long ForTill(long glBalancePaisa, long expectedCashPaisa)
+    {
+        _ = glBalancePaisa;
+        return Math.Max(0L, expectedCashPaisa);
+    }
 
     /// <summary>
     /// Validates an outflow against Available/spendable cash.

@@ -69,6 +69,7 @@
     [Parameter] public bool Disabled { get; set; }
     [Parameter] public string Placeholder { get; set; } = "Type name, SKU, barcode, or code…";
     [Parameter] public string? InputId { get; set; }
+    [Parameter] public EventCallback OnFocused { get; set; }
 
     private readonly List<ProductAdminDto> _hits = [];
     private string _query = string.Empty;
@@ -116,6 +117,11 @@
     private async Task OnFocus()
     {
         _open = true;
+        if (OnFocused.HasDelegate)
+        {
+            await OnFocused.InvokeAsync();
+        }
+
         if (_hits.Count == 0 && _query.Trim().Length >= 1)
         {
             await DebouncedSearchAsync();

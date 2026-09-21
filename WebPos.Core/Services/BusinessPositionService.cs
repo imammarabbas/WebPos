@@ -54,6 +54,8 @@ public sealed class BusinessPositionService : IBusinessPositionService
         long cashIn = 0;
         long cashOut = 0;
         long unrecordedPhysical = 0;
+        long posCashSales = 0;
+        long supplierPayouts = 0;
 
         await DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
@@ -77,6 +79,31 @@ public sealed class BusinessPositionService : IBusinessPositionService
                     && m.CreatedAt >= query.From
                     && m.CreatedAt <= query.To)
                 .SumAsync(m => (long?)m.AmountPaisa, ct) ?? 0L;
+
+            var periodGl = await context.GeneralLedgerEntries.AsNoTracking()
+                .Where(e =>
+                    e.TenantId == tenantId
+                    && e.CreatedAt >= query.From
+                    && e.CreatedAt <= query.To)
+                .Select(e => new
+                {
+                    e.TransactionType,
+                    e.AccountCode,
+                    e.DebitPaisa,
+                    e.CreditPaisa
+                })
+                .ToListAsync(ct);
+
+            posCashSales = periodGl
+                .Where(e =>
+                    string.Equals(e.TransactionType, "SALE", StringComparison.OrdinalIgnoreCase)
+                    && LedgerAccounts.IsCashAccount(e.AccountCode))
+                .Sum(e => e.DebitPaisa - e.CreditPaisa);
+            supplierPayouts = periodGl
+                .Where(e =>
+                    string.Equals(e.TransactionType, "SUPPLIER_PAYMENT", StringComparison.OrdinalIgnoreCase)
+                    && e.CreditPaisa > 0)
+                .Sum(e => e.CreditPaisa);
 
             foreach (CashAccountCardDto till in cashNow.Accounts.Where(a =>
                          a.Account.Type == CashAccountType.Till && a.Account.IsActive))
@@ -113,7 +140,9 @@ public sealed class BusinessPositionService : IBusinessPositionService
             OwnerCapitalPaisa = ownerCapital,
             LoanOutstandingPaisa = loanOutstanding,
             CashInPaisa = cashIn,
-            CashOutPaisa = cashOut
+            CashOutPaisa = cashOut,
+            PosCashSalesPaisa = posCashSales,
+            SupplierPayoutsPaisa = supplierPayouts
         };
     }
 

@@ -177,7 +177,9 @@
     private readonly List<OpenShiftDto> _openShifts = [];
     private readonly List<OpenSlipRow> _openSlips = [];
     private readonly List<CashAccountDto> _fundingAccounts = [];
+    private readonly List<CashAccountCardDto> _fundingCards = [];
     private readonly Dictionary<string, long> _fundingSpendablePaisa = new(StringComparer.OrdinalIgnoreCase);
+    private CashBalancesSummaryDto? _cashSummary;
 
     private Guid? _partyId;
     private string _payKind = "PAYMENT"; // PAYMENT | ADVANCE | ADJUSTMENT
@@ -213,6 +215,9 @@
             && a.Type == CashAccountType.Till)
         || _fundingAccountCode.StartsWith("CASH:TILL:", StringComparison.OrdinalIgnoreCase);
     private bool ShowsOpenShiftPicker => ShowsFundingSource && IsTillFunding;
+    private CashAccountCardDto? SelectedFundingCard =>
+        _fundingCards.FirstOrDefault(c =>
+            c.Account.AccountCode.Equals(_fundingAccountCode, StringComparison.OrdinalIgnoreCase));
 
     private IEnumerable<PartyDto> FilteredManageParties =>
         string.IsNullOrWhiteSpace(_partyFilter)
@@ -249,6 +254,35 @@
         <div class="pp-pay-split">
             <div class="mm-card">
                 <h2>@(IsCustomerContext ? "Receive payment" : "Pay supplier")</h2>
+                @if (!IsCustomerContext && _cashSummary is not null)
+                {
+                    <div class="cm-trail" aria-label="Cash trail">
+                        <div class="cm-trail-step">
+                            <span>Opening float</span>
+                            <strong>Rs @FormatRs(_cashSummary.TrailOpeningFloatPaisa)</strong>
+                        </div>
+                        <span class="cm-trail-op">+</span>
+                        <div class="cm-trail-step">
+                            <span>POS sales</span>
+                            <strong>Rs @FormatRs(_cashSummary.TrailPosSalesPaisa)</strong>
+                        </div>
+                        <span class="cm-trail-op">+</span>
+                        <div class="cm-trail-step">
+                            <span>Manual in / overage</span>
+                            <strong>Rs @FormatRs(_cashSummary.TrailManualInjectionsPaisa)</strong>
+                        </div>
+                        <span class="cm-trail-op">−</span>
+                        <div class="cm-trail-step">
+                            <span>Payouts / expenses</span>
+                            <strong>Rs @FormatRs(_cashSummary.TrailPayoutsPaisa)</strong>
+                        </div>
+                        <span class="cm-trail-op">=</span>
+                        <div class="cm-trail-step net">
+                            <span>Net available</span>
+                            <strong>Rs @FormatRs(_cashSummary.TrailNetAvailablePaisa)</strong>
+                        </div>
+                    </div>
+                }
                 <div class="mm-form-grid">
                     <div class="mm-field full">
                         <label>Party</label>
@@ -299,20 +333,56 @@
                     @if (ShowsFundingSource)
                     {
                         <div class="mm-field full">
-                            <label>Funding Source</label>
-                            <InputSelect @bind-Value="_fundingAccountCode" @bind-Value:after="OnFundingChanged">
-                                @foreach (CashAccountDto account in _fundingAccounts)
+                            <label>Funding source</label>
+                            <div class="pp-fund-grid">
+                                @foreach (CashAccountCardDto card in _fundingCards)
                                 {
-                                    <option value="@account.AccountCode">
-                                        @FormatFundingLabel(account, _fundingSpendablePaisa)
+                                    long spendable = FundingSpendable(card);
+                                    bool selected = card.Account.AccountCode.Equals(
+                                        _fundingAccountCode,
+                                        StringComparison.OrdinalIgnoreCase);
+                                    <button type="button"
+                                            class="pp-fund-card @(selected ? "selected" : null) @(card.HasOpenShift ? "live" : null)"
+                                            @onclick="() => SelectFunding(card)">
+                                        <div class="pp-fund-name">
+                                            @(card.Account.Type == CashAccountType.Till
+                                                ? $"Till — {card.Account.TerminalName ?? card.Account.Name}"
+                                                : card.Account.Name)
+                                        </div>
+                                        <div class="pp-fund-amt">
+                                            @(card.Account.Type == CashAccountType.Till && !card.HasOpenShift
+                                                ? "Open a shift to spend"
+                                                : $"Rs {FormatRs(spendable)}")
+                                        </div>
+                                        <div class="pp-fund-meta">
+                                            @(card.HasOpenShift ? "Live drawer" : card.Account.Type == CashAccountType.Till ? "Open a shift to spend" : "Ledger balance")
+                                        </div>
+                                    </button>
+                                }
+                            </div>
+                            <InputSelect @bind-Value="_fundingAccountCode" @bind-Value:after="OnFundingChanged">
+                                @foreach (CashAccountCardDto card in _fundingCards)
+                                {
+                                    <option value="@card.Account.AccountCode">
+                                        @FormatFundingLabel(card)
                                     </option>
                                 }
                             </InputSelect>
                             <p class="mm-muted" style="margin:0.35rem 0 0;font-size:0.85rem;">
                                 @(IsTillFunding
-                                    ? "Till payouts use physical drawer cash (min of ledger and drawer). Open shift required."
-                                    : "Treasury payouts use account ledger balance; no open shift needed.")
+                                    ? "Till payouts use physical drawer cash (opening float + POS sales + cash in − payouts). Open shift is attached automatically."
+                                    : "Treasury payouts use the account ledger balance; no open shift needed.")
                             </p>
+                            @if (SelectedFundingCard?.Trail is CashMoneyTrailDto trail)
+                            {
+                                <p class="pp-fund-trail">
+                                    Opening @FormatRs(trail.OpeningFloatPaisa)
+                                    + sales @FormatRs(trail.PosSalesPaisa)
+                                    + in @FormatRs(trail.ManualInjectionsPaisa)
+                                    − out @FormatRs(trail.PayoutsPaisa)
+                                    = <strong>Rs @FormatRs(trail.NetAvailablePaisa)</strong>
+                                </p>
+                            }
                         </div>
                     }
 
@@ -571,26 +641,20 @@
             _openShifts.Clear();
             _openShifts.AddRange(await ShiftService.ListOpenShiftsAsync());
             _fundingAccounts.Clear();
+            _fundingCards.Clear();
             _fundingSpendablePaisa.Clear();
-            IReadOnlyList<CashAccountDto> allAccounts = await CashAccounts.ListAsync();
-            _fundingAccounts.AddRange(
-                allAccounts
-                    .Where(a => a.IsActive)
-                    .OrderBy(a => a.Type == CashAccountType.Till ? 0 : 1)
-                    .ThenBy(a => a.SortOrder)
-                    .ThenBy(a => a.Name));
-
-            foreach (CashAccountDto account in _fundingAccounts)
+            _cashSummary = await CashAccounts.GetBalancesSummaryAsync();
+            IReadOnlyList<CashAccountCardDto> cards = _cashSummary.Accounts
+                .Where(a => a.Account.IsActive)
+                .OrderBy(a => a.Account.Type == CashAccountType.Till ? 0 : 1)
+                .ThenBy(a => a.Account.SortOrder)
+                .ThenBy(a => a.Account.Name)
+                .ToList();
+            _fundingCards.AddRange(cards);
+            foreach (CashAccountCardDto card in cards)
             {
-                try
-                {
-                    CashSpendableBalanceDto spendable = await CashAccounts.GetSpendableBalanceAsync(account.Id);
-                    _fundingSpendablePaisa[account.AccountCode] = spendable.SpendablePaisa;
-                }
-                catch
-                {
-                    /* best-effort hint */
-                }
+                _fundingAccounts.Add(card.Account);
+                _fundingSpendablePaisa[card.Account.AccountCode] = FundingSpendable(card);
             }
 
             PreferActiveTillForCash();
@@ -681,6 +745,22 @@
 
         PreferActiveTillForCash();
         OnFundingChanged();
+    }
+
+    private void SelectFunding(CashAccountCardDto card)
+    {
+        _fundingAccountCode = card.Account.AccountCode;
+        OnFundingChanged();
+    }
+
+    private static long FundingSpendable(CashAccountCardDto card)
+    {
+        if (card.Account.Type == CashAccountType.Till && !card.HasOpenShift)
+        {
+            return 0L;
+        }
+
+        return card.SpendablePaisa;
     }
 
     private void OnFundingChanged()
@@ -867,15 +947,6 @@
                 return;
             }
 
-            if (_payKind == "PAYMENT"
-                && ShowsFundingSource
-                && _fundingSpendablePaisa.TryGetValue(_fundingAccountCode, out long available)
-                && amountPaisa > available)
-            {
-                _error = InsufficientCashBalanceException.StandardMessage;
-                return;
-            }
-
             if (_payKind == "ADJUSTMENT")
             {
                 string notes = string.IsNullOrWhiteSpace(_notes) ? "Adjustment" : _notes.Trim();
@@ -905,7 +976,12 @@
 
                     if (IsTillFunding && !Guid.TryParse(_selectedShiftId, out _))
                     {
-                        _error = "Select an open till/shift for till-funded payments.";
+                        OnFundingChanged();
+                    }
+
+                    if (IsTillFunding && !Guid.TryParse(_selectedShiftId, out _))
+                    {
+                        _error = "No open till/shift for this cash account. Use Owner / Safe or open a shift.";
                         return;
                     }
                 }
@@ -1165,10 +1241,9 @@
 
     private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2", CultureInfo.InvariantCulture);
 
-    private static string FormatFundingLabel(
-        CashAccountDto account,
-        IReadOnlyDictionary<string, long> spendableByCode)
+    private static string FormatFundingLabel(CashAccountCardDto card)
     {
+        CashAccountDto account = card.Account;
         string name;
         if (account.Type == CashAccountType.Till)
         {
@@ -1182,12 +1257,12 @@
             name = account.Name;
         }
 
-        if (spendableByCode.TryGetValue(account.AccountCode, out long spendable))
+        if (account.Type == CashAccountType.Till && !card.HasOpenShift)
         {
-            return $"{name} — Available Rs {FormatRs(spendable)}";
+            return $"{name} — Open a shift to spend";
         }
 
-        return name;
+        return $"{name} — Spendable Rs {FormatRs(card.SpendablePaisa)}";
     }
 
     private static string FormatShift(OpenShiftDto s) =>

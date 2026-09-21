@@ -72,12 +72,28 @@ public sealed class CashAccountCardDto
 
     public bool HasOpenShift => OpenShiftId is not null;
 
-    /// <summary>Available to spend = min(GL, drawer) when live; else GL.</summary>
+    /// <summary>Available to spend = live drawer (ExpectedCash) when a shift is open; else GL.</summary>
     public long SpendablePaisa { get; init; }
 
     public long UnreconciledCashInPaisa { get; init; }
 
     public long UnreconciledCashOutPaisa { get; init; }
+
+    /// <summary>Opening + POS sales + injections − payouts when an OPEN shift exists.</summary>
+    public CashMoneyTrailDto? Trail { get; init; }
+}
+
+public sealed class CashMoneyTrailDto
+{
+    public long OpeningFloatPaisa { get; init; }
+
+    public long PosSalesPaisa { get; init; }
+
+    public long ManualInjectionsPaisa { get; init; }
+
+    public long PayoutsPaisa { get; init; }
+
+    public long NetAvailablePaisa { get; init; }
 }
 
 public sealed class CashBalancesSummaryDto
@@ -95,6 +111,16 @@ public sealed class CashBalancesSummaryDto
     public long InMobilePaisa { get; init; }
 
     public long InOwnerPaisa { get; init; }
+
+    public long TrailOpeningFloatPaisa { get; init; }
+
+    public long TrailPosSalesPaisa { get; init; }
+
+    public long TrailManualInjectionsPaisa { get; init; }
+
+    public long TrailPayoutsPaisa { get; init; }
+
+    public long TrailNetAvailablePaisa { get; init; }
 }
 
 public sealed class CashSpendableBalanceDto
@@ -160,6 +186,15 @@ public sealed class CashAccountLedgerEntryDto
     public long CreditPaisa { get; init; }
 
     public long RunningBalancePaisa { get; init; }
+
+    public required string Source { get; init; }
+
+    public string? UserName { get; init; }
+
+    public string? ShiftLabel { get; init; }
+
+    /// <summary>Posted for normal entries; Graceful for auto-recognized physical float.</summary>
+    public required string Status { get; init; }
 }
 
 public sealed class CashAccountLedgerDto
@@ -212,7 +247,7 @@ public interface ICashAccountService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Spendable cash for an account: GL for non-till; min(GL, open-shift ExpectedCash) for till.
+    /// Spendable cash for an account: GL for non-till; live drawer ExpectedCash for an open till.
     /// </summary>
     Task<CashSpendableBalanceDto> GetSpendableBalanceAsync(
         Guid accountId,

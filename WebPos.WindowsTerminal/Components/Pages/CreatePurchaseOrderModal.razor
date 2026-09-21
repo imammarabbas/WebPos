@@ -45,7 +45,7 @@
                 <div class="cpo-meta po-card" style="margin:0;box-shadow:none;">
                     <label class="cpo-field">
                         <span>Supplier</span>
-                        <select @bind="_supplierIdText" disabled="@_busy">
+                        <select @bind="_supplierIdText" disabled="@_busy" @onfocus='() => _focusedField = "meta"'>
                             <option value="">— Select —</option>
                             @foreach (PartyDto s in _suppliers)
                             {
@@ -56,7 +56,7 @@
                     <label class="cpo-field">
                         <span>Purchase Order Nr</span>
                         <div class="cpo-invoice-row">
-                            <input @bind="_invoiceNo" @bind:event="oninput" disabled="@_busy" placeholder="e.g. 140926-003" />
+                            <input @bind="_invoiceNo" @bind:event="oninput" disabled="@_busy" placeholder="e.g. 140926-003" @onfocus='() => _focusedField = "meta"' />
                             @if (!IsEditing)
                             {
                                 <button type="button" class="cpo-auto-btn" disabled="@_busy" @onclick="GenerateInvoiceNoAsync">Auto</button>
@@ -65,11 +65,11 @@
                     </label>
                     <label class="cpo-field">
                         <span>Purchase Date</span>
-                        <input type="date" @bind="_purchaseDate" disabled="@_busy" />
+                        <input type="date" @bind="_purchaseDate" disabled="@_busy" @onfocus='() => _focusedField = "meta"' />
                     </label>
                     <label class="cpo-field">
                         <span>Discount (Rs)</span>
-                        <input type="number" step="0.01" min="0" @bind="_discountRs" disabled="@_busy" />
+                        <input type="number" step="0.01" min="0" @bind="_discountRs" disabled="@_busy" @onfocus='() => _focusedField = "meta"' />
                     </label>
                 </div>
 
@@ -83,7 +83,9 @@
                                value="@_scanText"
                                disabled="@_busy"
                                @oninput="OnScanInput"
-                               @onkeydown="OnScanKeyDown" />
+                               @onkeydown="OnScanKeyDown"
+                               @onfocus="OnScanFocus"
+                               @onblur="OnScanBlur" />
                         <span class="cpo-search-icon" aria-hidden="true"></span>
                         @if (_hits.Count > 0 && !string.IsNullOrWhiteSpace(_scanText))
                         {
@@ -139,7 +141,8 @@
                                         PoLine line = _lines[index];
                                         decimal purchaseTotal = line.Quantity * line.CostRs;
                                         decimal retailTotal = line.Quantity * line.RetailRs;
-                                        <tr class="@(row % 2 == 1 ? "zebra" : null)">
+                                        <tr class="@(index == _selectedLineIndex ? "selected" : null) @(row % 2 == 1 ? "zebra" : null)"
+                                            @onclick="() => _selectedLineIndex = index">
                                             <td class="col-sr">@(index + 1)</td>
                                             <td class="col-desc" title="@($"{line.ProductName} · {line.ItemCode}")">
                                                 <strong>@line.ProductName</strong>
@@ -154,6 +157,7 @@
                                                        value="@FormatQty(line.Quantity)"
                                                        disabled="@_busy"
                                                        @onchange="e => UpdateQty(index, e)"
+                                                       @onfocus='() => OnLineFieldFocus(index, "qty")'
                                                        @onkeydown="e => OnQtyKeyDown(index, e)" />
                                             </td>
                                             <td class="col-price">
@@ -162,6 +166,7 @@
                                                        inputmode="decimal"
                                                        value="@FormatQty(line.CostRs)"
                                                        disabled="@_busy"
+                                                       @onfocus='() => OnLineFieldFocus(index, "price")'
                                                        @onchange="e => UpdateCost(index, e)" />
                                             </td>
                                             <td class="col-price">
@@ -170,12 +175,26 @@
                                                        inputmode="decimal"
                                                        value="@FormatQty(line.RetailRs)"
                                                        disabled="@_busy"
+                                                       @onfocus='() => OnLineFieldFocus(index, "retail")'
                                                        @onchange="e => UpdateRetail(index, e)" />
                                             </td>
-                                            <td class="col-amt">@purchaseTotal.ToString("N2")</td>
+                                            <td class="col-amt">
+                                                <input class="cpo-cell-input"
+                                                       type="text"
+                                                       inputmode="decimal"
+                                                       value="@GetPurchaseTotalText(index, purchaseTotal)"
+                                                       disabled="@_busy"
+                                                       @onfocus='() => OnLineFieldFocus(index, "total")'
+                                                       @oninput="e => UpdatePurchaseTotal(index, e)" />
+                                            </td>
                                             <td class="col-amt">@retailTotal.ToString("N2")</td>
                                             <td class="col-act">
-                                                <button type="button" class="cpo-remove" disabled="@_busy" @onclick="() => RemoveLine(index)" title="Remove">✕</button>
+                                                <button type="button"
+                                                        class="cpo-remove"
+                                                        disabled="@_busy"
+                                                        @onclick="() => RemoveLine(index)"
+                                                        @onclick:stopPropagation="true"
+                                                        title="Remove">🗑</button>
                                             </td>
                                         </tr>
                                     }
@@ -224,7 +243,7 @@
 
                 <label class="cpo-remarks">
                     <span>Remarks</span>
-                    <input type="text" @bind="_remarks" @bind:event="oninput" disabled="@_busy" placeholder="Optional notes…" />
+                    <input type="text" @bind="_remarks" @bind:event="oninput" disabled="@_busy" placeholder="Optional notes…" @onfocus='() => _focusedField = "meta"' />
                 </label>
 
                 <div class="cpo-actions" role="toolbar" aria-label="Purchase order actions">
@@ -311,6 +330,9 @@
     private int _searchVersion;
     private CancellationTokenSource? _searchCts;
     private bool _focusScan;
+    private int _selectedLineIndex = -1;
+    private string? _focusedField;
+    private readonly Dictionary<int, string> _totalText = [];
 
     public bool IsEditing => EditingPurchaseOrderId is Guid id && id != Guid.Empty;
 
@@ -403,6 +425,18 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (firstRender)
+        {
+            try
+            {
+                await Js.InvokeVoidAsync("webPosBindCtrlK");
+            }
+            catch
+            {
+                /* ignore until DOM ready */
+            }
+        }
+
         if (_focusScan)
         {
             _focusScan = false;
@@ -445,6 +479,8 @@
     private void ApplyDetail(PurchaseOrderDetailDto detail)
     {
         _lines.Clear();
+        _totalText.Clear();
+        _selectedLineIndex = -1;
         _supplierIdText = detail.SupplierId.ToString();
         _invoiceNo = detail.SupplierInvoiceNo;
         _purchaseDate = detail.CreatedAt.ToLocalTime().Date;
@@ -526,10 +562,79 @@
         await DebouncedSearchAsync();
     }
 
+    private void OnScanFocus() => _focusedField = "search";
+
+    private void OnScanBlur()
+    {
+        if (_focusedField == "search")
+        {
+            _focusedField = null;
+        }
+    }
+
+    private void OnLineFieldFocus(int row, string field)
+    {
+        _selectedLineIndex = row;
+        _focusedField = field;
+    }
+
+    private bool IsEditableFieldFocused =>
+        _focusedField is "search" or "qty" or "price" or "retail" or "total" or "meta";
+
+    private string GetPurchaseTotalText(int index, decimal purchaseTotal) =>
+        _totalText.TryGetValue(index, out string? text)
+            ? text
+            : purchaseTotal.ToString("N2");
+
+    private void UpdatePurchaseTotal(int index, ChangeEventArgs e)
+    {
+        if (index < 0 || index >= _lines.Count)
+        {
+            return;
+        }
+
+        string raw = e.Value?.ToString() ?? string.Empty;
+        _totalText[index] = raw;
+        PoLine line = _lines[index];
+        if (!TryParseDecimal(raw, out decimal total) || total < 0 || line.Quantity == 0)
+        {
+            return;
+        }
+
+        line.CostRs = total / line.Quantity;
+        if (line.RetailRs <= 0 && line.CostRs > 0)
+        {
+            line.RetailRs = line.CostRs;
+        }
+    }
+
+    private async Task FocusSearchAndClearAsync()
+    {
+        _scanText = string.Empty;
+        _hits.Clear();
+        _highlightIndex = 0;
+        _focusedField = "search";
+        _focusScan = true;
+        try
+        {
+            await Js.InvokeVoidAsync("webPosFocusById", "cpo-scan");
+        }
+        catch
+        {
+            /* ignore */
+        }
+    }
+
     private async Task OnScanKeyDown(KeyboardEventArgs e)
     {
         if (_busy)
         {
+            return;
+        }
+
+        if (e.CtrlKey && (e.Key == "k" || e.Key == "K"))
+        {
+            await FocusSearchAndClearAsync();
             return;
         }
 
@@ -747,7 +852,63 @@
 
     private async Task OnDialogKeyDown(KeyboardEventArgs e)
     {
-        if (_busy || _lines.Count == 0)
+        if (_busy)
+        {
+            return;
+        }
+
+        if (e.CtrlKey && (e.Key == "k" || e.Key == "K"))
+        {
+            await FocusSearchAndClearAsync();
+            return;
+        }
+
+        bool suggestOpen = _hits.Count > 0 && !string.IsNullOrWhiteSpace(_scanText);
+        if (e.Key is "ArrowUp" or "ArrowDown")
+        {
+            if (suggestOpen || _lines.Count == 0)
+            {
+                return;
+            }
+
+            if (e.Key == "ArrowDown")
+            {
+                _selectedLineIndex = Math.Min(_lines.Count - 1, Math.Max(0, _selectedLineIndex) + 1);
+            }
+            else
+            {
+                _selectedLineIndex = Math.Max(0, (_selectedLineIndex < 0 ? _lines.Count : _selectedLineIndex) - 1);
+            }
+
+            return;
+        }
+
+        if ((e.Key is "Delete" or "Backspace") && !IsEditableFieldFocused)
+        {
+            RemoveLine(_selectedLineIndex);
+            return;
+        }
+
+        if (!IsEditableFieldFocused && IsSearchableKey(e))
+        {
+            _scanText += e.Key;
+            _highlightIndex = 0;
+            _focusedField = "search";
+            _focusScan = true;
+            try
+            {
+                await Js.InvokeVoidAsync("webPosFocusById", "cpo-scan");
+            }
+            catch
+            {
+                /* ignore */
+            }
+
+            await DebouncedSearchAsync();
+            return;
+        }
+
+        if (_lines.Count == 0)
         {
             return;
         }
@@ -787,6 +948,8 @@
         if (IsEditing)
         {
             _lines.Clear();
+            _totalText.Clear();
+            _selectedLineIndex = -1;
             _scanText = string.Empty;
             _hits.Clear();
             _remarks = string.Empty;
@@ -803,6 +966,8 @@
     private void ClearLines()
     {
         _lines.Clear();
+        _totalText.Clear();
+        _selectedLineIndex = -1;
         _scanText = string.Empty;
         _hits.Clear();
         _highlightIndex = 0;
@@ -830,6 +995,10 @@
         }
 
         _lines.RemoveAt(index);
+        _totalText.Remove(index);
+        _selectedLineIndex = _lines.Count == 0
+            ? -1
+            : Math.Min(index, _lines.Count - 1);
     }
 
     private async Task OnQtyKeyDown(int index, KeyboardEventArgs e)
@@ -861,6 +1030,7 @@
         if (TryParseDecimal(e.Value?.ToString(), out decimal qty) && qty > 0)
         {
             _lines[index].Quantity = qty;
+            _totalText.Remove(index);
         }
     }
 
@@ -869,6 +1039,7 @@
         if (TryParseDecimal(e.Value?.ToString(), out decimal v))
         {
             _lines[index].CostRs = Math.Max(0, v);
+            _totalText.Remove(index);
             if (_lines[index].RetailRs <= 0 && v > 0)
             {
                 _lines[index].RetailRs = v;
@@ -1086,6 +1257,8 @@
         _hits.Clear();
         _scanText = string.Empty;
         _lines.Clear();
+        _totalText.Clear();
+        _selectedLineIndex = -1;
         _supplierIdText = string.Empty;
         _invoiceNo = string.Empty;
         _purchaseDate = DateTime.Today;
@@ -1110,6 +1283,16 @@
     {
         _error = null;
         await OnClose.InvokeAsync();
+    }
+
+    private static bool IsSearchableKey(KeyboardEventArgs e)
+    {
+        if (e.CtrlKey || e.AltKey || e.MetaKey || string.IsNullOrEmpty(e.Key) || e.Key.Length != 1)
+        {
+            return false;
+        }
+
+        return char.IsLetterOrDigit(e.Key[0]);
     }
 
     private static bool TryParseDecimal(string? text, out decimal value) =>

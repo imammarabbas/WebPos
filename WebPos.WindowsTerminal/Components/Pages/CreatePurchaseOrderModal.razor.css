@@ -318,9 +318,8 @@
     text-align: right;
 }
 
-.cpo-grid-table .col-act {
-    width: 3.2rem;
-    text-align: center;
+.cpo-grid-table tbody tr.selected {
+    background: #dbeafe;
 }
 
 .cpo-cell-input {

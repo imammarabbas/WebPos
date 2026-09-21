@@ -80,6 +80,18 @@ public sealed class CartService
         Changed?.Invoke();
     }
 
+    public void SetLineTotal(Guid productId, long totalPaisa)
+    {
+        CartLine? line = _lines.FirstOrDefault(entry => entry.Product.ProductId == productId);
+        if (line is null || line.Quantity <= 0 || totalPaisa < 0)
+        {
+            return;
+        }
+
+        long unitPricePaisa = (long)Math.Round(totalPaisa / line.Quantity, MidpointRounding.AwayFromZero);
+        SetUnitPrice(productId, unitPricePaisa);
+    }
+
     public void Remove(Guid productId)
     {
         CartLine? line = _lines.FirstOrDefault(entry => entry.Product.ProductId == productId);

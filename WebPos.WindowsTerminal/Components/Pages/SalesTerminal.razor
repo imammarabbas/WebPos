@@ -54,6 +54,7 @@
                            @oninput="OnScanInput"
                            @onkeydown="OnScanKeyDown"
                            @onfocus="OnScanFocus"
+                           @onblur="OnScanBlur"
                            disabled="@(_isBusy || ModalOpen)" />
                     <button type="button"
                             class="sp-search-mode @(_broadSearch ? "active" : null)"
@@ -112,6 +113,7 @@
                             <th class="col-qty">Qty</th>
                             <th class="col-price">Price</th>
                             <th class="col-total">Total Amount</th>
+                            <th class="col-act"> </th>
                         </tr>
                     </thead>
                     <tbody>
@@ -135,7 +137,7 @@
                                                    inputmode="decimal"
                                                    value="@GetQtyText(line)"
                                                    @oninput="e => OnQtyChanged(line, e)"
-                                                   @onfocus="() => _selectedLineIndex = row"
+                                                   @onfocus='() => OnLineFieldFocus(row, "qty")'
                                                    @onkeydown="e => OnQtyKeyDown(e, row)"
                                                    disabled="@_isBusy" />
                                         </td>
@@ -145,15 +147,35 @@
                                                    inputmode="decimal"
                                                    value="@GetPriceText(line)"
                                                    @oninput="e => OnPriceChanged(line, e)"
-                                                   disabled="@_isBusy" />
+                                                   @onfocus='() => OnLineFieldFocus(row, "price")'
+                                           disabled="@_isBusy" />
                                         </td>
-                                        <td class="col-total">@FormatRs(line.LineTotalPaisa)</td>
+                                        <td class="col-total">
+                                            <input class="sf-cell-input"
+                                                   type="text"
+                                                   inputmode="decimal"
+                                                   value="@GetTotalText(line)"
+                                                   @oninput="e => OnTotalChanged(line, e)"
+                                                   @onfocus='() => OnLineFieldFocus(row, "total")'
+                                           disabled="@_isBusy" />
+                                        </td>
+                                        <td class="col-act">
+                                            <button type="button"
+                                                    class="sp-row-del"
+                                                    title="Remove line"
+                                                    disabled="@_isBusy"
+                                                    @onclick="() => DeleteLineAt(row)"
+                                                    @onclick:stopPropagation="true">
+                                                🗑
+                                            </button>
+                                        </td>
                                     </tr>
                                 }
                                 else
                                 {
                                     <tr class="sp-empty-row @(row % 2 == 1 ? "zebra" : null)">
                                         <td class="col-sr">@(row + 1)</td>
+                                        <td></td>
                                         <td></td>
                                         <td></td>
                                         <td></td>
@@ -180,13 +202,13 @@
                 <div class="sp-tot sp-tot-disc">
                     <span>Discount</span>
                     <div class="sp-disc-row">
-                        <input type="text" inputmode="decimal" title="Discount %" placeholder="0.00 %" value="@_discountPctText" @oninput="OnDiscountPctInput" disabled="@_isBusy" />
+                        <input type="text" inputmode="decimal" title="Discount %" placeholder="0.00 %" value="@_discountPctText" @oninput="OnDiscountPctInput" @onfocus='() => _focusedField = "discount"' disabled="@_isBusy" />
                         <strong>@FormatRs(DiscountPaisa)</strong>
                     </div>
                 </div>
                 <div class="sp-tot sp-tot-pay">
                     <span>Payment</span>
-                    <input type="text" inputmode="decimal" @bind="_cashGivenText" @bind:event="oninput" disabled="@(_isBusy || _paymentMode != PaymentUiMode.Cash)" />
+                    <input type="text" inputmode="decimal" @bind="_cashGivenText" @bind:event="oninput" @onfocus='() => _focusedField = "payment"' disabled="@(_isBusy || _paymentMode != PaymentUiMode.Cash)" />
                     <div class="sp-pay-modes">
                         <button type="button" class="sp-pay-link @(_paymentMode == PaymentUiMode.Cash ? "active" : null)" @onclick="SelectCashMode">Cash</button>
                         <button type="button" class="sp-pay-link @(_paymentMode == PaymentUiMode.Online ? "active" : null)" @onclick="SelectOnlineMode">Online</button>
@@ -421,6 +443,8 @@
     private IReadOnlyList<PartyDto> _customers = [];
     private readonly Dictionary<Guid, string> _qtyText = [];
     private readonly Dictionary<Guid, string> _priceText = [];
+    private readonly Dictionary<Guid, string> _totalText = [];
+    private string? _focusedField;
 
     private string _scanText = string.Empty;
     private bool _showScanDropdown;
@@ -802,6 +826,14 @@
             if (firstRender)
             {
                 _scanFocus.RequestScan();
+                try
+                {
+                    await Js.InvokeVoidAsync("webPosBindCtrlK");
+                }
+                catch
+                {
+                    /* ignore until DOM ready */
+                }
             }
 
             // Re-bind each render when ElementReference may have been replaced.
@@ -1120,11 +1152,13 @@
         {
             _qtyText.Remove(productId);
             _priceText.Remove(productId);
+            _totalText.Remove(productId);
             return;
         }
 
         _qtyText[productId] = line.Quantity.ToString("0.##", CultureInfo.InvariantCulture);
         _priceText[productId] = FormatRs(line.EffectiveUnitPricePaisa);
+        _totalText[productId] = FormatRs(line.LineTotalPaisa);
     }
 
     private void FocusLastLine(Guid productId)
@@ -1152,9 +1186,18 @@
 
     private void OnScanFocus()
     {
+        _focusedField = "search";
         if (_scanText.Trim().Length > 0)
         {
             _showScanDropdown = true;
+        }
+    }
+
+    private void OnScanBlur()
+    {
+        if (_focusedField == "search")
+        {
+            _focusedField = null;
         }
     }
 
@@ -1162,6 +1205,12 @@
     {
         if (_isBusy || ModalOpen)
         {
+            return;
+        }
+
+        if (e.CtrlKey && (e.Key == "k" || e.Key == "K"))
+        {
+            await FocusSearchAndClearAsync();
             return;
         }
 
@@ -1391,13 +1440,61 @@
 
     private void DeleteSelectedLine()
     {
-        if (_selectedLineIndex < 0 || _selectedLineIndex >= CartService.Lines.Count)
+        DeleteLineAt(_selectedLineIndex);
+    }
+
+    private void DeleteLineAt(int index)
+    {
+        if (index < 0 || index >= CartService.Lines.Count)
         {
             return;
         }
 
-        CartLine line = CartService.Lines[_selectedLineIndex];
+        CartLine line = CartService.Lines[index];
         RemoveLine(line);
+    }
+
+    private void OnLineFieldFocus(int row, string field)
+    {
+        _selectedLineIndex = row;
+        _focusedField = field;
+    }
+
+    private bool IsEditableFieldFocused =>
+        _focusedField is "search" or "qty" or "price" or "total" or "discount" or "payment";
+
+    private string GetTotalText(CartLine line) =>
+        _totalText.TryGetValue(line.Product.ProductId, out string? text)
+            ? text
+            : FormatRs(line.LineTotalPaisa);
+
+    private void OnTotalChanged(CartLine line, ChangeEventArgs e)
+    {
+        string raw = e.Value?.ToString() ?? string.Empty;
+        _totalText[line.Product.ProductId] = raw;
+        if (!TryParseRs(raw, out long totalPaisa) || line.Quantity <= 0)
+        {
+            return;
+        }
+
+        CartService.SetLineTotal(line.Product.ProductId, totalPaisa);
+        SyncLineEditors(line.Product.ProductId);
+    }
+
+    private async Task FocusSearchAndClearAsync()
+    {
+        _scanText = string.Empty;
+        _showScanDropdown = false;
+        _focusedField = "search";
+        _scanFocus.RequestScan();
+        try
+        {
+            await Js.InvokeVoidAsync("webPosFocusById", "scanInput");
+        }
+        catch
+        {
+            /* ignore */
+        }
     }
 
     private void UpsertProductInCache(SalesProductDto product)
@@ -1452,6 +1549,7 @@
 
         _errorMessage = null;
         CartService.SetQuantity(line.Product.ProductId, quantity);
+        SyncLineEditors(line.Product.ProductId);
     }
 
     private void OnPriceChanged(CartLine line, ChangeEventArgs e)
@@ -1464,12 +1562,14 @@
         }
 
         CartService.SetUnitPrice(line.Product.ProductId, paisa);
+        SyncLineEditors(line.Product.ProductId);
     }
 
     private void RemoveLine(CartLine line)
     {
         _qtyText.Remove(line.Product.ProductId);
         _priceText.Remove(line.Product.ProductId);
+        _totalText.Remove(line.Product.ProductId);
         CartService.Remove(line.Product.ProductId);
         _selectedLineIndex = Math.Min(_selectedLineIndex, CartService.Lines.Count - 1);
         _scanFocus.OnRowRemoved();
@@ -1481,6 +1581,7 @@
         _checkoutError = null;
         _qtyText.Clear();
         _priceText.Clear();
+        _totalText.Clear();
         CartService.Clear();
         _cashGivenText = string.Empty;
         _discountRsText = string.Empty;
@@ -1727,6 +1828,7 @@
         CartService.Clear();
         _qtyText.Clear();
         _priceText.Clear();
+        _totalText.Clear();
 
         foreach (CartLine line in snapshot.Lines)
         {
@@ -1880,6 +1982,7 @@
 
             _qtyText.Clear();
             _priceText.Clear();
+            _totalText.Clear();
             CartService.Clear();
             _cashGivenText = string.Empty;
             _onlineTxnRef = string.Empty;
@@ -2093,9 +2196,60 @@
             return;
         }
 
-        if (e.Key is "Delete")
+        if (e.CtrlKey && (e.Key == "k" || e.Key == "K"))
+        {
+            await FocusSearchAndClearAsync();
+            return;
+        }
+
+        if (e.Key is "ArrowUp" or "ArrowDown")
+        {
+            if (_showScanDropdown)
+            {
+                return;
+            }
+
+            int count = CartService.Lines.Count;
+            if (count == 0)
+            {
+                return;
+            }
+
+            if (e.Key == "ArrowDown")
+            {
+                _selectedLineIndex = Math.Min(count - 1, Math.Max(0, _selectedLineIndex) + 1);
+            }
+            else
+            {
+                _selectedLineIndex = Math.Max(0, (_selectedLineIndex < 0 ? count : _selectedLineIndex) - 1);
+            }
+
+            return;
+        }
+
+        if ((e.Key is "Delete" or "Backspace") && !IsEditableFieldFocused)
         {
             DeleteSelectedLine();
+            return;
+        }
+
+        if (!ModalOpen && !IsEditableFieldFocused && IsSearchableKey(e))
+        {
+            _scanText += e.Key;
+            _scanHighlight = 0;
+            _showScanDropdown = _scanText.Trim().Length > 0;
+            _focusedField = "search";
+            _scanFocus.RequestScan();
+            try
+            {
+                await Js.InvokeVoidAsync("webPosFocusById", "scanInput");
+            }
+            catch
+            {
+                /* ignore */
+            }
+
+            OnScanInput(new ChangeEventArgs { Value = _scanText });
             return;
         }
 
@@ -2266,6 +2420,16 @@
         !string.IsNullOrWhiteSpace(product.ShortCode)
             ? product.ShortCode
             : (!string.IsNullOrWhiteSpace(product.Barcode) ? product.Barcode : product.Sku);
+
+    private static bool IsSearchableKey(KeyboardEventArgs e)
+    {
+        if (e.CtrlKey || e.AltKey || e.MetaKey || string.IsNullOrEmpty(e.Key) || e.Key.Length != 1)
+        {
+            return false;
+        }
+
+        return char.IsLetterOrDigit(e.Key[0]);
+    }
 
     private static bool TryParseRs(string text, out long paisa)
     {

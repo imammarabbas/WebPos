@@ -17,7 +17,7 @@
     <div class="mm-page-header">
         <div>
             <h1>Cash management</h1>
-            <p>Daily sales cash stays in tills until you transfer. Card &amp; mobile settle to bank. Supplier / owner cash come from the account you choose.</p>
+            <p>Opening float + POS sales + cash in − payouts = net available. Pay suppliers from the live drawer without closing the shift.</p>
         </div>
         <div class="mm-form-actions" style="margin:0;">
             <button type="button" class="mm-btn" @onclick="OpenCashInForm">+ Cash In</button>
@@ -76,6 +76,33 @@
             </div>
         </div>
 
+        <div class="cm-trail" aria-label="Live till money trail">
+            <div class="cm-trail-step">
+                <span>Opening float</span>
+                <strong>Rs @FormatRs(_summary.TrailOpeningFloatPaisa)</strong>
+            </div>
+            <span class="cm-trail-op">+</span>
+            <div class="cm-trail-step">
+                <span>POS sales</span>
+                <strong>Rs @FormatRs(_summary.TrailPosSalesPaisa)</strong>
+            </div>
+            <span class="cm-trail-op">+</span>
+            <div class="cm-trail-step">
+                <span>Manual in / overage</span>
+                <strong>Rs @FormatRs(_summary.TrailManualInjectionsPaisa)</strong>
+            </div>
+            <span class="cm-trail-op">−</span>
+            <div class="cm-trail-step">
+                <span>Payouts / expenses</span>
+                <strong>Rs @FormatRs(_summary.TrailPayoutsPaisa)</strong>
+            </div>
+            <span class="cm-trail-op">=</span>
+            <div class="cm-trail-step net">
+                <span>Net available</span>
+                <strong>Rs @FormatRs(_summary.TrailNetAvailablePaisa)</strong>
+            </div>
+        </div>
+
         <div class="cm-section-head">
             <h2>Cash position</h2>
             <span class="mm-muted">@_summary.Accounts.Count accounts · Rs @FormatRs(_summary.TotalLiquidityPaisa) total · click a card for ledger</span>
@@ -102,8 +129,12 @@
                     @if (card.Account.Type == CashAccountType.Till)
                     {
                         <div class="mm-muted" style="font-size:0.8rem;margin-top:0.15rem;">
-                            <div><strong>AVAILABLE / SPENDABLE</strong></div>
-                            <div>Expected / Registered: Rs @FormatRs(card.DrawerExpectedCashPaisa ?? 0) / @FormatRs(card.DerivedGlBalancePaisa)</div>
+                            <div><strong>SPENDABLE DRAWER</strong></div>
+                            @if (card.Trail is CashMoneyTrailDto trail)
+                            {
+                                <div>Float @FormatRs(trail.OpeningFloatPaisa) + sales @FormatRs(trail.PosSalesPaisa) + in @FormatRs(trail.ManualInjectionsPaisa) − out @FormatRs(trail.PayoutsPaisa)</div>
+                            }
+                            <div>Books (GL): Rs @FormatRs(card.DerivedGlBalancePaisa)</div>
                             <div>Physical (blind count): @(card.HasPhysicalCount ? $"Rs {FormatRs(card.PhysicalBlindCashPaisa!.Value)}" : "Not Counted")</div>
                         </div>
                         @if (card.UnreconciledCashInPaisa > 0 || card.UnreconciledCashOutPaisa > 0)
@@ -132,7 +163,7 @@
         <div class="mm-card">
             <h2>Cash movement</h2>
             <p class="mm-muted" style="margin-top:0;">
-                Till outflows use Available = min(ledger, drawer). Gap is a warning — use Cash In to recognize physical cash already on the ledger, Shortage to write off missing cash, or Cash Drop for physical drawer cash. Mid-shift OK.
+                Till outflows use the live drawer (opening float + POS sales + cash in − payouts). Physical float can pay suppliers without closing the shift. Use Cash In to record extra cash, Shortage for missing cash, or Cash Drop to bank/safe.
             </p>
             @if (_movementMode is "in" or "out")
             {
@@ -426,55 +457,9 @@
                 <div class="mm-alert mm-alert-error">@_ledgerError</div>
             }
 
-            <div class="mm-table-wrap cm-ledger-table">
-                <table class="mm-table">
-                    <thead>
-                        <tr>
-                            <th>When</th>
-                            <th>Type</th>
-                            <th>Reference</th>
-                            <th>Terminal</th>
-                            <th>Debit In</th>
-                            <th>Credit Out</th>
-                            <th>Running</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @if (_ledgerLoading)
-                        {
-                            <tr><td colspan="7" class="mm-muted">Loading…</td></tr>
-                        }
-                        else if (_ledger is null || _ledger.Entries.Count == 0)
-                        {
-                            <tr><td colspan="7" class="mm-muted">No ledger lines in this range.</td></tr>
-                        }
-                        else
-                        {
-                            @foreach (CashAccountLedgerEntryDto row in _ledger.Entries)
-                            {
-                                <tr>
-                                    <td>@row.CreatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</td>
-                                    <td>@row.TransactionType</td>
-                                    <td>
-                                        @if (TryBuildReferenceHref(row, out string? href) && href is not null)
-                                        {
-                                            <a href="@href">@DisplayReference(row)</a>
-                                        }
-                                        else
-                                        {
-                                            @DisplayReference(row)
-                                        }
-                                    </td>
-                                    <td>@(row.TerminalName ?? "—")</td>
-                                    <td>@(row.DebitPaisa > 0 ? FormatRs(row.DebitPaisa) : "—")</td>
-                                    <td>@(row.CreditPaisa > 0 ? FormatRs(row.CreditPaisa) : "—")</td>
-                                    <td>Rs @FormatRs(row.RunningBalancePaisa)</td>
-                                </tr>
-                            }
-                        }
-                    </tbody>
-                </table>
-            </div>
+            <CashAuditLedgerTable Loading="_ledgerLoading"
+                                  Entries="_ledger?.Entries"
+                                  TryHref="TryBuildReferenceHref" />
             @if (_ledger is not null)
             {
                 <p class="mm-muted" style="margin:0.75rem 0 0;">Closing Rs @FormatRs(_ledger.ClosingBalancePaisa)</p>

@@ -1,0 +1,104 @@
+@using System.Globalization
+@using WebPos.Core.Abstractions
+
+<div class="mm-table-wrap cm-ledger-table">
+    <table class="mm-table cm-audit-table">
+        <thead>
+            <tr>
+                <th>Date Time</th>
+                <th>Source</th>
+                <th>Type</th>
+                <th>Reference</th>
+                <th>In</th>
+                <th>Out</th>
+                <th>Balance</th>
+                <th>User</th>
+                <th>Shift</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            @if (Loading)
+            {
+                <tr><td colspan="10" class="mm-muted">Loading…</td></tr>
+            }
+            else if (Entries is null || Entries.Count == 0)
+            {
+                <tr><td colspan="10" class="mm-muted">No entries in range.</td></tr>
+            }
+            else
+            {
+                @foreach (CashAccountLedgerEntryDto row in Entries)
+                {
+                    bool inflow = row.DebitPaisa > 0;
+                    <tr>
+                        <td>@row.CreatedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                        <td><span class="cm-chip cm-chip-source @SourceClass(row.Source)">@row.Source</span></td>
+                        <td>
+                            @if (inflow)
+                            {
+                                <span class="cm-chip cm-chip-in">↘ IN</span>
+                            }
+                            else if (row.CreditPaisa > 0)
+                            {
+                                <span class="cm-chip cm-chip-out">↗ OUT</span>
+                            }
+                            else
+                            {
+                                <span class="mm-muted">—</span>
+                            }
+                        </td>
+                        <td>
+                            @if (TryHref is not null && TryHref(row, out string? href) && href is not null)
+                            {
+                                <a href="@href">@DisplayReference(row)</a>
+                            }
+                            else
+                            {
+                                @DisplayReference(row)
+                            }
+                        </td>
+                        <td>@(row.DebitPaisa > 0 ? FormatRs(row.DebitPaisa) : "—")</td>
+                        <td>@(row.CreditPaisa > 0 ? FormatRs(row.CreditPaisa) : "—")</td>
+                        <td>Rs @FormatRs(row.RunningBalancePaisa)</td>
+                        <td>@(string.IsNullOrWhiteSpace(row.UserName) ? "—" : row.UserName)</td>
+                        <td>@(string.IsNullOrWhiteSpace(row.ShiftLabel) ? "—" : row.ShiftLabel)</td>
+                        <td>
+                            <span class="cm-chip @(string.Equals(row.Status, "Graceful", StringComparison.OrdinalIgnoreCase) ? "cm-chip-graceful" : "cm-chip-posted")">
+                                @row.Status
+                            </span>
+                        </td>
+                    </tr>
+                }
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<CashAccountLedgerEntryDto>? Entries { get; set; }
+    [Parameter] public bool Loading { get; set; }
+    [Parameter] public TryLedgerHref? TryHref { get; set; }
+
+    public delegate bool TryLedgerHref(CashAccountLedgerEntryDto row, out string? href);
+
+    private static string DisplayReference(CashAccountLedgerEntryDto row) =>
+        string.IsNullOrWhiteSpace(row.ReferenceDetails)
+            ? row.ReferenceNo
+            : $"{row.ReferenceNo} · {row.ReferenceDetails}";
+
+    private static string FormatRs(long paisa) =>
+        (paisa / 100m).ToString("N2", CultureInfo.InvariantCulture);
+
+    private static string SourceClass(string source) =>
+        source switch
+        {
+            "Opening Float" => "src-float",
+            "POS Sale" => "src-sale",
+            "Manual Injection" => "src-manual",
+            "Overage" => "src-overage",
+            "Supplier Payment" => "src-supplier",
+            "Expense" => "src-expense",
+            _ => "src-other"
+        };
+}

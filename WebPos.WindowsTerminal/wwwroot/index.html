@@ -70,6 +70,18 @@
             return document.activeElement === el;
         };
 
+        window.webPosBindCtrlK = function () {
+            if (window.__webPosCtrlKBound) {
+                return;
+            }
+            window.__webPosCtrlKBound = true;
+            document.addEventListener('keydown', function (e) {
+                if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+                    e.preventDefault();
+                }
+            });
+        };
+
         window.webPosPrintReceipt = function (text) {
             var html = '<!DOCTYPE html><html><head><title>Receipt</title>'
                 + '<style>body{font-family:Consolas,monospace;font-size:12pt;padding:12px;white-space:pre-wrap;}</style>'

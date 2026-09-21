@@ -46,10 +46,6 @@ public sealed class ProcurementController(IProcurementService procurementService
                 await _procurementService.RecordSupplierPaymentAsync(request, cancellationToken);
             return Ok(result);
         }
-        catch (TillDiscrepancyException ex)
-        {
-            return BadRequest(new { error = ex.Message, code = "TILL_DISCREPANCY", gapPaisa = ex.GapPaisa });
-        }
         catch (InsufficientCashBalanceException ex)
         {
             return BadRequest(new { error = ex.Message, code = "INSUFFICIENT_FUNDS" });

@@ -2262,3 +2262,129 @@
     outline: none;
 }
 
+/* —— Cash trail & funding cards —— */
+.cm-trail {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 0.45rem;
+    margin: 0 0 1.25rem;
+    padding: 0.75rem 0.85rem;
+    background: #fff;
+    border: 1px solid var(--mm-border);
+    border-radius: 0.85rem;
+}
+
+.cm-trail-step {
+    flex: 1 1 7rem;
+    min-width: 6.5rem;
+    background: #f8f9fb;
+    border-radius: 0.65rem;
+    padding: 0.55rem 0.7rem;
+}
+
+.cm-trail-step span {
+    display: block;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--mm-muted);
+    font-weight: 700;
+}
+
+.cm-trail-step strong {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 1.05rem;
+}
+
+.cm-trail-step.net {
+    background: #1c2128;
+    color: #fff;
+}
+
+.cm-trail-step.net span { color: #9aa3af; }
+
+.cm-trail-op {
+    align-self: center;
+    font-weight: 700;
+    color: #6b7280;
+    padding: 0 0.1rem;
+}
+
+.pp-fund-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+    gap: 0.5rem;
+    margin-bottom: 0.55rem;
+}
+
+.pp-fund-card {
+    text-align: left;
+    border: 1px solid var(--mm-border);
+    background: #fff;
+    border-radius: 0.7rem;
+    padding: 0.6rem 0.7rem;
+    cursor: pointer;
+}
+
+.pp-fund-card.live { border-color: #111827; }
+
+.pp-fund-card.selected {
+    background: #1c2128;
+    border-color: #1c2128;
+    color: #fff;
+}
+
+.pp-fund-name {
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-bottom: 0.2rem;
+}
+
+.pp-fund-amt { font-size: 1.05rem; font-weight: 700; }
+
+.pp-fund-meta {
+    font-size: 0.72rem;
+    color: #6b7280;
+    margin-top: 0.15rem;
+}
+
+.pp-fund-card.selected .pp-fund-meta { color: #9aa3af; }
+
+.pp-fund-trail {
+    margin: 0.4rem 0 0;
+    font-size: 0.82rem;
+    color: #4b5563;
+}
+
+@media (max-width: 900px) {
+    .cm-trail { flex-direction: column; }
+    .cm-trail-op { display: none; }
+    .pp-fund-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.cm-audit-table th { white-space: nowrap; }
+.cm-chip {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    padding: 0.18rem 0.5rem;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+.cm-chip-in { background: #dcfce7; color: #166534; }
+.cm-chip-out { background: #fee2e2; color: #b91c1c; }
+.cm-chip-posted { background: #dcfce7; color: #166534; }
+.cm-chip-graceful { background: #cffafe; color: #0e7490; }
+.cm-chip-source.src-float { background: #e0e7ff; color: #3730a3; }
+.cm-chip-source.src-sale { background: #dbeafe; color: #1d4ed8; }
+.cm-chip-source.src-manual { background: #fef3c7; color: #92400e; }
+.cm-chip-source.src-overage { background: #ffedd5; color: #c2410c; }
+.cm-chip-source.src-supplier { background: #fce7f3; color: #9d174d; }
+.cm-chip-source.src-expense { background: #fee2e2; color: #991b1b; }
+.cm-chip-source.src-other { background: #f3f4f6; color: #374151; }
+
+
+

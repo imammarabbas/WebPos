@@ -28,6 +28,18 @@
                 el.focus();
             }
         };
+
+        window.webPosBindCtrlK = function () {
+            if (window.__webPosCtrlKBound) {
+                return;
+            }
+            window.__webPosCtrlKBound = true;
+            document.addEventListener('keydown', function (e) {
+                if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+                    e.preventDefault();
+                }
+            });
+        };
     </script>
 </body>
 

@@ -207,31 +207,37 @@ public sealed class ProcurementService : IProcurementService
                 ct);
             string paymentAccount = payment.AccountCode;
 
-            if (payment.AffectsTillDrawer && request.ShiftId is null)
-            {
-                throw new InvalidOperationException(
-                    "Select an open shift for till-funded supplier payments.");
-            }
-
             CashierShift? tillShift = null;
-            if (payment.AffectsTillDrawer && request.ShiftId is Guid payShiftId)
+            if (payment.AffectsTillDrawer)
             {
-                tillShift = await CashierShiftLocking.LockByIdForUpdateAsync(
-                    _ambient.Required,
-                    payShiftId,
-                    _tenantService.TenantId,
-                    ct)
-                    ?? throw new InvalidOperationException(
-                        "Open shift was not found for the cash supplier payment.");
+                if (request.ShiftId is Guid payShiftId)
+                {
+                    tillShift = await CashierShiftLocking.LockByIdForUpdateAsync(
+                        _ambient.Required,
+                        payShiftId,
+                        _tenantService.TenantId,
+                        ct)
+                        ?? throw new InvalidOperationException(
+                            "Open shift was not found for the cash supplier payment.");
+                }
+                else if (payment.TerminalId is Guid tillTerminal)
+                {
+                    tillShift = await CashierShiftLocking.LockOpenByTerminalForUpdateAsync(
+                        _ambient.Required,
+                        tillTerminal,
+                        _tenantService.TenantId,
+                        ct);
+                }
 
-                if (!string.Equals(tillShift.Status, "OPEN", StringComparison.OrdinalIgnoreCase))
+                if (tillShift is null
+                    || !string.Equals(tillShift.Status, "OPEN", StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException(
                         "Open shift was not found for the cash supplier payment.");
                 }
 
-                if (payment.TerminalId is Guid tillTerminal
-                    && tillShift.TerminalId != tillTerminal)
+                if (payment.TerminalId is Guid expectedTerminal
+                    && tillShift.TerminalId != expectedTerminal)
                 {
                     throw new InvalidOperationException(
                         "Shift terminal does not match the selected till cash account.");
@@ -246,6 +252,15 @@ public sealed class ProcurementService : IProcurementService
                     tillShift.Id,
                     gl,
                     tillShift.ExpectedCashPaisa);
+
+                await TillPhysicalCash.RecognizeIntoGlIfNeededAsync(
+                    _transactionService,
+                    gl,
+                    paymentAccount,
+                    request.AmountPaisa,
+                    tillShift.Id,
+                    request.ReferenceNo.Trim(),
+                    ct);
             }
             else
             {
@@ -258,7 +273,7 @@ public sealed class ProcurementService : IProcurementService
                     TransactionType = "SUPPLIER_PAYMENT",
                     ReferenceNo = request.ReferenceNo.Trim(),
                     ReferenceDetails = $"Supplier payment {request.ReferenceNo.Trim()}",
-                    ShiftId = request.ShiftId,
+                    ShiftId = tillShift?.Id ?? request.ShiftId,
                     PartyId = request.SupplierId,
                     Postings =
                     [

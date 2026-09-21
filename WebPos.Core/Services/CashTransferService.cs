@@ -306,22 +306,31 @@ public sealed class CashTransferService : ICashTransferService
             ValidateLockedTillShift(toShift, to, shiftId);
         }
 
-        if (fromShift is not null)
-        {
-            string fromCode = CashAccountService.SanitizeAccountCode(from.AccountCode);
-            long gl = await SumGlBalanceAsync(fromCode, cancellationToken);
-            long spendable = CashSpendable.ForTill(gl, fromShift.ExpectedCashPaisa);
-            CashSpendable.EnsureCanSpend(
-                fromCode,
-                spendable,
-                amountPaisa,
-                fromShift.Id,
-                gl,
-                fromShift.ExpectedCashPaisa);
+            if (fromShift is not null)
+            {
+                string fromCode = CashAccountService.SanitizeAccountCode(from.AccountCode);
+                long gl = await SumGlBalanceAsync(fromCode, cancellationToken);
+                long spendable = CashSpendable.ForTill(gl, fromShift.ExpectedCashPaisa);
+                CashSpendable.EnsureCanSpend(
+                    fromCode,
+                    spendable,
+                    amountPaisa,
+                    fromShift.Id,
+                    gl,
+                    fromShift.ExpectedCashPaisa);
 
-            fromShift.ExpectedCashPaisa -= amountPaisa;
-            resolvedShiftId ??= fromShift.Id;
-        }
+                await TillPhysicalCash.RecognizeIntoGlIfNeededAsync(
+                    _transactionService,
+                    gl,
+                    fromCode,
+                    amountPaisa,
+                    fromShift.Id,
+                    $"XFER-{fromShift.Id:N}"[..18],
+                    cancellationToken);
+
+                fromShift.ExpectedCashPaisa -= amountPaisa;
+                resolvedShiftId ??= fromShift.Id;
+            }
 
         if (toShift is not null)
         {
@@ -732,6 +741,14 @@ public sealed class CashTransferService : ICashTransferService
             }
 
             string referenceNo = $"COUT-{Guid.NewGuid():N}"[..14];
+            await TillPhysicalCash.RecognizeIntoGlIfNeededAsync(
+                _transactionService,
+                gl,
+                tillCode,
+                request.AmountPaisa,
+                shift.Id,
+                referenceNo,
+                ct);
             string details = string.IsNullOrWhiteSpace(request.Note)
                 ? $"Cash Out — {reason} (shift {shift.Id:N})"
                 : request.Note.Trim();
@@ -1133,6 +1150,15 @@ public sealed class CashTransferService : ICashTransferService
                 {
                     throw new InsufficientCashBalanceException(code, shift.ExpectedCashPaisa, request.AmountPaisa);
                 }
+
+                await TillPhysicalCash.RecognizeIntoGlIfNeededAsync(
+                    _transactionService,
+                    gl,
+                    code,
+                    request.AmountPaisa,
+                    shift.Id,
+                    $"LOANOUT-{shift.Id:N}"[..16],
+                    ct);
             }
             else
             {

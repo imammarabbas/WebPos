@@ -2372,6 +2372,28 @@
 .sp-grid .col-qty { width: 5.5rem; }
 .sp-grid .col-price { width: 6rem; }
 .sp-grid .col-total { width: 7rem; text-align: right; font-weight: 700; }
+.sp-grid .col-act { width: 2.6rem; text-align: center; }
+
+.sp-row-del {
+    border: 1px solid #fecaca;
+    background: #fff;
+    color: #dc2626;
+    border-radius: 6px;
+    min-width: 1.85rem;
+    min-height: 1.85rem;
+    font-size: 0.95rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.sp-row-del:hover:not(:disabled) {
+    background: #fef2f2;
+}
+
+.sp-row-del:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
 
 .sp-totals {
     display: grid;

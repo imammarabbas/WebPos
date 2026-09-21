@@ -74,6 +74,25 @@
             <div class="mm-kpi"><div class="mm-kpi-label">Unregistered cash (GL)</div><div class="mm-kpi-value">Rs @FormatRs(_position.UnregisteredCashLiabilityPaisa)</div></div>
         </div>
 
+        <div class="cm-kpi-strip" style="margin-top:0.75rem;">
+            <a class="mm-kpi" href="/master/cash" style="text-decoration:none;color:inherit;">
+                <div class="mm-kpi-label">POS cash sales</div>
+                <div class="mm-kpi-value">Rs @FormatRs(_position.PosCashSalesPaisa)</div>
+            </a>
+            <a class="mm-kpi" href="/master/cash" style="text-decoration:none;color:inherit;">
+                <div class="mm-kpi-label">Manual cash in</div>
+                <div class="mm-kpi-value">Rs @FormatRs(_position.CashInPaisa)</div>
+            </a>
+            <a class="mm-kpi" href="/master/parties?tab=supplier-pay" style="text-decoration:none;color:inherit;">
+                <div class="mm-kpi-label">Supplier payouts</div>
+                <div class="mm-kpi-value">Rs @FormatRs(_position.SupplierPayoutsPaisa)</div>
+            </a>
+            <a class="mm-kpi" href="/master/cash" style="text-decoration:none;color:inherit;">
+                <div class="mm-kpi-label">Cash out</div>
+                <div class="mm-kpi-value">Rs @FormatRs(_position.CashOutPaisa)</div>
+            </a>
+        </div>
+
         <p class="mm-muted" style="margin-top:1rem;">
             Period: @_position.From.LocalDateTime.ToString("dd MMM yyyy") — @_position.To.LocalDateTime.ToString("dd MMM yyyy HH:mm").
             Unrecorded physical cash and Unregistered Cash GL are shown separately — not summed.

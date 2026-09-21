@@ -164,6 +164,14 @@ public sealed class ExpenseService : IExpenseService
                     shift.Id,
                     gl,
                     shift.ExpectedCashPaisa);
+                await TillPhysicalCash.RecognizeIntoGlIfNeededAsync(
+                    _transactionService,
+                    gl,
+                    paymentAccount,
+                    request.AmountPaisa,
+                    shift.Id,
+                    voucherNo,
+                    ct);
             }
             else
             {

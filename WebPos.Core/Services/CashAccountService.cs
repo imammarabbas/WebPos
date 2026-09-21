@@ -263,7 +263,7 @@ public sealed class CashAccountService : ICashAccountService
         return DbContextExecution.ExecuteAsync(_dbFactory, async (context, ct) =>
         {
             CashAccount account = await LoadAccountAsync(context, accountId, ct);
-            long gl = account.BalancePaisa;
+            long gl = await SumGlBalanceAsync(context, account.AccountCode, asOf: null, ct);
 
             if (account.Type != CashAccountType.Till)
             {
@@ -357,7 +357,9 @@ public sealed class CashAccountService : ICashAccountService
                     Code = e.AccountCode.ToUpper(),
                     e.DebitPaisa,
                     e.CreditPaisa,
-                    e.CreatedAt
+                    e.CreatedAt,
+                    e.TransactionType,
+                    e.ShiftId
                 })
                 .Where(e => codes.Contains(e.Code))
                 .ToListAsync(ct);
@@ -380,6 +382,28 @@ public sealed class CashAccountService : ICashAccountService
                 }
 
                 glByCode[row.Code] = (balance, todayIn, todayOut);
+            }
+
+            Dictionary<(string Code, Guid ShiftId), (long Sales, long Payouts)> trailByCodeShift = [];
+            foreach (var row in glRows)
+            {
+                if (row.ShiftId is not Guid shiftId)
+                {
+                    continue;
+                }
+
+                (string Code, Guid ShiftId) key = (row.Code, shiftId);
+                trailByCodeShift.TryGetValue(key, out (long Sales, long Payouts) agg);
+                if (IsPosSaleType(row.TransactionType))
+                {
+                    agg.Sales += row.DebitPaisa - row.CreditPaisa;
+                }
+                else if (IsTillPayoutType(row.TransactionType))
+                {
+                    agg.Payouts += row.CreditPaisa;
+                }
+
+                trailByCodeShift[key] = agg;
             }
 
             List<Guid> terminalIds = accounts
@@ -459,6 +483,7 @@ public sealed class CashAccountService : ICashAccountService
 
             List<CashAccountCardDto> cards = [];
             long inTills = 0, inBank = 0, inPetty = 0, inMobile = 0, inOwner = 0, other = 0;
+            long trailOpening = 0, trailSales = 0, trailManual = 0, trailPayouts = 0, trailNet = 0;
 
             foreach (CashAccount account in accounts)
             {
@@ -469,6 +494,7 @@ public sealed class CashAccountService : ICashAccountService
                 Guid? openShiftId = null;
                 long unrecIn = 0;
                 long unrecOut = 0;
+                CashMoneyTrailDto? trail = null;
                 if (account.Type == CashAccountType.Till && account.TerminalId is Guid tid)
                 {
                     if (openShiftsByTerminal.TryGetValue(tid, out CashierShift? shift))
@@ -481,6 +507,18 @@ public sealed class CashAccountService : ICashAccountService
                             unrecIn = u.In;
                             unrecOut = u.Out;
                         }
+
+                        trailByCodeShift.TryGetValue((codeKey, shift.Id), out (long Sales, long Payouts) shiftTrail);
+                        trail = BuildLiveTillTrail(
+                            shift.OpeningCashPaisa,
+                            shift.ExpectedCashPaisa,
+                            shiftTrail.Sales,
+                            shiftTrail.Payouts);
+                        trailOpening += trail.OpeningFloatPaisa;
+                        trailSales += trail.PosSalesPaisa;
+                        trailManual += trail.ManualInjectionsPaisa;
+                        trailPayouts += trail.PayoutsPaisa;
+                        trailNet += trail.NetAvailablePaisa;
                     }
                     else if (lastClosedBlindByTerminal.TryGetValue(tid, out long? closedBlind))
                     {
@@ -503,7 +541,8 @@ public sealed class CashAccountService : ICashAccountService
                     OpenShiftId = openShiftId,
                     SpendablePaisa = spendable,
                     UnreconciledCashInPaisa = unrecIn,
-                    UnreconciledCashOutPaisa = unrecOut
+                    UnreconciledCashOutPaisa = unrecOut,
+                    Trail = trail
                 });
 
                 switch (account.Type)
@@ -538,7 +577,12 @@ public sealed class CashAccountService : ICashAccountService
                 InBankPaisa = inBank,
                 InPettyPaisa = inPetty,
                 InMobilePaisa = inMobile,
-                InOwnerPaisa = inOwner
+                InOwnerPaisa = inOwner,
+                TrailOpeningFloatPaisa = trailOpening,
+                TrailPosSalesPaisa = trailSales,
+                TrailManualInjectionsPaisa = trailManual,
+                TrailPayoutsPaisa = trailPayouts,
+                TrailNetAvailablePaisa = trailNet
             };
         }, cancellationToken);
     }
@@ -674,13 +718,20 @@ public sealed class CashAccountService : ICashAccountService
                 .Select(r => r.ShiftId!.Value)
                 .ToHashSet();
 
-            Dictionary<Guid, Guid> shiftTerminals = shiftIds.Count == 0
+            Dictionary<Guid, CashierShift> shiftsById = shiftIds.Count == 0
                 ? []
                 : await context.CashierShifts.AsNoTracking()
                     .Where(s => shiftIds.Contains(s.Id))
-                    .ToDictionaryAsync(s => s.Id, s => s.TerminalId, ct);
+                    .ToDictionaryAsync(s => s.Id, ct);
 
-            HashSet<Guid> terminalIds = shiftTerminals.Values.ToHashSet();
+            HashSet<Guid> cashierIds = shiftsById.Values.Select(s => s.CashierId).ToHashSet();
+            Dictionary<Guid, string> cashierNames = cashierIds.Count == 0
+                ? []
+                : await context.Users.AsNoTracking()
+                    .Where(u => cashierIds.Contains(u.Id))
+                    .ToDictionaryAsync(u => u.Id, u => u.Username, ct);
+
+            HashSet<Guid> terminalIds = shiftsById.Values.Select(s => s.TerminalId).ToHashSet();
             if (account?.TerminalId is Guid accountTerminalId)
             {
                 terminalIds.Add(accountTerminalId);
@@ -696,10 +747,16 @@ public sealed class CashAccountService : ICashAccountService
                 running += row.DebitPaisa - row.CreditPaisa;
                 Guid? terminalId = null;
                 string? terminalName = null;
-                if (row.ShiftId is Guid sid && shiftTerminals.TryGetValue(sid, out Guid tid))
+                string? userName = null;
+                string? shiftLabel = null;
+                if (row.ShiftId is Guid sid && shiftsById.TryGetValue(sid, out CashierShift? shift))
                 {
-                    terminalId = tid;
-                    terminalNames.TryGetValue(tid, out terminalName);
+                    terminalId = shift.TerminalId;
+                    terminalNames.TryGetValue(shift.TerminalId, out terminalName);
+                    cashierNames.TryGetValue(shift.CashierId, out userName);
+                    shiftLabel = string.IsNullOrWhiteSpace(terminalName)
+                        ? sid.ToString("N")[..8]
+                        : terminalName;
                 }
                 else if (account?.TerminalId is Guid atid)
                 {
@@ -719,7 +776,11 @@ public sealed class CashAccountService : ICashAccountService
                     ReferenceDetails = row.ReferenceDetails,
                     DebitPaisa = row.DebitPaisa,
                     CreditPaisa = row.CreditPaisa,
-                    RunningBalancePaisa = running
+                    RunningBalancePaisa = running,
+                    Source = MapLedgerSource(row),
+                    UserName = userName,
+                    ShiftLabel = shiftLabel,
+                    Status = MapLedgerStatus(row)
                 });
             }
 
@@ -754,6 +815,85 @@ public sealed class CashAccountService : ICashAccountService
             TerminalId = till.TerminalId,
             Type = CashAccountType.Till,
             AffectsTillDrawer = true
+        };
+    }
+
+    private static bool IsGracefulFloat(GeneralLedgerEntry row) =>
+        string.Equals(row.TransactionType, "CASH_IN", StringComparison.OrdinalIgnoreCase)
+        && row.ReferenceNo.EndsWith("-FLOAT", StringComparison.OrdinalIgnoreCase);
+
+    private static string MapLedgerStatus(GeneralLedgerEntry row) =>
+        IsGracefulFloat(row) ? "Graceful" : "Posted";
+
+    private static string MapLedgerSource(GeneralLedgerEntry row)
+    {
+        if (IsGracefulFloat(row))
+        {
+            return "Opening Float";
+        }
+
+        string type = row.TransactionType.ToUpperInvariant();
+        if (type == "SALE")
+        {
+            return "POS Sale";
+        }
+
+        if (type == "CASH_IN")
+        {
+            return row.ReferenceDetails.Contains("overage", StringComparison.OrdinalIgnoreCase)
+                ? "Overage"
+                : "Manual Injection";
+        }
+
+        if (type is "SUPPLIER_PAYMENT")
+        {
+            return "Supplier Payment";
+        }
+
+        if (type is "EXPENSE" or "RECURRING_EXPENSE" or "CASH_SHORTAGE" or "CASH_OUT")
+        {
+            return "Expense";
+        }
+
+        return string.IsNullOrWhiteSpace(row.TransactionType)
+            ? "Manual Injection"
+            : row.TransactionType.Replace("_", " ", StringComparison.Ordinal);
+    }
+
+    private static bool IsPosSaleType(string transactionType) =>
+        string.Equals(transactionType, "SALE", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsTillPayoutType(string transactionType) =>
+        string.Equals(transactionType, "SUPPLIER_PAYMENT", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(transactionType, "EXPENSE", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(transactionType, "RECURRING_EXPENSE", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(transactionType, "CASH_OUT", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(transactionType, "CASH_TRANSFER", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(transactionType, "LOAN_REPAYMENT", StringComparison.OrdinalIgnoreCase);
+
+    private static CashMoneyTrailDto BuildLiveTillTrail(
+        long openingPaisa,
+        long expectedPaisa,
+        long posSalesPaisa,
+        long payoutsPaisa)
+    {
+        long opening = Math.Max(0L, openingPaisa);
+        long expected = Math.Max(0L, expectedPaisa);
+        long sales = Math.Max(0L, posSalesPaisa);
+        long payouts = Math.Max(0L, payoutsPaisa);
+        long manual = expected - opening - sales + payouts;
+        if (manual < 0)
+        {
+            manual = 0;
+        }
+
+        return new CashMoneyTrailDto
+        {
+            OpeningFloatPaisa = opening,
+            PosSalesPaisa = sales,
+            ManualInjectionsPaisa = manual,
+            PayoutsPaisa = payouts,
+            NetAvailablePaisa = expected
         };
     }
 

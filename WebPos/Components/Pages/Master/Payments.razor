@@ -62,7 +62,7 @@
                     </div>
                     <div class="cm-account-balance">Rs @FormatRs(spendable)</div>
                     <div class="mm-muted" style="font-size:0.8rem;">
-                        GL balance: Rs @FormatRs(card.DerivedGlBalancePaisa)
+                        @(card.HasOpenShift ? "Live drawer" : "Ledger") · books Rs @FormatRs(card.DerivedGlBalancePaisa)
                     </div>
                 </div>
             }

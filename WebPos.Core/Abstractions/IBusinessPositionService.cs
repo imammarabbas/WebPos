@@ -42,6 +42,10 @@ public sealed class BusinessPositionDto
     public long CashInPaisa { get; init; }
 
     public long CashOutPaisa { get; init; }
+
+    public long PosCashSalesPaisa { get; init; }
+
+    public long SupplierPayoutsPaisa { get; init; }
 }
 
 public sealed class FinanceDailyPoint

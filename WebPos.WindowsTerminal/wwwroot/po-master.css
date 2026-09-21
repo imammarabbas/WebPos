@@ -235,6 +235,10 @@
     background: #f7fafd;
 }
 
+.po-table tbody tr.selected {
+    background: #dbeafe;
+}
+
 .po-table .po-num {
     text-align: right;
     font-variant-numeric: tabular-nums;

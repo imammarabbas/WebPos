@@ -13,7 +13,7 @@
 
 <PageTitle>Purchase @_detail?.SupplierInvoiceNo · Cone Mart</PageTitle>
 
-<div class="mm-page pov-page">
+<div class="mm-page pov-page" tabindex="0" @onkeydown="OnKeyDown">
     <div class="po-page-header">
         <div class="po-page-header-left">
             <div class="po-icon-tile" aria-hidden="true">
@@ -51,7 +51,7 @@
                     <label>PO No.</label>
                     @if (IsOpen)
                     {
-                        <input class="form-control" @bind="_invoiceNo" />
+                        <input class="form-control" @bind="_invoiceNo" @onfocus='() => _focusedField = "meta"' />
                     }
                     else
                     {
@@ -62,7 +62,7 @@
                     <label>Supplier</label>
                     @if (IsOpen)
                     {
-                        <select class="form-control" @bind="_supplierId">
+                        <select class="form-control" @bind="_supplierId" @onfocus='() => _focusedField = "meta"'>
                             @foreach (PartyDto s in _suppliers)
                             {
                                 <option value="@s.Id">@s.Name</option>
@@ -78,7 +78,7 @@
                     <label>Purchase Date</label>
                     @if (IsOpen)
                     {
-                        <input class="form-control" type="date" @bind="_purchaseDate" />
+                        <input class="form-control" type="date" @bind="_purchaseDate" @onfocus='() => _focusedField = "meta"' />
                     }
                     else
                     {
@@ -106,7 +106,7 @@
                 {
                     <div class="pov-info-item">
                         <label>Discount (Rs)</label>
-                        <input class="form-control" type="number" step="0.01" @bind="_discountRs" />
+                        <input class="form-control" type="number" step="0.01" @bind="_discountRs" @onfocus='() => _focusedField = "meta"' />
                     </div>
                 }
             </div>
@@ -151,7 +151,7 @@
                             <th>Batch</th>
                             <th>Expiry</th>
                             <th>Rack</th>
-                            <th class="po-num">Amount</th>
+                            <th class="po-num">Total Purchase</th>
                             @if (IsOpen)
                             {
                                 <th></th>
@@ -164,7 +164,8 @@
                             int index = i;
                             LineEdit line = _lines[index];
                             decimal amount = line.Quantity * line.PurchasePriceRs;
-                            <tr>
+                            <tr class="@(index == _selectedLineIndex ? "selected" : null)"
+                                @onclick="() => _selectedLineIndex = index">
                                 <td>@(index + 1)</td>
                                 <td>
                                     @if (IsOpen)
@@ -175,6 +176,7 @@
                                                           SelectedLabel="@line.ProductName"
                                                           SelectedLabelChanged="v => line.ProductName = v"
                                                           OnSelected="p => OnLineProductSelectedAsync(index, p)"
+                                                          OnFocused='() => OnLineFieldFocus(index, "product")'
                                                           MastersOnly="true"
                                                           Disabled="@_saving" />
                                     }
@@ -186,7 +188,7 @@
                                 <td class="po-num">
                                     @if (IsOpen)
                                     {
-                                        <input class="form-control" type="number" step="0.001" @bind="line.Quantity" />
+                                        <input class="form-control" type="number" step="0.001" @bind="line.Quantity" @bind:after="() => _amountText.Remove(index)" @onfocus='() => OnLineFieldFocus(index, "qty")' />
                                     }
                                     else
                                     {
@@ -196,7 +198,7 @@
                                 <td class="po-num">
                                     @if (IsOpen)
                                     {
-                                        <input class="form-control" type="number" step="0.001" @bind="line.BonusQuantity" />
+                                        <input class="form-control" type="number" step="0.001" @bind="line.BonusQuantity" @onfocus='() => OnLineFieldFocus(index, "bonus")' />
                                     }
                                     else
                                     {
@@ -206,7 +208,7 @@
                                 <td class="po-num">
                                     @if (IsOpen)
                                     {
-                                        <input class="form-control" type="number" step="0.01" @bind="line.PurchasePriceRs" />
+                                        <input class="form-control" type="number" step="0.01" @bind="line.PurchasePriceRs" @bind:after="() => _amountText.Remove(index)" @onfocus='() => OnLineFieldFocus(index, "price")' />
                                     }
                                     else
                                     {
@@ -216,7 +218,7 @@
                                 <td class="po-num">
                                     @if (IsOpen)
                                     {
-                                        <input class="form-control" type="number" step="0.01" @bind="line.RetailPriceRs" />
+                                        <input class="form-control" type="number" step="0.01" @bind="line.RetailPriceRs" @onfocus='() => OnLineFieldFocus(index, "retail")' />
                                     }
                                     else
                                     {
@@ -226,7 +228,7 @@
                                 <td>
                                     @if (IsOpen)
                                     {
-                                        <input class="form-control" @bind="line.BatchNumber" />
+                                        <input class="form-control" @bind="line.BatchNumber" @onfocus='() => OnLineFieldFocus(index, "batch")' />
                                     }
                                     else
                                     {
@@ -236,7 +238,7 @@
                                 <td>
                                     @if (IsOpen)
                                     {
-                                        <input class="form-control" type="date" @bind="line.ExpiryDate" />
+                                        <input class="form-control" type="date" @bind="line.ExpiryDate" @onfocus='() => OnLineFieldFocus(index, "expiry")' />
                                     }
                                     else
                                     {
@@ -246,18 +248,36 @@
                                 <td>
                                     @if (IsOpen)
                                     {
-                                        <input class="form-control" @bind="line.RackLocation" />
+                                        <input class="form-control" @bind="line.RackLocation" @onfocus='() => OnLineFieldFocus(index, "rack")' />
                                     }
                                     else
                                     {
                                         @(line.RackLocation ?? "—")
                                     }
                                 </td>
-                                <td class="po-num">@amount.ToString("N2")</td>
+                                <td class="po-num">
+                                    @if (IsOpen)
+                                    {
+                                        <input class="form-control"
+                                               type="text"
+                                               inputmode="decimal"
+                                               value="@GetAmountText(index, amount)"
+                                               @oninput="e => OnAmountChanged(index, e)"
+                                               @onfocus='() => OnLineFieldFocus(index, "total")' />
+                                    }
+                                    else
+                                    {
+                                        @amount.ToString("N2")
+                                    }
+                                </td>
                                 @if (IsOpen)
                                 {
                                     <td>
-                                        <button type="button" class="mm-btn mm-btn-danger" @onclick="() => RemoveLine(index)">✕</button>
+                                        <button type="button"
+                                                class="mm-btn mm-btn-danger"
+                                                title="Remove line"
+                                                @onclick="() => RemoveLine(index)"
+                                                @onclick:stopPropagation="true">🗑</button>
                                     </td>
                                 }
                             </tr>
@@ -304,6 +324,7 @@
     private PurchaseOrderDetailDto? _detail;
     private readonly List<PartyDto> _suppliers = [];
     private readonly List<LineEdit> _lines = [];
+    private readonly Dictionary<int, string> _amountText = [];
     private string _invoiceNo = string.Empty;
     private string _supplierId = string.Empty;
     private DateOnly _purchaseDate = DateOnly.FromDateTime(DateTime.Today);
@@ -311,6 +332,8 @@
     private bool _saving;
     private string? _error;
     private string? _success;
+    private int _selectedLineIndex = -1;
+    private string? _focusedField;
 
     private bool IsOpen => _detail is { IsReceived: false };
 
@@ -365,6 +388,8 @@
         _purchaseDate = DateOnly.FromDateTime(detail.CreatedAt.UtcDateTime);
         _discountRs = detail.DiscountPaisa / 100m;
         _lines.Clear();
+        _amountText.Clear();
+        _selectedLineIndex = -1;
         foreach (PurchaseOrderLineDto line in detail.Lines)
         {
             _lines.Add(new LineEdit
@@ -398,6 +423,80 @@
         if (index >= 0 && index < _lines.Count)
         {
             _lines.RemoveAt(index);
+            _amountText.Remove(index);
+            _selectedLineIndex = _lines.Count == 0
+                ? -1
+                : Math.Min(index, _lines.Count - 1);
+        }
+    }
+
+    private void OnLineFieldFocus(int row, string field)
+    {
+        _selectedLineIndex = row;
+        _focusedField = field;
+    }
+
+    private bool IsEditableFieldFocused =>
+        _focusedField is "product" or "qty" or "bonus" or "price" or "retail" or "batch" or "expiry" or "rack" or "total" or "meta";
+
+    private string GetAmountText(int index, decimal amount) =>
+        _amountText.TryGetValue(index, out string? text)
+            ? text
+            : amount.ToString("N2");
+
+    private void OnAmountChanged(int index, ChangeEventArgs e)
+    {
+        if (index < 0 || index >= _lines.Count)
+        {
+            return;
+        }
+
+        string raw = e.Value?.ToString() ?? string.Empty;
+        _amountText[index] = raw;
+        LineEdit line = _lines[index];
+        if (!decimal.TryParse(raw, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out decimal total)
+            && !decimal.TryParse(raw, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.CurrentCulture, out total))
+        {
+            return;
+        }
+
+        if (total < 0 || line.Quantity == 0)
+        {
+            return;
+        }
+
+        line.PurchasePriceRs = total / line.Quantity;
+    }
+
+    private void OnKeyDown(KeyboardEventArgs e)
+    {
+        if (!IsOpen || _saving)
+        {
+            return;
+        }
+
+        if (e.Key is "ArrowUp" or "ArrowDown")
+        {
+            if (_lines.Count == 0)
+            {
+                return;
+            }
+
+            if (e.Key == "ArrowDown")
+            {
+                _selectedLineIndex = Math.Min(_lines.Count - 1, Math.Max(0, _selectedLineIndex) + 1);
+            }
+            else
+            {
+                _selectedLineIndex = Math.Max(0, (_selectedLineIndex < 0 ? _lines.Count : _selectedLineIndex) - 1);
+            }
+
+            return;
+        }
+
+        if ((e.Key is "Delete" or "Backspace") && !IsEditableFieldFocused)
+        {
+            RemoveLine(_selectedLineIndex);
         }
     }
 
