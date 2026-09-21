@@ -10,6 +10,7 @@
 @inject SecureEnrollmentCertificateStore CertificateStore
 @inject ShiftStatusApiClient ShiftStatus
 @inject ISessionService SessionService
+@inject IJSRuntime Js
 
 <PageTitle>Staff Login</PageTitle>
 
@@ -40,7 +41,7 @@
                 <button type="button" class="login-lock-btn" @onclick="OnLock" disabled="@_isBusy">Lock</button>
                 <span class="login-lock-hint">Keeps shift open</span>
             </div>
-            <span class="login-loc">Copenhagen</span>
+            <span class="login-loc">Chakwal</span>
         </div>
     </aside>
 
@@ -78,23 +79,44 @@
                    pattern="[0-9]*"
                    maxlength="@PinLength"
                    autocomplete="off"
-                   autofocus
+                   tabindex="0"
+                   aria-hidden="true"
                    aria-label="4-digit PIN"
                    value="@_pin"
-                   @oninput="OnPinInput"
+                   readonly
                    disabled="@_isBusy" />
 
             <div class="keypad" aria-label="Numeric keypad">
                 @foreach (string digit in Digits)
                 {
-                    <button type="button" class="key" @onclick="() => AppendDigit(digit)" disabled="@_isBusy">@digit</button>
+                    <button type="button"
+                            class="key @KeyPressedClass(digit)"
+                            data-pin-key="@digit"
+                            @onclick="() => AppendDigit(digit)"
+                            disabled="@_isBusy">@digit</button>
                 }
-                <button type="button" class="key key-muted" @onclick="Clear" disabled="@_isBusy">Clear</button>
-                <button type="button" class="key" @onclick="AppendZero" disabled="@_isBusy">0</button>
-                <button type="button" class="key key-muted" @onclick="Backspace" disabled="@_isBusy" aria-label="Backspace">⌫</button>
+                <button type="button"
+                        class="key key-muted @KeyPressedClass("clear")"
+                        data-pin-key="clear"
+                        @onclick="Clear"
+                        disabled="@_isBusy">Clear</button>
+                <button type="button"
+                        class="key @KeyPressedClass("0")"
+                        data-pin-key="0"
+                        @onclick="AppendZero"
+                        disabled="@_isBusy">0</button>
+                <button type="button"
+                        class="key key-muted @KeyPressedClass("backspace")"
+                        data-pin-key="backspace"
+                        @onclick="Backspace"
+                        disabled="@_isBusy"
+                        aria-label="Backspace">⌫</button>
             </div>
 
-            <button class="auth-submit" type="submit" disabled="@(_isBusy || _pin.Length < PinLength)">
+            <button class="auth-submit @KeyPressedClass("enter")"
+                    type="submit"
+                    data-pin-key="enter"
+                    disabled="@(_isBusy || _pin.Length < PinLength)">
                 @(_isBusy ? "Signing in…" : "Login")
             </button>
         </form>
@@ -109,6 +131,9 @@
     private string? _errorMessage;
     private bool _isBusy;
     private bool _terminalOnline = true;
+    private string? _pressedKey;
+    private CancellationTokenSource? _pressCts;
+    private DotNetObjectReference<Login>? _selfRef;
 
     private string ShiftLabel =>
         SessionService.OpenedAt is DateTimeOffset opened
@@ -131,9 +156,96 @@
         await RefreshTerminalStatusAsync();
     }
 
-    public void Dispose() => ShiftStatus.Changed -= OnShiftStatusChanged;
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        try
+        {
+            _selfRef = DotNetObjectReference.Create(this);
+            await Js.InvokeVoidAsync("webPosBindPinPad", _selfRef);
+        }
+        catch
+        {
+            /* PIN pad keys still work after a refresh once JS is ready */
+        }
+    }
+
+    public void Dispose()
+    {
+        ShiftStatus.Changed -= OnShiftStatusChanged;
+        _pressCts?.Cancel();
+        _pressCts?.Dispose();
+        try
+        {
+            _ = Js.InvokeVoidAsync("webPosUnbindPinPad");
+        }
+        catch
+        {
+        }
+
+        _selfRef?.Dispose();
+    }
 
     private void OnShiftStatusChanged() => InvokeAsync(StateHasChanged);
+
+    private string? KeyPressedClass(string key) =>
+        string.Equals(_pressedKey, key, StringComparison.Ordinal) ? "is-pressed active" : null;
+
+    private async Task ClearPulseAsync(string key)
+    {
+        CancellationTokenSource cts = new();
+        _pressCts?.Cancel();
+        _pressCts?.Dispose();
+        _pressCts = cts;
+        try
+        {
+            await Task.Delay(150, cts.Token);
+            if (string.Equals(_pressedKey, key, StringComparison.Ordinal))
+            {
+                _pressedKey = null;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnPhysicalPinKey(string key)
+    {
+        if (string.IsNullOrEmpty(key) || _isBusy)
+        {
+            return;
+        }
+
+        _pressedKey = key;
+        _ = ClearPulseAsync(key);
+
+        switch (key)
+        {
+            case "backspace":
+                Backspace();
+                break;
+            case "clear":
+                Clear();
+                break;
+            case "enter":
+                await LoginAsync();
+                break;
+            default:
+                if (key.Length == 1 && char.IsDigit(key[0]))
+                {
+                    await AppendDigit(key);
+                }
+
+                break;
+        }
+    }
 
     private async Task RefreshTerminalStatusAsync()
     {
@@ -147,14 +259,6 @@
         {
             _terminalOnline = SessionService.IsActive && ShiftStatus.IsApiOnline;
         }
-    }
-
-    private void OnPinInput(ChangeEventArgs e)
-    {
-        string raw = e.Value?.ToString() ?? string.Empty;
-        _pin = new string(raw.Where(char.IsDigit).Take(PinLength).ToArray());
-        _errorMessage = null;
-        _ = TryAutoSubmitAsync();
     }
 
     private async Task AppendDigit(string digit)

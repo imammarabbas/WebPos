@@ -3,11 +3,16 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <title>WebPos.WindowsTerminal</title>
+    <title>Smart POS</title>
     <base href="/" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="lib/bootstrap/dist/css/bootstrap.min.css" />
     <link rel="stylesheet" href="app.css" />
     <link rel="stylesheet" href="pos-menu.css" />
+    <link rel="stylesheet" href="smart-pos.css" />
     <link rel="stylesheet" href="pos-subwindow.css" />
     <link rel="stylesheet" href="po-master.css" />
     <link rel="stylesheet" href="WebPos.WindowsTerminal.styles.css" />
@@ -28,6 +33,185 @@
 
     <script src="_framework/blazor.webview.js" autostart="false"></script>
     <script>
+        (function () {
+            function sizeApp() {
+                var root = document.documentElement;
+                if (!root || root.style.getPropertyValue('--native-height')) {
+                    return;
+                }
+                var h = Math.round(window.innerHeight || 0);
+                if (window.visualViewport && window.visualViewport.height) {
+                    h = Math.max(h, Math.round(window.visualViewport.height));
+                }
+                h = Math.max(h, root.clientHeight || 0);
+                if (h > 0) {
+                    root.style.setProperty('--app-height', h + 'px');
+                }
+            }
+
+            function fullscreenElement() {
+                return document.fullscreenElement
+                    || document.webkitFullscreenElement
+                    || document.msFullscreenElement
+                    || null;
+            }
+
+            function requestFullscreen() {
+                var el = document.documentElement;
+                var req = el.requestFullscreen
+                    || el.webkitRequestFullscreen
+                    || el.webkitRequestFullScreen
+                    || el.msRequestFullscreen;
+                if (!req) {
+                    return;
+                }
+                var result = req.call(el);
+                if (result && typeof result.catch === 'function') {
+                    result.catch(function () { /* ignore denied/unavailable */ });
+                }
+            }
+
+            function exitFullscreen() {
+                var exit = document.exitFullscreen
+                    || document.webkitExitFullscreen
+                    || document.webkitCancelFullScreen
+                    || document.msExitFullscreen;
+                if (!exit) {
+                    return;
+                }
+                var result = exit.call(document);
+                if (result && typeof result.catch === 'function') {
+                    result.catch(function () { /* ignore */ });
+                }
+            }
+
+            function toggleFullscreen() {
+                if (fullscreenElement()) {
+                    exitFullscreen();
+                } else {
+                    requestFullscreen();
+                }
+            }
+
+            sizeApp();
+            window.addEventListener('resize', sizeApp);
+            if (window.visualViewport) {
+                window.visualViewport.addEventListener('resize', sizeApp);
+            }
+            document.addEventListener('fullscreenchange', sizeApp);
+            document.addEventListener('webkitfullscreenchange', sizeApp);
+            document.addEventListener('MSFullscreenChange', sizeApp);
+
+            function primaryField() {
+                var scan = document.getElementById('scanInput') || document.getElementById('searchInput');
+                if (scan && !scan.disabled && scan.getAttribute('aria-hidden') !== 'true') {
+                    return scan;
+                }
+                if (document.querySelector('.auth-shell .keypad')) {
+                    var pin = document.getElementById('pin');
+                    if (pin && !pin.disabled) {
+                        return pin;
+                    }
+                }
+                return null;
+            }
+
+            function focusPrimary() {
+                if (document.querySelector('.modal-backdrop')) {
+                    return;
+                }
+                var el = primaryField();
+                if (!el) {
+                    return;
+                }
+                try {
+                    el.focus({ preventScroll: true });
+                    if (el.id === 'scanInput' && typeof el.select === 'function') {
+                        el.select();
+                    }
+                } catch (err) { /* ignore */ }
+            }
+
+            window.webPosFocusPrimary = focusPrimary;
+
+            function isInteractive(el) {
+                if (!(el instanceof Element)) {
+                    return false;
+                }
+                return !!el.closest(
+                    'a,button,input,textarea,select,option,label,summary,' +
+                    '[role="button"],[role="menuitem"],[role="option"],[role="dialog"],[role="listbox"],' +
+                    '[contenteditable="true"],.modal-backdrop,.pos-menu-flyout,.sf-scan-dropdown,' +
+                    '.pos-menu-link,.pos-flyout-item,.key,.sp-action-btn,.sp-save,.sp-customer-input,' +
+                    '.sf-cell-input,.channel-pill,.sp-pay-link,.sp-switch,.auth-submit'
+                );
+            }
+
+            window.addEventListener('focus', function () {
+                focusPrimary();
+            });
+            document.addEventListener('visibilitychange', function () {
+                if (document.visibilityState === 'visible') {
+                    focusPrimary();
+                }
+            });
+            document.addEventListener('click', function (e) {
+                if (isInteractive(e.target)) {
+                    return;
+                }
+                focusPrimary();
+            }, false);
+
+            window.addEventListener('keydown', function (e) {
+                if (e.key !== 'F11' && e.code !== 'F11') {
+                    return;
+                }
+                e.preventDefault();
+                if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) {
+                    return;
+                }
+                toggleFullscreen();
+            }, true);
+        })();
+        window.webPosWatchTableRows = function (el, netRef) {
+            if (!el || !netRef) {
+                return;
+            }
+            var header = 37;
+            var minRow = 28;
+            function report() {
+                var n = Math.floor((el.clientHeight - header) / minRow);
+                if (!isFinite(n) || n < 12) {
+                    n = 12;
+                }
+                if (n > 24) {
+                    n = 24;
+                }
+                netRef.invokeMethodAsync('OnTableSlotCount', n);
+            }
+            if (el.__rowWatch) {
+                el.__rowWatch.disconnect();
+            }
+            el.__rowWatch = new ResizeObserver(report);
+            el.__rowWatch.observe(el);
+            report();
+        };
+        window.webPosFlashLine = function (id) {
+            if (!id) {
+                return;
+            }
+            var row = document.querySelector('tr[data-line-id="' + id + '"]');
+            if (!row) {
+                return;
+            }
+            row.classList.remove('item-added');
+            void row.offsetWidth;
+            row.classList.add('item-added');
+            row.addEventListener('animationend', function handler() {
+                row.classList.remove('item-added');
+                row.removeEventListener('animationend', handler);
+            });
+        };
         window.webPosPreventKeys = function (el, keys) {
             if (!el) {
                 return;
@@ -71,15 +255,191 @@
         };
 
         window.webPosBindCtrlK = function () {
-            if (window.__webPosCtrlKBound) {
+            window.webPosBindPosShortcuts();
+        };
+
+        window.webPosBindSaveKeys = function () {
+            window.webPosBindPosShortcuts();
+        };
+
+        window.webPosBindPosShortcuts = function () {
+            if (window.__webPosPosShortcutsBound) {
                 return;
             }
-            window.__webPosCtrlKBound = true;
-            document.addEventListener('keydown', function (e) {
-                if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+            window.__webPosPosShortcutsBound = true;
+
+            function focusScanner() {
+                var el = document.getElementById('scanInput');
+                if (el && !el.disabled) {
+                    el.focus({ preventScroll: true });
+                    if (typeof el.select === 'function') {
+                        el.select();
+                    }
+                }
+            }
+
+            function pressSaveButton() {
+                var btn = document.getElementById('saveInvoiceButton');
+                if (!btn) {
+                    btn = document.querySelector('.sp-save');
+                }
+                if (!btn || btn.disabled) {
+                    return;
+                }
+                btn.classList.add('is-pressed');
+                window.setTimeout(function () {
+                    btn.classList.remove('is-pressed');
+                }, 150);
+                btn.click();
+            }
+
+            window.addEventListener('keydown', function (e) {
+                if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyK' || (e.key && e.key.toLowerCase() === 'k'))) {
+                    if (document.querySelector('.modal-backdrop')) {
+                        return;
+                    }
+                    e.preventDefault();
+                    e.stopPropagation();
+                    focusScanner();
+                    return;
+                }
+
+                var isSaveShortcut =
+                    e.key === 'F12' ||
+                    e.key === 'Insert' ||
+                    e.code === 'Insert' ||
+                    ((e.ctrlKey || e.metaKey) && (e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter'));
+
+                var fkey = e.key && e.key.match(/^F([1-9])$/);
+                var modalOpen = !!document.querySelector('.modal-backdrop');
+
+                if (isSaveShortcut) {
+                    e.preventDefault();
+                    if (modalOpen || e.repeat) {
+                        return;
+                    }
+                    e.stopPropagation();
+                    pressSaveButton();
+                    return;
+                }
+
+                if (fkey) {
+                    e.preventDefault();
+                    if (modalOpen || e.repeat) {
+                        return;
+                    }
+                    e.stopPropagation();
+                    var action = document.querySelector('[data-pos-fkey="F' + fkey[1] + '"]');
+                    if (action && !action.disabled) {
+                        action.classList.add('is-pressed');
+                        window.setTimeout(function () {
+                            action.classList.remove('is-pressed');
+                        }, 150);
+                        action.click();
+                    }
+                }
+            }, true);
+        };
+
+        window.webPosBindCellKeys = function () {
+            if (window.__webPosCellKeysBound) {
+                return;
+            }
+            window.__webPosCellKeysBound = true;
+            window.addEventListener('keydown', function (e) {
+                var t = e.target;
+                if (!t || !t.classList || !t.classList.contains('sf-cell-input')) {
+                    return;
+                }
+                if (e.key === 'Tab' || e.key === 'Enter' || e.key === 'ArrowUp' || e.key === 'ArrowDown'
+                    || e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'F12' || e.key === 'Insert') {
+                    e.preventDefault();
+                    return;
+                }
+                if (e.key === 'Delete' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
                     e.preventDefault();
                 }
+            }, true);
+        };
+
+        window.webPosSelectById = function (id) {
+            if (!id) {
+                return;
+            }
+            var el = document.getElementById(id);
+            if (!el || el.disabled) {
+                return;
+            }
+            requestAnimationFrame(function () {
+                try {
+                    if (typeof el.select === 'function') {
+                        el.select();
+                    }
+                } catch (err) { /* ignore */ }
             });
+        };
+
+        window.webPosBindPinPad = function (netRef) {
+            window.__webPosPinPadRef = netRef || null;
+            if (window.__webPosPinPadBound) {
+                return;
+            }
+            window.__webPosPinPadBound = true;
+            window.addEventListener('keydown', function (e) {
+                if (!document.querySelector('.auth-shell .keypad')) {
+                    return;
+                }
+                if (e.ctrlKey || e.altKey || e.metaKey) {
+                    return;
+                }
+
+                var payload = null;
+                if (e.key && e.key.length === 1 && e.key >= '0' && e.key <= '9') {
+                    payload = e.key;
+                } else if (e.key === 'Backspace') {
+                    payload = 'backspace';
+                } else if (e.key === 'Escape' || e.key === 'Delete') {
+                    payload = 'clear';
+                } else if (e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter') {
+                    payload = 'enter';
+                } else {
+                    return;
+                }
+
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.repeat && payload !== 'backspace') {
+                    return;
+                }
+
+                var btn = document.querySelector('.auth-shell [data-pin-key="' + payload + '"]');
+                if (btn) {
+                    btn.classList.add('is-pressed', 'active');
+                    window.setTimeout(function () {
+                        btn.classList.remove('is-pressed', 'active');
+                    }, 150);
+                }
+
+                var ref = window.__webPosPinPadRef;
+                if (ref) {
+                    ref.invokeMethodAsync('OnPhysicalPinKey', payload);
+                }
+            }, true);
+        };
+
+        window.webPosUnbindPinPad = function () {
+            window.__webPosPinPadRef = null;
+        };
+
+        window.webPosPressSave = function () {
+            var el = document.querySelector('.sp-save');
+            if (!el) {
+                return;
+            }
+            el.classList.add('is-pressed');
+            setTimeout(function () {
+                el.classList.remove('is-pressed');
+            }, 150);
         };
 
         window.webPosPrintReceipt = function (text) {
@@ -99,6 +459,9 @@
                 w.print();
             }, 200);
         };
+
+        window.webPosBindPosShortcuts();
+        window.webPosBindPinPad(null);
     </script>
 
 </body>

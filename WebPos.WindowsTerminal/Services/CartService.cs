@@ -8,9 +8,13 @@ public sealed class CartService
 
     public event Action? Changed;
 
+    public const int MaxLines = 24;
+
     public IReadOnlyList<CartLine> Lines => _lines;
 
     public long SubtotalPaisa => _lines.Sum(line => line.LineTotalPaisa);
+
+    public decimal TotalQuantity => _lines.Sum(line => line.Quantity);
 
     public bool IsEmpty => _lines.Count == 0;
 
@@ -32,8 +36,14 @@ public sealed class CartService
         }
         else
         {
+            if (_lines.Count >= MaxLines)
+            {
+                return;
+            }
+
             _lines.Add(new CartLine
             {
+                LineId = Guid.NewGuid(),
                 Product = product,
                 Quantity = quantity
             });

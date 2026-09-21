@@ -1,4 +1,10 @@
-﻿using Microsoft.Extensions.Configuration;
+﻿#if WINDOWS
+using Microsoft.Maui.LifecycleEvents;
+using Microsoft.UI;
+using Microsoft.UI.Windowing;
+using WinRT.Interop;
+#endif
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using WebPos.Client.Sdk;
 using WebPos.Client.Sdk.Security;
@@ -17,6 +23,63 @@ public static class MauiProgram
             {
                 fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
             });
+
+#if WINDOWS
+        builder.ConfigureLifecycleEvents(events =>
+        {
+            events.AddWindows(windows => windows.OnWindowCreated(window =>
+            {
+                window.ExtendsContentIntoTitleBar = true;
+
+                nint handle = WindowNative.GetWindowHandle(window);
+                WindowId windowId = Win32Interop.GetWindowIdFromWindow(handle);
+                AppWindow appWindow = AppWindow.GetFromWindowId(windowId);
+
+                if (appWindow is not null && AppWindowTitleBar.IsCustomizationSupported())
+                {
+                    AppWindowTitleBar titleBar = appWindow.TitleBar;
+                    titleBar.ExtendsContentIntoTitleBar = true;
+
+                    // Dark navy matching the #10182c header background
+                    Windows.UI.Color darkHeaderColor = Windows.UI.Color.FromArgb(255, 16, 24, 44);
+
+                    titleBar.BackgroundColor = darkHeaderColor;
+                    titleBar.InactiveBackgroundColor = darkHeaderColor;
+                    titleBar.ForegroundColor = Microsoft.UI.Colors.White;
+                    titleBar.InactiveForegroundColor = Microsoft.UI.Colors.Gray;
+
+                    titleBar.ButtonBackgroundColor = darkHeaderColor;
+                    titleBar.ButtonInactiveBackgroundColor = darkHeaderColor;
+                    titleBar.ButtonForegroundColor = Microsoft.UI.Colors.White;
+                    titleBar.ButtonInactiveForegroundColor = Microsoft.UI.Colors.Gray;
+                    titleBar.ButtonHoverBackgroundColor = Windows.UI.Color.FromArgb(255, 30, 41, 59);
+                    titleBar.ButtonHoverForegroundColor = Microsoft.UI.Colors.White;
+                    titleBar.ButtonPressedBackgroundColor = Windows.UI.Color.FromArgb(255, 15, 23, 42);
+                    titleBar.ButtonPressedForegroundColor = Microsoft.UI.Colors.White;
+
+                    void UpdateDragRegions()
+                    {
+                        int captionH = titleBar.Height;
+                        int dragHeight = captionH > 32 ? captionH : 48;
+                        int dragWidth = Math.Max(0, appWindow.Size.Width - titleBar.RightInset);
+                        titleBar.SetDragRectangles(
+                        [
+                            new Windows.Graphics.RectInt32(0, 0, dragWidth, dragHeight)
+                        ]);
+                    }
+
+                    UpdateDragRegions();
+                    appWindow.Changed += (_, args) =>
+                    {
+                        if (args.DidSizeChange)
+                        {
+                            UpdateDragRegions();
+                        }
+                    };
+                }
+            }));
+        });
+#endif
 
         builder.Services.AddMauiBlazorWebView();
 

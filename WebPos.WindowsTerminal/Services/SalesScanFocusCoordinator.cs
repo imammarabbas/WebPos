@@ -18,10 +18,13 @@ public sealed class SalesScanFocusCoordinator
 
     public int? PendingQtyRow { get; private set; }
 
+    public string? PendingField { get; private set; }
+
     public void RequestScan()
     {
         Pending = Target.Scan;
         PendingQtyRow = null;
+        PendingField = null;
     }
 
     public void RequestLatestQty(int lineCount)
@@ -34,6 +37,20 @@ public sealed class SalesScanFocusCoordinator
 
         Pending = Target.Qty;
         PendingQtyRow = lineCount - 1;
+        PendingField = "qty";
+    }
+
+    public void RequestCell(int row, string field)
+    {
+        if (row < 0)
+        {
+            RequestScan();
+            return;
+        }
+
+        Pending = Target.Qty;
+        PendingQtyRow = row;
+        PendingField = string.IsNullOrWhiteSpace(field) ? "qty" : field;
     }
 
     public void OnProductAdded() => RequestScan();
@@ -47,12 +64,14 @@ public sealed class SalesScanFocusCoordinator
     /// <summary>
     /// Consumes the pending focus request after a Blazor render.
     /// </summary>
-    public (Target target, int? qtyRow) TakePending()
+    public (Target target, int? qtyRow, string? field) TakePending()
     {
         Target target = Pending;
         int? qtyRow = PendingQtyRow;
+        string? field = PendingField;
         Pending = Target.None;
         PendingQtyRow = null;
-        return (target, qtyRow);
+        PendingField = null;
+        return (target, qtyRow, field);
     }
 }

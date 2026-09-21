@@ -26,9 +26,10 @@ public sealed class SalesScanFocusCoordinatorTests
 
         // TAB → latest row quantity (Product C = index 2)
         focus.RequestLatestQty(lineCount: 3);
-        (SalesScanFocusCoordinator.Target target, int? qtyRow) afterTab = focus.TakePending();
+        (SalesScanFocusCoordinator.Target target, int? qtyRow, string? field) afterTab = focus.TakePending();
         Assert.Equal(SalesScanFocusCoordinator.Target.Qty, afterTab.target);
         Assert.Equal(2, afterTab.qtyRow);
+        Assert.Equal("qty", afterTab.field);
 
         // Change qty → ENTER → barcode
         focus.OnQtyEnter();

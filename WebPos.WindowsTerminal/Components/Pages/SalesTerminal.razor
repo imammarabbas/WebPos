@@ -20,7 +20,7 @@
 @inject IJSRuntime Js
 @inject ILogger<SalesTerminal> Logger
 
-<PageTitle>Cone Mart POS</PageTitle>
+<PageTitle>Smart POS</PageTitle>
 
 <div class="pos-shell sf-shell smart-pos" @onkeydown="OnKeyDown" tabindex="0">
     <PosTopMenu OnPurchaseOrders="OpenPurchaseOrdersAsync"
@@ -29,163 +29,187 @@
                 OnHold="HoldCart"
                 OnRetrieve="ResumeHeldCart" />
 
-    @if (!string.IsNullOrWhiteSpace(_errorMessage))
-    {
-        <div class="alert-red" role="alert" aria-live="assertive">@_errorMessage</div>
-    }
+    <div class="sp-banner">
+        @if (!string.IsNullOrWhiteSpace(_errorMessage))
+        {
+            <div class="alert-red" role="alert" aria-live="assertive">@_errorMessage</div>
+        }
 
-    @if (!string.IsNullOrWhiteSpace(_successMessage))
-    {
-        <div class="success-toast" role="status" aria-live="polite">@_successMessage</div>
-    }
+        @if (!string.IsNullOrWhiteSpace(_checkoutError))
+        {
+            <p class="field-error sf-checkout-error sp-checkout-error" role="alert">@_checkoutError</p>
+        }
+    </div>
 
-    <div class="sf-body sp-body">
-        <section class="sf-main sp-main">
-            <header class="sp-search-bar">
-                <div class="sp-search-wrap">
-                    <input id="scanInput"
-                           class="sp-search-input"
-                           type="text"
-                           placeholder="Enter item code, description or barcode..."
-                           autocomplete="off"
-                           inputmode="search"
-                           @ref="_scanInput"
-                           value="@_scanText"
-                           @oninput="OnScanInput"
-                           @onkeydown="OnScanKeyDown"
-                           @onfocus="OnScanFocus"
-                           @onblur="OnScanBlur"
-                           disabled="@(_isBusy || ModalOpen)" />
-                    <button type="button"
-                            class="sp-search-mode @(_broadSearch ? "active" : null)"
-                            title="@(_broadSearch ? "Fast mode: barcode & short code only" : "Include name / SKU search")"
-                            disabled="@(_isBusy || ModalOpen)"
-                            @onclick="ToggleBroadSearch">
-                        @(_broadSearch ? "All" : "Code")
-                    </button>
-                    <span class="sp-search-icon" aria-hidden="true"></span>
-                    @if (_showScanDropdown && ScanHits.Count > 0)
-                    {
-                        <ul class="sf-scan-dropdown" role="listbox">
-                            @foreach ((object hit, int i) in ScanHits.Select((h, i) => (h, i)))
-                            {
-                                <li class="@(i == _scanHighlight ? "active" : null)"
-                                    role="option"
-                                    @onmousedown:preventDefault
-                                    @onclick="() => ChooseScanHitAsync(hit)">
-                                    @if (hit is SalesProductDto p)
-                                    {
-                                        <strong>@p.Name</strong>
-                                        <span>@(string.IsNullOrWhiteSpace(p.ShortCode) ? p.Barcode : p.ShortCode) · Rs @FormatRs(p.UnitPricePaisa)</span>
-                                    }
-                                    else if (hit is SaleMasterDto m)
-                                    {
-                                        <strong>@m.Name</strong>
-                                        <span>Master · @(m.ShortCode ?? "—") · @((m.Children?.Count) ?? 0) pack(s)</span>
-                                    }
-                                </li>
-                            }
-                        </ul>
-                    }
-                </div>
-                <div class="sp-qty-chip" title="Line count">
-                    <span>QUANTITY</span>
-                    <strong>@CartService.Lines.Count</strong>
-                </div>
-                <div class="sp-till-chip" title="Till drawer expected cash">
-                    <span>DRAWER</span>
-                    <strong>Rs @FormatRs(ShiftStatus.ExpectedCashPaisa)</strong>
-                </div>
-                <div class="sp-invoice">
-                    <span class="sp-invoice-icon" aria-hidden="true"></span>
-                    <strong>Invoice #@_draftInvoiceNo</strong>
-                </div>
-            </header>
+    <section class="sp-search-section">
+        <div class="sp-search-grid">
+            <div class="sp-search-wrap">
+                <input id="scanInput"
+                       class="sp-search-input"
+                       type="text"
+                       placeholder="Enter item code, description or barcode..."
+                       autocomplete="off"
+                       inputmode="search"
+                       @ref="_scanInput"
+                       value="@_scanText"
+                       @oninput="OnScanInput"
+                       @onkeydown="OnScanKeyDown"
+                       @onfocus="OnScanFocus"
+                       @onblur="OnScanBlur"
+                       disabled="@(_isBusy || ModalOpen)" />
+                <button type="button"
+                        class="sp-search-mode @(_broadSearch ? "active" : null)"
+                        id="searchIconToggle"
+                        title="@(_broadSearch ? "All: name and barcode" : "Code only: barcode")"
+                        aria-label="@(_broadSearch ? "Switch to code-only search" : "Switch to name and barcode search")"
+                        aria-pressed="@_broadSearch"
+                        disabled="@(_isBusy || ModalOpen)"
+                        @onclick="OnSearchIconClick">
+                    <i class="fa-solid @(_broadSearch ? "fa-xmark" : "fa-magnifying-glass")" aria-hidden="true"></i>
+                </button>
+                @if (_showScanDropdown && ScanHits.Count > 0)
+                {
+                    <ul class="sf-scan-dropdown" role="listbox">
+                        @foreach ((object hit, int i) in ScanHits.Select((h, i) => (h, i)))
+                        {
+                            <li class="@(i == _scanHighlight ? "active" : null)"
+                                role="option"
+                                @onmousedown:preventDefault
+                                @onclick="() => ChooseScanHitAsync(hit)">
+                                @if (hit is SalesProductDto p)
+                                {
+                                    <strong>@p.Name</strong>
+                                    <span>@(string.IsNullOrWhiteSpace(p.ShortCode) ? p.Barcode : p.ShortCode) · Rs @FormatRs(p.UnitPricePaisa)</span>
+                                }
+                                else if (hit is SaleMasterDto m)
+                                {
+                                    <strong>@m.Name</strong>
+                                    <span>Master · @(m.ShortCode ?? "—") · @((m.Children?.Count) ?? 0) pack(s)</span>
+                                }
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
+            <div class="sp-qty-chip @(CartService.TotalQuantity > 0 ? "has-items" : null)" title="Total quantity">
+                <span>Quantity</span>
+                <strong>@FormatQty(CartService.TotalQuantity)</strong>
+            </div>
+            <div class="sp-invoice">
+                <i class="fa-regular fa-file-lines" aria-hidden="true"></i>
+                <span>Invoice #@_draftInvoiceNo</span>
+            </div>
+        </div>
+    </section>
 
-            <div class="sp-grid-wrap">
-                <table class="sp-grid">
+    <main class="sp-main-content">
+        <section class="sp-table-card">
+            <div class="sp-table-scroll" @ref="_tableScroll">
+                <table class="sp-items-table" style="--sp-slots: @VisibleSlotCount">
                     <thead>
                         <tr>
-                            <th class="col-sr">Sr. #</th>
+                            <th class="text-center col-sr">Sr. #</th>
                             <th class="col-code">Item Code</th>
                             <th class="col-desc">Description</th>
                             <th class="col-pack">Packing</th>
-                            <th class="col-qty">Qty</th>
-                            <th class="col-price">Price</th>
-                            <th class="col-total">Total Amount</th>
-                            <th class="col-act"> </th>
+                            <th class="text-right col-qty">Qty</th>
+                            <th class="text-right col-price">Price</th>
+                            <th class="text-right col-total">Total Amount</th>
                         </tr>
                     </thead>
                     <tbody>
                         @{
                             IReadOnlyList<CartLine> cartLines = CartService.Lines;
-                            for (int row = 0; row < 12; row++)
+                            for (int row = 0; row < VisibleSlotCount; row++)
                             {
                                 if (row < cartLines.Count)
                                 {
                                     int index = row;
                                     CartLine line = cartLines[index];
                                     bool selected = index == _selectedLineIndex;
-                                    <tr class="@(selected ? "selected" : null) @(index % 2 == 1 ? "zebra" : null)"
+                                    <tr class="@(selected ? "selected row-selected" : null) @(index % 2 == 1 ? "zebra" : null)"
+                                        data-line-id="@line.LineId"
                                         @onmousedown="() => SelectLine(index)"
                                         @onclick="() => SelectLine(index)">
-                                        <td class="col-sr">@(index + 1)</td>
-                                        <td class="col-code">@ItemCode(line.Product)</td>
-                                        <td class="col-desc">@(line.Product.Name ?? string.Empty)</td>
-                                        <td class="col-pack">@(string.IsNullOrWhiteSpace(line.Product.PackingSize) ? "—" : line.Product.PackingSize)</td>
+                                        <td class="col-sr text-center">@(index + 1)</td>
+                                        <td class="col-code">
+                                            <input id="@CellId(line.LineId, "itemCode")"
+                                                   class="sf-cell-input sf-cell-input-text"
+                                                   type="text"
+                                                   value="@GetCodeText(line)"
+                                                   @oninput="e => OnCodeInput(line, e)"
+                                                   @onfocus='() => OnCellFocusAsync(index, "itemCode")'
+                                                   @onblur="() => OnCodeCommit(line)"
+                                                   @onkeydown='e => OnCellKeyDown(e, index, "itemCode")'
+                                                   disabled="@_isBusy" />
+                                        </td>
+                                        <td class="col-desc">
+                                            <input id="@CellId(line.LineId, "description")"
+                                                   class="sf-cell-input sf-cell-input-text"
+                                                   type="text"
+                                                   value="@GetDescText(line)"
+                                                   @oninput="e => OnDescInput(line, e)"
+                                                   @onfocus='() => OnCellFocusAsync(index, "description")'
+                                                   @onkeydown='e => OnCellKeyDown(e, index, "description")'
+                                                   disabled="@_isBusy" />
+                                        </td>
+                                        <td class="col-pack">
+                                            <input id="@CellId(line.LineId, "packing")"
+                                                   class="sf-cell-input sf-cell-input-text"
+                                                   type="text"
+                                                   value="@GetPackText(line)"
+                                                   @oninput="e => OnPackInput(line, e)"
+                                                   @onfocus='() => OnCellFocusAsync(index, "packing")'
+                                                   @onkeydown='e => OnCellKeyDown(e, index, "packing")'
+                                                   disabled="@_isBusy" />
+                                        </td>
                                         <td class="col-qty">
-                                            <input id="@($"pos-qty-{index}")"
+                                            <input id="@CellId(line.LineId, "qty")"
                                                    class="sf-cell-input"
                                                    type="text"
                                                    inputmode="decimal"
                                                    value="@GetQtyText(line)"
                                                    @oninput="e => OnQtyChanged(line, e)"
-                                                   @onfocus='() => OnLineFieldFocus(index, "qty")'
-                                                   @onkeydown="e => OnQtyKeyDown(e, index)"
+                                                   @onfocus='() => OnCellFocusAsync(index, "qty")'
+                                                   @onkeydown='e => OnCellKeyDown(e, index, "qty")'
                                                    disabled="@_isBusy" />
                                         </td>
                                         <td class="col-price">
-                                            <input class="sf-cell-input"
+                                            <input id="@CellId(line.LineId, "price")"
+                                                   class="sf-cell-input"
                                                    type="text"
                                                    inputmode="decimal"
                                                    value="@GetPriceText(line)"
                                                    @oninput="e => OnPriceChanged(line, e)"
-                                                   @onfocus='() => OnLineFieldFocus(index, "price")'
-                                           disabled="@_isBusy" />
+                                                   @onfocus='() => OnCellFocusAsync(index, "price")'
+                                                   @onblur="() => OnPriceBlur(line)"
+                                                   @onkeydown='e => OnCellKeyDown(e, index, "price")'
+                                                   disabled="@_isBusy" />
                                         </td>
                                         <td class="col-total">
-                                            <input class="sf-cell-input"
+                                            <input id="@CellId(line.LineId, "total")"
+                                                   class="sf-cell-input"
                                                    type="text"
                                                    inputmode="decimal"
                                                    value="@GetTotalText(line)"
-                                                   @oninput="e => OnTotalChanged(line, e)"
-                                                   @onfocus='() => OnLineFieldFocus(index, "total")'
-                                           disabled="@_isBusy" />
-                                        </td>
-                                        <td class="col-act">
-                                            <button type="button"
-                                                    class="sp-row-del"
-                                                    title="Remove line"
-                                                    disabled="@_isBusy"
-                                                    @onclick="() => DeleteLineAt(index)"
-                                                    @onclick:stopPropagation="true"
-                                                    @onmousedown:stopPropagation="true">
-                                                🗑
-                                            </button>
+                                                   @oninput="e => OnTotalInput(line, e)"
+                                                   @onfocus='() => OnCellFocusAsync(index, "total")'
+                                                   @onblur="() => CommitTotal(line)"
+                                                   @onkeydown='e => OnCellKeyDown(e, index, "total")'
+                                                   disabled="@_isBusy" />
                                         </td>
                                     </tr>
                                 }
                                 else
                                 {
                                     <tr class="sp-empty-row @(row % 2 == 1 ? "zebra" : null)">
-                                        <td class="col-sr">@(row + 1)</td>
-                                        <td></td>
-                                        <td></td>
-                                        <td></td>
-                                        <td></td>
-                                        <td></td>
-                                        <td></td>
-                                        <td></td>
+                                        <td class="col-sr text-center empty">@(row + 1)</td>
+                                        <td class="empty"></td>
+                                        <td class="empty"></td>
+                                        <td class="empty"></td>
+                                        <td class="empty"></td>
+                                        <td class="empty"></td>
+                                        <td class="empty"></td>
                                     </tr>
                                 }
                             }
@@ -193,133 +217,191 @@
                     </tbody>
                 </table>
             </div>
+        </section>
 
-            <div class="sp-totals">
-                <div class="sp-tot">
-                    <span>Sub Total</span>
-                    <strong>@FormatRs(CartService.SubtotalPaisa)</strong>
+        <section class="sp-lower-panels">
+            <div class="sp-customer-bar">
+                <button type="button" class="sp-customer-icon" title="Use walk-in customer" disabled="@(_isBusy || ModalOpen)" @onclick="SelectWalkInCustomer">
+                    <i class="fa-solid fa-user"></i>
+                </button>
+                <div class="sp-customer-field sp-customer-code">
+                    <label for="customerCode">Customer Code</label>
+                    <input id="customerCode"
+                           class="sp-customer-input"
+                           value="@CustomerCodeDisplay"
+                           readonly
+                           disabled="@(_isBusy || ModalOpen)"
+                           @onclick="OpenSearchCustomerAsync" />
                 </div>
-                <div class="sp-tot">
-                    <span>Previous Due</span>
-                    <strong>@FormatRs(PreviousDuePaisa)</strong>
+                <div class="sp-customer-field sp-customer-name">
+                    <label for="customerName">Customer Name</label>
+                    <input id="customerName"
+                           class="sp-customer-input"
+                           value="@CustomerNameDisplay"
+                           readonly
+                           disabled="@(_isBusy || ModalOpen)"
+                           @onclick="OpenSearchCustomerAsync" />
                 </div>
-                <div class="sp-tot sp-tot-disc">
-                    <span>Discount</span>
-                    <div class="sp-disc-row">
-                        <input type="text" inputmode="decimal" title="Discount %" placeholder="0.00 %" value="@_discountPctText" @oninput="OnDiscountPctInput" @onfocus='() => _focusedField = "discount"' disabled="@_isBusy" />
-                        <strong>@FormatRs(DiscountPaisa)</strong>
+                <div class="sp-customer-actions">
+                    <div class="sp-customer-action">
+                        <i class="fa-solid fa-print" aria-hidden="true"></i>
+                        <span>Print Receipt</span>
+                        <label class="sp-switch">
+                            <input type="checkbox" checked="@_printOnPrinter" @onchange="OnPrintToggle" disabled="@(_isBusy || ModalOpen)" />
+                            <span class="sp-slider"></span>
+                        </label>
                     </div>
-                </div>
-                <div class="sp-tot sp-tot-pay">
-                    <span>Payment</span>
-                    <input type="text" inputmode="decimal" @bind="_cashGivenText" @bind:event="oninput" @onfocus='() => _focusedField = "payment"' disabled="@(_isBusy || _paymentMode != PaymentUiMode.Cash)" />
-                    <div class="sp-pay-modes">
-                        <button type="button" class="sp-pay-link @(_paymentMode == PaymentUiMode.Cash ? "active" : null)" @onclick="SelectCashMode">Cash</button>
-                        <button type="button" class="sp-pay-link @(_paymentMode == PaymentUiMode.Online ? "active" : null)" @onclick="SelectOnlineMode">Online</button>
-                        <button type="button" class="sp-pay-link @(_paymentMode == PaymentUiMode.Credit ? "active" : null)" disabled="@(_selectedCustomer is null)" @onclick="SelectCreditMode">Credit</button>
-                    </div>
-                    @if (_paymentMode == PaymentUiMode.Online)
-                    {
-                        <div class="sf-online-row">
-                            @foreach (CheckoutPaymentOption channel in CheckoutPaymentMethods.OnlineChannels)
-                            {
-                                <button type="button"
-                                        class="channel-pill @(string.Equals(_onlineChannel, channel.Method, StringComparison.Ordinal) ? "active" : string.Empty)"
-                                        @onclick="() => _onlineChannel = channel.Method">
-                                    @channel.Label
-                                </button>
-                            }
-                            <input class="txn-ref-input" placeholder="Txn ref" @bind="_onlineTxnRef" @bind:event="oninput" disabled="@_isBusy" />
-                        </div>
-                    }
-                </div>
-                <div class="sp-tot sp-tot-balance">
-                    <span>Balance</span>
-                    <strong>@FormatRs(SaleBalancePaisa)</strong>
                 </div>
             </div>
 
-            @if (!string.IsNullOrWhiteSpace(_checkoutError))
-            {
-                <p class="field-error sf-checkout-error" role="alert">@_checkoutError</p>
-            }
-
-            <div class="sp-fkey-bar" role="toolbar" aria-label="POS shortcuts">
-                <button type="button" class="sp-fkey" disabled="@ModalOpen" @onclick="OpenSearchCustomerAsync">
-                    <span class="sp-fkey-badge">F3</span>
-                    <span class="sp-ico sp-ico-cust-search" aria-hidden="true"></span>
-                    <span class="sp-fkey-label">Search Customer</span>
-                </button>
-                <button type="button" class="sp-fkey" disabled="@ModalOpen" @onclick="OpenAddCustomer">
-                    <span class="sp-fkey-badge">F4</span>
-                    <span class="sp-ico sp-ico-cust-add" aria-hidden="true"></span>
-                    <span class="sp-fkey-label">Add Customer</span>
-                </button>
-                <button type="button" class="sp-fkey" disabled="@_isBusy" @onclick="NewSale">
-                    <span class="sp-fkey-badge">F5</span>
-                    <span class="sp-ico sp-ico-doc" aria-hidden="true"></span>
-                    <span class="sp-fkey-label">Form Reset</span>
-                </button>
-                <button type="button"
-                        class="sp-fkey @(_whatsAppReceipt ? "sp-fkey-on" : null)"
-                        disabled="@ModalOpen"
-                        title="Toggle WhatsApp invoice after save"
-                        @onclick="ToggleWhatsAppInvoice">
-                    <span class="sp-fkey-badge">F6</span>
-                    <span class="sp-ico sp-ico-wa" aria-hidden="true"></span>
-                    <span class="sp-fkey-label">WhatsApp Invoice</span>
-                </button>
-                <button type="button"
-                        class="sp-fkey @(_printOnPrinter ? "sp-fkey-on" : null)"
-                        disabled="@ModalOpen"
-                        title="Toggle print invoice after save"
-                        @onclick="TogglePrintInvoice">
-                    <span class="sp-fkey-badge">F7</span>
-                    <span class="sp-ico sp-ico-print" aria-hidden="true"></span>
-                    <span class="sp-fkey-label">Print Invoice</span>
-                </button>
-                <button type="button"
-                        class="sp-fkey sp-fkey-cust @(!_useWalkInCustomer ? "sp-fkey-on-red" : null)"
-                        disabled="@ModalOpen"
-                        title="Select regular customer"
-                        @onclick="SelectRegisteredCustomerMode">
-                    <span class="sp-fkey-badge">F8</span>
-                    <span class="sp-ico sp-ico-person" aria-hidden="true"></span>
-                    @if (!_useWalkInCustomer && _selectedCustomer is not null)
-                    {
-                        <span class="sp-fkey-cust-name">@_selectedCustomer.Name</span>
-                        <span class="sp-fkey-cust-code">@DisplayCodeFor(_selectedCustomer)</span>
-                    }
-                    else
-                    {
-                        <span class="sp-fkey-label">Regular Customer</span>
-                    }
-                </button>
-                <button type="button"
-                        class="sp-fkey sp-fkey-cust @(_useWalkInCustomer ? "sp-fkey-on-red" : null)"
-                        disabled="@ModalOpen"
-                        title="Use walk-in customer"
-                        @onclick="SelectWalkInCustomer">
-                    <span class="sp-fkey-badge">F9</span>
-                    <span class="sp-ico sp-ico-walk" aria-hidden="true"></span>
-                    <span class="sp-fkey-label">Walk In Customer</span>
-                </button>
-                <button type="button" class="sp-save" disabled="@(CartService.IsEmpty || _isBusy || !CanPay)" @onclick="PayNowAsync">
-                    <span class="sp-save-keys">
-                        <span>(Insert)</span>
-                        <span>Ctrl + Enter</span>
-                        <span>F12</span>
-                    </span>
-                    <span class="sp-save-main">
-                        <span class="sp-ico sp-ico-save" aria-hidden="true"></span>
-                        <span class="sp-save-label">Save Invoice</span>
-                    </span>
-                </button>
+            <div class="sp-finance-panel">
+                <div class="sp-invoice-summary">
+                    <div class="sp-summary-item">
+                        <div class="sp-summary-label">Sub Total</div>
+                        <div class="sp-summary-value">@FormatRs(CartService.SubtotalPaisa)</div>
+                    </div>
+                    <div class="sp-summary-item">
+                        <div class="sp-summary-label">Previous Due</div>
+                        <div class="sp-summary-value">@FormatRs(PreviousDuePaisa)</div>
+                    </div>
+                    <div class="sp-summary-item">
+                        <div class="sp-summary-label">Discount</div>
+                        <div class="sp-discount-display">
+                            <input id="pos-discount-pct"
+                                   type="text"
+                                   inputmode="decimal"
+                                   title="Discount %"
+                                   placeholder="0"
+                                   value="@_discountPctText"
+                                   @oninput="OnDiscountPctInput"
+                                   @onfocus="OnDiscountFocusAsync"
+                                   @onblur="OnDiscountBlur"
+                                   disabled="@_isBusy" />
+                            <span class="sp-discount-percent">%</span>
+                            <input id="pos-discount-rs"
+                                   type="text"
+                                   inputmode="decimal"
+                                   title="Discount amount"
+                                   placeholder="0.00"
+                                   value="@_discountRsText"
+                                   @oninput="OnDiscountRsInput"
+                                   @onfocus="OnDiscountRsFocusAsync"
+                                   disabled="@_isBusy" />
+                        </div>
+                    </div>
+                    <div class="sp-summary-item">
+                        <div class="sp-summary-label">Payment Received</div>
+                        <input id="pos-payment"
+                               class="sp-summary-input"
+                               type="text"
+                               inputmode="decimal"
+                               placeholder="0.00"
+                               @bind="_cashGivenText"
+                               @bind:event="oninput"
+                               @onfocus="OnPaymentFocusAsync"
+                               @onblur="OnPaymentBlur"
+                               disabled="@(_isBusy || _paymentMode != PaymentUiMode.Cash)" />
+                        <div class="sp-pay-modes">
+                            <button type="button" class="sp-pay-link @(_paymentMode == PaymentUiMode.Cash ? "active" : null)" @onclick="SelectCashMode">Cash</button>
+                            <button type="button" class="sp-pay-link @(_paymentMode == PaymentUiMode.Online ? "active" : null)" @onclick="SelectOnlineMode">Online</button>
+                            <button type="button" class="sp-pay-link @(_paymentMode == PaymentUiMode.Credit ? "active" : null)" disabled="@(_selectedCustomer is null)" @onclick="SelectCreditMode">Credit</button>
+                        </div>
+                        @if (_paymentMode == PaymentUiMode.Online)
+                        {
+                            <div class="sp-online-row sf-online-row">
+                                @foreach (CheckoutPaymentOption channel in CheckoutPaymentMethods.OnlineChannels)
+                                {
+                                    <button type="button"
+                                            class="channel-pill @(string.Equals(_onlineChannel, channel.Method, StringComparison.Ordinal) ? "active" : string.Empty)"
+                                            @onclick="() => _onlineChannel = channel.Method">
+                                        @channel.Label
+                                    </button>
+                                }
+                                <input class="txn-ref-input" placeholder="Txn ref" @bind="_onlineTxnRef" @bind:event="oninput" disabled="@_isBusy" />
+                            </div>
+                        }
+                    </div>
+                    <div class="sp-summary-item sp-balance-summary">
+                        <div class="sp-summary-label">Net Balance / Change</div>
+                        <div class="sp-summary-value sp-balance-value">@FormatRs(DisplayBalancePaisa)</div>
+                    </div>
+                </div>
             </div>
         </section>
-    </div>
-</div>
+    </main>
 
+    <section class="sp-action-bar" role="toolbar" aria-label="POS shortcuts">
+        <button type="button" class="sp-action-btn" data-pos-fkey="F1" disabled="@ModalOpen" @onclick="OpenCalculator">
+            <i class="fa-solid fa-calculator" aria-hidden="true"></i>
+            <span class="sp-action-key">F1</span>
+            <span class="sp-action-label">Open Calculator</span>
+        </button>
+        <button type="button" class="sp-action-btn" data-pos-fkey="F2" disabled="@ModalOpen" @onclick="OpenItemSearch">
+            <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+            <span class="sp-action-key">F2</span>
+            <span class="sp-action-label">Search Product</span>
+        </button>
+        <button type="button" class="sp-action-btn" data-pos-fkey="F3" disabled="@ModalOpen" @onclick="OpenAddCustomer">
+            <i class="fa-solid fa-user-plus" aria-hidden="true"></i>
+            <span class="sp-action-key">F3</span>
+            <span class="sp-action-label">Add Customer</span>
+        </button>
+        <button type="button" class="sp-action-btn" data-pos-fkey="F4" disabled="@ModalOpen" @onclick="OpenSearchCustomerAsync">
+            <i class="fa-solid fa-user" aria-hidden="true"></i>
+            <span class="sp-action-key">F4</span>
+            <span class="sp-action-label">Search Customer</span>
+        </button>
+        <button type="button" class="sp-action-btn" data-pos-fkey="F5" disabled="@ModalOpen" @onclick="GoSaleReturn">
+            <i class="fa-solid fa-arrow-rotate-left" aria-hidden="true"></i>
+            <span class="sp-action-key">F5</span>
+            <span class="sp-action-label">Sale Return</span>
+        </button>
+        <button type="button" class="sp-action-btn" data-pos-fkey="F6" disabled="@(_isBusy || ModalOpen)" @onclick="DuplicateLastInvoiceAsync">
+            <i class="fa-solid fa-file-invoice" aria-hidden="true"></i>
+            <span class="sp-action-key">F6</span>
+            <span class="sp-action-label">Duplicate Invoice</span>
+        </button>
+        <button type="button" class="sp-action-btn @(_printOnPrinter ? "is-on" : null)" data-pos-fkey="F7" disabled="@ModalOpen" @onclick="TogglePrintInvoice">
+            <i class="fa-solid fa-print" aria-hidden="true"></i>
+            <span class="sp-action-key">F7</span>
+            <span class="sp-action-label">Print Invoice</span>
+        </button>
+        <button type="button" class="sp-action-btn" data-pos-fkey="F8" disabled="@(_isBusy || ModalOpen)" @onclick="NewSale">
+            <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+            <span class="sp-action-key">F8</span>
+            <span class="sp-action-label">Clear Invoice</span>
+        </button>
+        <button type="button" class="sp-action-btn" data-pos-fkey="F9" disabled="@ModalOpen" @onclick="GoInvoiceList">
+            <i class="fa-solid fa-list" aria-hidden="true"></i>
+            <span class="sp-action-key">F9</span>
+            <span class="sp-action-label">Invoice List</span>
+        </button>
+        <button type="button"
+                class="sp-save"
+                id="saveInvoiceButton"
+                disabled="@(_isBusy || (!CartService.IsEmpty && !CanPay))"
+                @onclick="OnSaveInvoiceClick">
+            <div class="sp-save-icon">
+                <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
+            </div>
+            <div class="sp-save-title">Save Invoice</div>
+            <div class="sp-save-shortcuts">
+                <span class="sp-shortcut-chip">Insert</span>
+                <span class="sp-shortcut-chip">Ctrl + Enter</span>
+                <span class="sp-shortcut-chip">F12</span>
+            </div>
+        </button>
+    </section>
+
+    <footer class="sp-status-bar">
+        <div>
+            User : @CashierDisplayName
+            <span>@FormatClock(_now)</span>
+            <span> · Drawer Rs @FormatRs(ShiftStatus.ExpectedCashPaisa)</span>
+        </div>
+        <div>Version: v1.0.0</div>
+    </footer>
+</div>
 @if (_showPhonePrompt)
 {
     <div class="modal-backdrop" @onclick="ClosePhonePrompt">
@@ -440,6 +522,11 @@
     }
 
     private ElementReference _scanInput;
+    private ElementReference _tableScroll;
+    private DotNetObjectReference<SalesTerminal>? _selfRef;
+    private int _slotCount = 16;
+    private bool _tableWatchBound;
+    private int VisibleSlotCount => Math.Max(Math.Min(_slotCount, CartService.MaxLines), CartService.Lines.Count);
     private readonly SalesScanFocusCoordinator _scanFocus = new();
     private List<SalesProductDto> _products = [];
     private List<SaleMasterDto> _masters = [];
@@ -448,9 +535,14 @@
     private readonly Dictionary<Guid, string> _qtyText = [];
     private readonly Dictionary<Guid, string> _priceText = [];
     private readonly Dictionary<Guid, string> _totalText = [];
+    private readonly Dictionary<Guid, string> _codeText = [];
     private string? _focusedField;
+    private Guid? _lastScannedLineId;
+    private Guid? _pendingFlashLineId;
+    private static readonly string[] TableFields = ["itemCode", "description", "packing", "qty", "price", "total"];
 
     private string _scanText = string.Empty;
+    private bool _searchOpen;
     private bool _showScanDropdown;
     private bool _broadSearch;
     private int _scanHighlight;
@@ -460,6 +552,7 @@
     private string? _customerLoadError;
     private string? _whatsAppError;
     private bool _isBusy;
+    private bool _saveInFlight;
     private bool _useWalkInCustomer = true;
     private bool _showPhonePrompt;
     private bool _showPurchaseOrders;
@@ -519,6 +612,22 @@
 
         return customer.Id.ToString("N")[^5..].ToUpperInvariant();
     }
+
+    private string CustomerCodeDisplay =>
+        !_useWalkInCustomer && _selectedCustomer is not null
+            ? DisplayCodeFor(_selectedCustomer)
+            : "WALKIN";
+
+    private string CustomerNameDisplay =>
+        !_useWalkInCustomer && _selectedCustomer is not null
+            ? _selectedCustomer.Name
+            : "WALK IN CUSTOMER";
+
+    private string CashierDisplayName =>
+        string.IsNullOrWhiteSpace(SessionService.CashierName) ? "CASHIER" : SessionService.CashierName.ToUpperInvariant();
+
+    private static string FormatClock(DateTime now) =>
+        now.ToString("dd/MM/yyyy hh:mm:ss tt", CultureInfo.InvariantCulture);
 
     private IReadOnlyList<object> ScanHits
     {
@@ -649,10 +758,23 @@
         }
 
         if (!decimal.TryParse(_discountPctText, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal pct)
-            || pct < 0)
+            && !decimal.TryParse(_discountPctText, NumberStyles.Number, CultureInfo.CurrentCulture, out pct))
         {
             return;
         }
+
+        if (pct < 0)
+        {
+            pct = 0;
+        }
+
+        if (pct > 100)
+        {
+            pct = 100;
+        }
+
+        pct = Math.Truncate(pct);
+        _discountPctText = pct.ToString("0", CultureInfo.InvariantCulture);
 
         long paisa = (long)Math.Round(CartService.SubtotalPaisa * pct / 100m, MidpointRounding.AwayFromZero);
         _discountRsText = (paisa / 100m).ToString("0.##", CultureInfo.InvariantCulture);
@@ -690,6 +812,11 @@
     }
 
     private long SaleBalancePaisa => PayablePaisa - Math.Min(PaymentReceivedPaisa, PayablePaisa);
+
+    private long DisplayBalancePaisa =>
+        _paymentMode == PaymentUiMode.Cash && PaymentReceivedPaisa > PayablePaisa
+            ? PaymentReceivedPaisa - PayablePaisa
+            : SaleBalancePaisa;
 
     private long CustomerNetBalancePaisa =>
         PreviousDuePaisa + PayablePaisa - PaymentReceivedPaisa;
@@ -748,7 +875,7 @@
                     StateHasChanged();
                 }
             });
-        }, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
+        }, null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
 
         try
         {
@@ -832,11 +959,26 @@
                 _scanFocus.RequestScan();
                 try
                 {
-                    await Js.InvokeVoidAsync("webPosBindCtrlK");
+                    await Js.InvokeVoidAsync("webPosBindPosShortcuts");
+                    await Js.InvokeVoidAsync("webPosBindCellKeys");
                 }
                 catch
                 {
                     /* ignore until DOM ready */
+                }
+            }
+
+            if (!_tableWatchBound)
+            {
+                try
+                {
+                    _selfRef ??= DotNetObjectReference.Create(this);
+                    await Js.InvokeVoidAsync("webPosWatchTableRows", _tableScroll, _selfRef);
+                    _tableWatchBound = true;
+                }
+                catch
+                {
+                    /* retry on the next render */
                 }
             }
 
@@ -850,10 +992,23 @@
                 /* ignore until DOM ready */
             }
 
-            (SalesScanFocusCoordinator.Target target, int? qtyRow) = _scanFocus.TakePending();
+            if (_pendingFlashLineId is Guid flashId)
+            {
+                _pendingFlashLineId = null;
+                try
+                {
+                    await Js.InvokeVoidAsync("webPosFlashLine", flashId.ToString());
+                }
+                catch
+                {
+                    /* ignore until DOM ready */
+                }
+            }
+
+            (SalesScanFocusCoordinator.Target target, int? qtyRow, string? field) = _scanFocus.TakePending();
             if (target == SalesScanFocusCoordinator.Target.Qty && qtyRow is int row)
             {
-                await FocusQtyAsync(row);
+                await FocusTableCellAsync(row, string.IsNullOrWhiteSpace(field) ? "qty" : field);
                 return;
             }
 
@@ -869,7 +1024,7 @@
         }
     }
 
-    private async Task FocusQtyAsync(int row)
+    private async Task FocusTableCellAsync(int row, string field)
     {
         if (row < 0 || row >= CartService.Lines.Count)
         {
@@ -877,16 +1032,16 @@
             return;
         }
 
+        CartLine line = CartService.Lines[row];
         _selectedLineIndex = row;
+        _focusedField = field;
         try
         {
-            // Prefer DOM id over ElementReference[] — array @ref capture during render
-            // was throwing IndexOutOfRangeException → yellow "unhandled error" bar.
-            await Js.InvokeVoidAsync("webPosFocusById", $"pos-qty-{row}");
+            await Js.InvokeVoidAsync("webPosFocusById", CellId(line.LineId, field));
         }
         catch (Exception ex)
         {
-            Logger.LogDebug(ex, "Qty focus failed; falling back to scan.");
+            Logger.LogDebug(ex, "Cell focus failed; falling back to scan.");
             try { await FocusScanAsync(); }
             catch { /* ignore */ }
         }
@@ -894,8 +1049,7 @@
 
     private Task RequestQtyFocusAsync(int row)
     {
-        // Always resolve through coordinator so TAB targets the latest row.
-        _scanFocus.RequestLatestQty(CartService.Lines.Count);
+        _scanFocus.RequestCell(row, "qty");
         if (row >= 0 && row < CartService.Lines.Count)
         {
             _selectedLineIndex = row;
@@ -1130,6 +1284,15 @@
             return;
         }
 
+        bool exists = alreadyInCart > 0;
+        if (!exists && CartService.Lines.Count >= CartService.MaxLines)
+        {
+            _scanText = string.Empty;
+            _showScanDropdown = false;
+            _scanFocus.OnProductAdded();
+            return;
+        }
+
         // Avoid re-entrant StateHasChanged from CartService.Changed during this UI event —
         // that was crashing Blazor WebView with the yellow "unhandled error" bar.
         CartService.Changed -= OnCartChanged;
@@ -1142,10 +1305,17 @@
             CartService.Changed += OnCartChanged;
         }
 
+        CartLine? added = CartService.Lines.FirstOrDefault(l => l.Product.ProductId == catalog.ProductId);
+        if (added is not null)
+        {
+            _lastScannedLineId = added.LineId;
+            _pendingFlashLineId = added.LineId;
+        }
+
         SyncLineEditors(catalog.ProductId);
         FocusLastLine(catalog.ProductId);
         // Scanner workflow: stay on barcode so the next scan can fire immediately.
-        // Use TAB explicitly to jump to the latest row quantity.
+        // Use TAB explicitly to jump to the last scanned row quantity.
         _scanFocus.OnProductAdded();
     }
 
@@ -1221,10 +1391,15 @@
         if (e.Key == "Tab")
         {
             _showScanDropdown = false;
-            int latest = CartService.Lines.Count - 1;
-            if (latest >= 0)
+            int target = LastScannedRowIndex;
+            if (target < 0 && CartService.Lines.Count > 0)
             {
-                await RequestQtyFocusAsync(latest);
+                target = 0;
+            }
+
+            if (target >= 0)
+            {
+                await RequestQtyFocusAsync(target);
             }
 
             return;
@@ -1233,22 +1408,14 @@
         if (e.CtrlKey && e.Key == "Enter")
         {
             _showScanDropdown = false;
-            if (CanPay && !CartService.IsEmpty)
-            {
-                await PayNowAsync();
-            }
-
+            await RequestSaveInvoiceAsync(e.Repeat);
             return;
         }
 
         if (e.Key is "Insert" or "F12")
         {
             _showScanDropdown = false;
-            if (CanPay && !CartService.IsEmpty)
-            {
-                await PayNowAsync();
-            }
-
+            await RequestSaveInvoiceAsync(e.Repeat);
             return;
         }
 
@@ -1283,12 +1450,6 @@
                 MoveSelectedLine(-1);
             }
 
-            return;
-        }
-
-        if (e.Key == "Delete")
-        {
-            DeleteSelectedLine();
             return;
         }
 
@@ -1395,9 +1556,9 @@
         if (product is null)
         {
             _errorMessage = $"Product not found for '{scan}'.";
+            _scanText = string.Empty;
             _showScanDropdown = false;
             PlayNotFoundBeep();
-            // Preserve existing not-found behavior (message + beep); keep barcode focused for next scan.
             _scanFocus.OnProductNotFound();
             await InvokeAsync(StateHasChanged);
             return;
@@ -1411,6 +1572,13 @@
 
     private async Task FocusScanAsync()
     {
+        bool wasClosed = !_searchOpen;
+        _searchOpen = true;
+        if (wasClosed)
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+
         try
         {
             await Js.InvokeVoidAsync("webPosFocusById", "scanInput");
@@ -1424,38 +1592,177 @@
         try { await _scanInput.FocusAsync(); } catch { /* ignore */ }
     }
 
-    private async Task OnQtyKeyDown(KeyboardEventArgs e, int row)
+    private async Task OnCellKeyDown(KeyboardEventArgs e, int row, string field)
     {
         if (_isBusy || ModalOpen)
         {
             return;
         }
 
+        if (e.Repeat && e.Key is "F12" or "Insert")
+        {
+            return;
+        }
+
         if (e.CtrlKey && e.Key == "Enter")
         {
-            if (CanPay && !CartService.IsEmpty)
-            {
-                await PayNowAsync();
-            }
-
+            await RequestSaveInvoiceAsync(e.Repeat);
             return;
         }
 
         if (e.Key is "Insert" or "F12")
         {
-            if (CanPay && !CartService.IsEmpty)
+            await RequestSaveInvoiceAsync(e.Repeat);
+            return;
+        }
+
+        if (e.Key == "Delete" && !e.ShiftKey && !e.CtrlKey && !e.AltKey)
+        {
+            await DeleteLineAtAsync(row, field);
+            return;
+        }
+
+        CartLine? line = row >= 0 && row < CartService.Lines.Count ? CartService.Lines[row] : null;
+        if (line is not null && field == "total" && e.Key is "Enter" or "Tab" or "ArrowUp" or "ArrowDown" or "ArrowLeft" or "ArrowRight")
+        {
+            CommitTotal(line);
+        }
+
+        if (line is not null && IsDeleteCommand(GetCellRaw(line, field)))
+        {
+            if (e.Key is "Enter" or "Tab")
             {
-                await PayNowAsync();
+                await DeleteLineAtAsync(row, field);
+                return;
+            }
+        }
+
+        if (e.Key == "Enter")
+        {
+            int next = e.ShiftKey ? row - 1 : row + 1;
+            if (next >= 0 && next < CartService.Lines.Count)
+            {
+                await FocusTableCellAsync(next, field);
+            }
+            else if (!e.ShiftKey)
+            {
+                await RequestScanFocusAsync();
             }
 
             return;
         }
 
-        if (e.Key == "Enter")
+        if (e.Key == "ArrowUp")
         {
-            // Always return to barcode after editing quantity (scanner-first workflow).
-            _scanFocus.OnQtyEnter();
-            await InvokeAsync(StateHasChanged);
+            if (row > 0)
+            {
+                await FocusTableCellAsync(row - 1, field);
+            }
+
+            return;
+        }
+
+        if (e.Key == "ArrowDown")
+        {
+            if (row + 1 < CartService.Lines.Count)
+            {
+                await FocusTableCellAsync(row + 1, field);
+            }
+
+            return;
+        }
+
+        if (e.Key == "Tab")
+        {
+            (int nextRow, string nextField) = e.ShiftKey
+                ? PreviousTableCell(row, field)
+                : NextTableCell(row, field);
+            await FocusTableCellAsync(nextRow, nextField);
+            return;
+        }
+
+        if (e.Key == "ArrowLeft")
+        {
+            (int nextRow, string nextField) = PreviousTableCell(row, field);
+            await FocusTableCellAsync(nextRow, nextField);
+            return;
+        }
+
+        if (e.Key == "ArrowRight")
+        {
+            (int nextRow, string nextField) = NextTableCell(row, field);
+            await FocusTableCellAsync(nextRow, nextField);
+        }
+    }
+
+    private static (int row, string field) NextTableCell(int row, string field)
+    {
+        int i = Array.IndexOf(TableFields, field);
+        if (i < 0)
+        {
+            i = 0;
+        }
+
+        if (i < TableFields.Length - 1)
+        {
+            return (row, TableFields[i + 1]);
+        }
+
+        return (row + 1, TableFields[0]);
+    }
+
+    private static (int row, string field) PreviousTableCell(int row, string field)
+    {
+        int i = Array.IndexOf(TableFields, field);
+        if (i < 0)
+        {
+            i = 0;
+        }
+
+        if (i > 0)
+        {
+            return (row, TableFields[i - 1]);
+        }
+
+        return (row - 1, TableFields[^1]);
+    }
+
+    private static string CellId(Guid lineId, string field) => $"pos-{field}-{lineId:N}";
+
+    private int LastScannedRowIndex
+    {
+        get
+        {
+            if (_lastScannedLineId is Guid id)
+            {
+                for (int i = 0; i < CartService.Lines.Count; i++)
+                {
+                    if (CartService.Lines[i].LineId == id)
+                    {
+                        return i;
+                    }
+                }
+            }
+
+            return CartService.Lines.Count > 0 ? 0 : -1;
+        }
+    }
+
+    private async Task OnCellFocusAsync(int row, string field)
+    {
+        OnLineFieldFocus(row, field);
+        if (row < 0 || row >= CartService.Lines.Count)
+        {
+            return;
+        }
+
+        try
+        {
+            await Js.InvokeVoidAsync("webPosSelectById", CellId(CartService.Lines[row].LineId, field));
+        }
+        catch
+        {
+            /* ignore */
         }
     }
 
@@ -1489,10 +1796,13 @@
 
     private void DeleteSelectedLine()
     {
-        DeleteLineAt(_selectedLineIndex);
+        string field = !string.IsNullOrEmpty(_focusedField) && TableFields.Contains(_focusedField)
+            ? _focusedField
+            : "qty";
+        _ = DeleteLineAtAsync(_selectedLineIndex, field);
     }
 
-    private void DeleteLineAt(int index)
+    private async Task DeleteLineAtAsync(int index, string field)
     {
         if (index < 0 || index >= CartService.Lines.Count)
         {
@@ -1500,7 +1810,26 @@
         }
 
         CartLine line = CartService.Lines[index];
-        RemoveLine(line);
+        Guid deletedId = line.LineId;
+        Guid? lastId = _lastScannedLineId;
+        RemoveLine(line, restoreScan: false);
+
+        if (lastId == deletedId)
+        {
+            _lastScannedLineId = CartService.Lines.Count == 0
+                ? null
+                : CartService.Lines[Math.Min(index, CartService.Lines.Count - 1)].LineId;
+        }
+
+        if (CartService.Lines.Count == 0)
+        {
+            await RequestScanFocusAsync();
+            return;
+        }
+
+        int target = Math.Min(index, CartService.Lines.Count - 1);
+        string restoreField = TableFields.Contains(field) ? field : "qty";
+        await FocusTableCellAsync(target, restoreField);
     }
 
     private void OnLineFieldFocus(int row, string field)
@@ -1510,22 +1839,120 @@
     }
 
     private bool IsEditableFieldFocused =>
-        _focusedField is "search" or "qty" or "price" or "total" or "discount" or "payment";
+        _focusedField is "search" or "itemCode" or "description" or "packing" or "qty" or "price" or "total" or "discount" or "payment";
 
     private bool IsLineEditorFocused =>
-        _focusedField is "qty" or "price" or "total" or "discount" or "payment";
+        _focusedField is "itemCode" or "description" or "packing" or "qty" or "price" or "total" or "discount" or "payment";
+
+    private string GetCodeText(CartLine line) =>
+        _codeText.TryGetValue(line.Product.ProductId, out string? text)
+            ? text
+            : ItemCode(line.Product);
+
+    private string GetDescText(CartLine line) =>
+        line.DescriptionOverride ?? (line.Product.Name ?? string.Empty);
+
+    private string GetPackText(CartLine line) =>
+        line.PackingOverride
+        ?? (string.IsNullOrWhiteSpace(line.Product.PackingSize) ? "—" : line.Product.PackingSize);
+
+    private void OnCodeInput(CartLine line, ChangeEventArgs e) =>
+        _codeText[line.Product.ProductId] = e.Value?.ToString() ?? string.Empty;
+
+    private void OnDescInput(CartLine line, ChangeEventArgs e) =>
+        line.DescriptionOverride = e.Value?.ToString() ?? string.Empty;
+
+    private void OnPackInput(CartLine line, ChangeEventArgs e) =>
+        line.PackingOverride = e.Value?.ToString() ?? string.Empty;
+
+    private void OnCodeCommit(CartLine line)
+    {
+        if (!_codeText.TryGetValue(line.Product.ProductId, out string? raw))
+        {
+            return;
+        }
+
+        if (IsDeleteCommand(raw))
+        {
+            int index = IndexOfLine(line);
+            _ = DeleteLineAtAsync(index, "itemCode");
+            return;
+        }
+
+        string code = raw.Trim();
+        if (string.IsNullOrEmpty(code) || string.Equals(code, ItemCode(line.Product), StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        SalesProductDto? product = ResolveProductFromScan(code);
+        if (product is null)
+        {
+            _codeText[line.Product.ProductId] = ItemCode(line.Product);
+            return;
+        }
+
+        _codeText.Remove(line.Product.ProductId);
+        CartService.Remove(line.Product.ProductId);
+        AddProductToCart(product);
+    }
+
+    private int IndexOfLine(CartLine line)
+    {
+        for (int i = 0; i < CartService.Lines.Count; i++)
+        {
+            if (CartService.Lines[i].LineId == line.LineId)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool IsDeleteCommand(string? raw)
+    {
+        string value = (raw ?? string.Empty).Trim();
+        return value.Equals("delete", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("del", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string GetCellRaw(CartLine line, string field) =>
+        field switch
+        {
+            "itemCode" => GetCodeText(line),
+            "description" => GetDescText(line),
+            "packing" => GetPackText(line),
+            "qty" => GetQtyText(line),
+            "price" => GetPriceText(line),
+            "total" => GetTotalText(line),
+            _ => string.Empty
+        };
 
     private string GetTotalText(CartLine line) =>
         _totalText.TryGetValue(line.Product.ProductId, out string? text)
             ? text
             : FormatRs(line.LineTotalPaisa);
 
-    private void OnTotalChanged(CartLine line, ChangeEventArgs e)
+    private void OnTotalInput(CartLine line, ChangeEventArgs e) =>
+        _totalText[line.Product.ProductId] = e.Value?.ToString() ?? string.Empty;
+
+    private void CommitTotal(CartLine line)
     {
-        string raw = e.Value?.ToString() ?? string.Empty;
-        _totalText[line.Product.ProductId] = raw;
+        if (!_totalText.TryGetValue(line.Product.ProductId, out string? raw))
+        {
+            return;
+        }
+
+        if (IsDeleteCommand(raw))
+        {
+            _ = DeleteLineAtAsync(IndexOfLine(line), "total");
+            return;
+        }
+
         if (!TryParseRs(raw, out long totalPaisa) || line.Quantity <= 0)
         {
+            SyncLineEditors(line.Product.ProductId);
             return;
         }
 
@@ -1537,6 +1964,7 @@
     {
         _scanText = string.Empty;
         _showScanDropdown = false;
+        _searchOpen = true;
         _focusedField = "search";
         _scanFocus.RequestScan();
         try
@@ -1614,17 +2042,36 @@
         }
 
         CartService.SetUnitPrice(line.Product.ProductId, paisa);
+        CartLine? updated = CartService.Lines.FirstOrDefault(l => l.Product.ProductId == line.Product.ProductId);
+        if (updated is not null)
+        {
+            _totalText[line.Product.ProductId] = FormatRs(updated.LineTotalPaisa);
+        }
+    }
+
+    private void OnPriceBlur(CartLine line)
+    {
+        if (IsDeleteCommand(GetPriceText(line)))
+        {
+            _ = DeleteLineAtAsync(IndexOfLine(line), "price");
+            return;
+        }
+
         SyncLineEditors(line.Product.ProductId);
     }
 
-    private void RemoveLine(CartLine line)
+    private void RemoveLine(CartLine line, bool restoreScan = true)
     {
         _qtyText.Remove(line.Product.ProductId);
         _priceText.Remove(line.Product.ProductId);
         _totalText.Remove(line.Product.ProductId);
+        _codeText.Remove(line.Product.ProductId);
         CartService.Remove(line.Product.ProductId);
         _selectedLineIndex = Math.Min(_selectedLineIndex, CartService.Lines.Count - 1);
-        _scanFocus.OnRowRemoved();
+        if (restoreScan)
+        {
+            _scanFocus.OnRowRemoved();
+        }
     }
 
     private void ClearCart()
@@ -1634,11 +2081,13 @@
         _qtyText.Clear();
         _priceText.Clear();
         _totalText.Clear();
+        _codeText.Clear();
         CartService.Clear();
         _cashGivenText = string.Empty;
         _discountRsText = string.Empty;
         _discountPctText = string.Empty;
         _selectedLineIndex = -1;
+        _lastScannedLineId = null;
     }
 
     private void AssignDraftInvoiceNo()
@@ -1726,6 +2175,39 @@
 
     private void OpenCalculator() => _showCalculator = true;
 
+    private void OnSearchIconClick()
+    {
+        ToggleBroadSearch();
+    }
+
+    private void GoSaleReturn() => Navigation.NavigateTo("/returns");
+
+    private void GoInvoiceList() => Navigation.NavigateTo("/recent-bills");
+
+    private async Task DuplicateLastInvoiceAsync()
+    {
+        if (LastSaleReceiptStore.Current is null)
+        {
+            _errorMessage = "No previous invoice to duplicate.";
+            await FocusScanAsync();
+            return;
+        }
+
+        await PrintReceiptAsync();
+        _successMessage = "Duplicate invoice sent to printer.";
+        await FocusScanAsync();
+    }
+
+    private Task OnSaveInvoiceClick(MouseEventArgs e)
+    {
+        if (e.CtrlKey || e.MetaKey || e.ShiftKey || e.AltKey)
+        {
+            return Task.CompletedTask;
+        }
+
+        return RequestSaveInvoiceAsync(repeat: false);
+    }
+
     private void OpenAddCustomer() => _showCustomerAdd = true;
 
     private async Task OpenSearchCustomerAsync()
@@ -1769,6 +2251,13 @@
     private void ToggleWhatsAppInvoice() => _whatsAppReceipt = !_whatsAppReceipt;
 
     private void TogglePrintInvoice() => _printOnPrinter = !_printOnPrinter;
+
+    private void OnWhatsAppToggle(ChangeEventArgs e) => _whatsAppReceipt = IsChecked(e.Value);
+
+    private void OnPrintToggle(ChangeEventArgs e) => _printOnPrinter = IsChecked(e.Value);
+
+    private static bool IsChecked(object? value) =>
+        value is true || string.Equals(value?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
 
     private void GoCloseShift() => Navigation.NavigateTo("/close-shift");
 
@@ -1845,9 +2334,12 @@
         List<CartLine> lines = CartService.Lines
             .Select(line => new CartLine
             {
+                LineId = line.LineId,
                 Product = line.Product,
                 Quantity = line.Quantity,
-                UnitPriceOverridePaisa = line.UnitPriceOverridePaisa
+                UnitPriceOverridePaisa = line.UnitPriceOverridePaisa,
+                DescriptionOverride = line.DescriptionOverride,
+                PackingOverride = line.PackingOverride
             })
             .ToList();
 
@@ -1912,6 +2404,87 @@
 
         _successMessage = "Held sale retrieved.";
         _checkoutError = null;
+    }
+
+    private async Task RequestSaveInvoiceAsync(bool repeat)
+    {
+        if (repeat || _isBusy || ModalOpen || _saveInFlight)
+        {
+            return;
+        }
+
+        _saveInFlight = true;
+        try
+        {
+            try
+            {
+                await Js.InvokeVoidAsync("webPosPressSave");
+            }
+            catch
+            {
+                /* ignore */
+            }
+
+            if (CartService.IsEmpty)
+            {
+                _scanText = string.Empty;
+                _showScanDropdown = false;
+                await RequestScanFocusAsync();
+                return;
+            }
+
+            if (!CanPay)
+            {
+                return;
+            }
+
+            await PayNowAsync();
+        }
+        finally
+        {
+            _saveInFlight = false;
+        }
+    }
+
+    private async Task OnDiscountFocusAsync()
+    {
+        _focusedField = "discount";
+        try { await Js.InvokeVoidAsync("webPosSelectById", "pos-discount-pct"); }
+        catch { /* ignore */ }
+    }
+
+    private async Task OnDiscountRsFocusAsync()
+    {
+        _focusedField = "discount";
+        try { await Js.InvokeVoidAsync("webPosSelectById", "pos-discount-rs"); }
+        catch { /* ignore */ }
+    }
+
+    private void OnDiscountBlur()
+    {
+        if (string.IsNullOrWhiteSpace(_discountPctText))
+        {
+            return;
+        }
+
+        OnDiscountPctInput(new ChangeEventArgs { Value = _discountPctText });
+    }
+
+    private async Task OnPaymentFocusAsync()
+    {
+        _focusedField = "payment";
+        try { await Js.InvokeVoidAsync("webPosSelectById", "pos-payment"); }
+        catch { /* ignore */ }
+    }
+
+    private void OnPaymentBlur()
+    {
+        if (string.IsNullOrWhiteSpace(_cashGivenText) || !TryParseRs(_cashGivenText, out long paisa))
+        {
+            return;
+        }
+
+        _cashGivenText = FormatRs(paisa);
     }
 
     private async Task PayNowAsync()
@@ -1989,9 +2562,12 @@
         List<CartLine> saleLines = CartService.Lines
             .Select(line => new CartLine
             {
+                LineId = line.LineId,
                 Product = line.Product,
                 Quantity = line.Quantity,
-                UnitPriceOverridePaisa = line.UnitPriceOverridePaisa
+                UnitPriceOverridePaisa = line.UnitPriceOverridePaisa,
+                DescriptionOverride = line.DescriptionOverride,
+                PackingOverride = line.PackingOverride
             })
             .ToList();
         string? customerPhone = _selectedCustomer?.PhoneNumber;
@@ -2029,12 +2605,10 @@
                 CustomerPhone = customerPhone
             });
 
-            _successMessage =
-                $"Sale complete · {sale.InvoiceNo} · Rs {FormatRs(sale.TotalAmountPaisa)}";
-
             _qtyText.Clear();
             _priceText.Clear();
             _totalText.Clear();
+            _codeText.Clear();
             CartService.Clear();
             _cashGivenText = string.Empty;
             _onlineTxnRef = string.Empty;
@@ -2045,6 +2619,7 @@
             _useWalkInCustomer = true;
             _paymentMode = PaymentUiMode.Cash;
             _selectedLineIndex = -1;
+            _lastScannedLineId = null;
             _whatsAppReceipt = false;
             _printOnPrinter = false;
             AssignDraftInvoiceNo();
@@ -2265,7 +2840,13 @@
             return;
         }
 
-        if (e.Key == "Delete" && !IsLineEditorFocused)
+        if (e.Key == "Enter" && !IsEditableFieldFocused)
+        {
+            await RequestScanFocusAsync();
+            return;
+        }
+
+        if (e.Key == "Delete" && !IsEditableFieldFocused)
         {
             DeleteSelectedLine();
             return;
@@ -2279,6 +2860,7 @@
 
         if (!ModalOpen && !IsEditableFieldFocused && IsSearchableKey(e))
         {
+            _searchOpen = true;
             _scanText += e.Key;
             _scanHighlight = 0;
             _showScanDropdown = _scanText.Trim().Length > 0;
@@ -2299,11 +2881,7 @@
 
         if (e.CtrlKey && e.Key == "Enter")
         {
-            if (CanPay && !CartService.IsEmpty)
-            {
-                await PayNowAsync();
-            }
-
+            await RequestSaveInvoiceAsync(e.Repeat);
             return;
         }
 
@@ -2321,34 +2899,36 @@
 
         switch (e.Key)
         {
-            case "F3":
-                await OpenSearchCustomerAsync();
+            case "F1":
+                OpenCalculator();
                 break;
-            case "F4":
+            case "F2":
+                OpenItemSearch();
+                break;
+            case "F3":
                 OpenAddCustomer();
                 break;
+            case "F4":
+                await OpenSearchCustomerAsync();
+                break;
             case "F5":
-                NewSale();
+                GoSaleReturn();
                 break;
             case "F6":
-                ToggleWhatsAppInvoice();
+                await DuplicateLastInvoiceAsync();
                 break;
             case "F7":
                 TogglePrintInvoice();
                 break;
             case "F8":
-                await SelectRegisteredCustomerMode();
+                NewSale();
                 break;
             case "F9":
-                SelectWalkInCustomer();
+                GoInvoiceList();
                 break;
             case "F12":
             case "Insert":
-                if (CanPay && !CartService.IsEmpty)
-                {
-                    await PayNowAsync();
-                }
-
+                await RequestSaveInvoiceAsync(e.Repeat);
                 break;
         }
     }
@@ -2495,6 +3075,29 @@
 
     private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
 
+    private static string FormatQty(decimal quantity) =>
+        quantity == decimal.Truncate(quantity)
+            ? quantity.ToString("0", CultureInfo.InvariantCulture)
+            : quantity.ToString("0.##", CultureInfo.InvariantCulture);
+
+    [JSInvokable]
+    public Task OnTableSlotCount(int count)
+    {
+        if (_isDisposed)
+        {
+            return Task.CompletedTask;
+        }
+
+        int next = Math.Clamp(count, 12, CartService.MaxLines);
+        if (next == _slotCount)
+        {
+            return Task.CompletedTask;
+        }
+
+        _slotCount = next;
+        return InvokeAsync(StateHasChanged);
+    }
+
     public void Dispose()
     {
         _isDisposed = true;
@@ -2502,5 +3105,7 @@
         ShiftStatus.Changed -= OnShiftStatusChanged;
         _clockTimer?.Dispose();
         _clockTimer = null;
+        _selfRef?.Dispose();
+        _selfRef = null;
     }
 }
