@@ -243,4 +243,159 @@ public sealed class SalesIntegrationTests
         shift.Should().NotBeNull();
         shift!.ExpectedCashPaisa.Should().Be(saleAmountPaisa - refundAmountPaisa);
     }
+
+    [Fact]
+    public async Task CompleteSale_OverpayWithCustomerCredit_ShouldPostPaymentAndLowerBalance()
+    {
+        await using IntegrationTestScope scope = _fixture.CreateScope();
+        SaleSeedData seed = await SeedHelper.SeedSalePrerequisitesAsync(scope.DbContext);
+
+        PartyDto customer = await scope.PartyService.CreatePartyAsync(new CreatePartyRequest
+        {
+            Role = PartyTypes.Customer,
+            Name = $"Overpay-{Guid.NewGuid():N}"[..18],
+            PhoneNumber = $"03{Guid.NewGuid():N}"[..11],
+            Address = "Lahore",
+            CreditLimitPaisa = 5_000_000
+        });
+
+        long unitPricePaisa = seed.UnitPricePaisa;
+        long netPaisa = unitPricePaisa;
+        long excessPaisa = 25_00;
+        long amountPaid = netPaisa + excessPaisa;
+        string invoiceNo = $"INV-{Guid.NewGuid():N}";
+
+        CompleteSaleResult result = await scope.SalesService.CompleteSaleAsync(new CompleteSaleRequest
+        {
+            InvoiceNo = invoiceNo,
+            ShiftId = seed.ShiftId,
+            TerminalId = seed.TerminalId,
+            CashierId = seed.CashierId,
+            CustomerId = customer.Id,
+            PaymentMethod = "CASH",
+            DiscountAmountPaisa = 0L,
+            AmountPaidPaisa = amountPaid,
+            ApplyExcessAsCustomerCredit = true,
+            Lines =
+            [
+                new SaleLineRequest
+                {
+                    ProductId = seed.ProductId,
+                    BatchId = seed.BatchId,
+                    BatchNumber = seed.BatchNumber,
+                    ProductName = seed.ProductName,
+                    Quantity = 1m,
+                    UnitPricePaisa = unitPricePaisa,
+                    DiscountAppliedPaisa = 0L
+                }
+            ]
+        });
+
+        result.AmountPaidPaisa.Should().Be(amountPaid);
+        result.ChangePaisa.Should().Be(0);
+        result.CustomerCreditAppliedPaisa.Should().Be(excessPaisa);
+        result.CustomerBalancePaisa.Should().Be(-excessPaisa);
+
+        await using IntegrationTestScope assertScope = _fixture.CreateScope();
+
+        Party? party = await assertScope.DbContext.Parties
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == customer.Id);
+        party.Should().NotBeNull();
+        party!.CurrentBalancePaisa.Should().Be(-excessPaisa);
+
+        List<PartyLedger> ledger = await assertScope.DbContext.PartyLedgers
+            .AsNoTracking()
+            .Where(e => e.PartyId == customer.Id)
+            .OrderBy(e => e.CreatedAt)
+            .ToListAsync();
+
+        ledger.Should().Contain(e => e.Type == "SALE" && e.TransactionAmountPaisa == netPaisa);
+        ledger.Should().Contain(e =>
+            e.Type == "PAYMENT"
+            && e.TransactionAmountPaisa == excessPaisa
+            && e.ReferenceDetails.Contains("-ADV", StringComparison.Ordinal));
+
+        List<GeneralLedgerEntry> paymentEntries = await assertScope.DbContext.GeneralLedgerEntries
+            .AsNoTracking()
+            .Where(e => e.ReferenceNo == $"{invoiceNo}-ADV")
+            .ToListAsync();
+        paymentEntries.Should().NotBeEmpty();
+        paymentEntries.Should().Contain(e =>
+            e.TransactionType == "CUSTOMER_PAYMENT"
+            && e.AccountCode == LedgerAccounts.AccountsReceivable
+            && e.CreditPaisa == excessPaisa);
+
+        CashierShift? shift = await assertScope.DbContext.CashierShifts
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == seed.ShiftId);
+        shift.Should().NotBeNull();
+        shift!.ExpectedCashPaisa.Should().Be(netPaisa + excessPaisa);
+    }
+
+    [Fact]
+    public async Task CompleteSale_OverpayWithoutCreditFlag_ShouldReturnChangeOnly()
+    {
+        await using IntegrationTestScope scope = _fixture.CreateScope();
+        SaleSeedData seed = await SeedHelper.SeedSalePrerequisitesAsync(scope.DbContext);
+
+        PartyDto customer = await scope.PartyService.CreatePartyAsync(new CreatePartyRequest
+        {
+            Role = PartyTypes.Customer,
+            Name = $"Change-{Guid.NewGuid():N}"[..18],
+            PhoneNumber = $"03{Guid.NewGuid():N}"[..11],
+            Address = "Lahore",
+            CreditLimitPaisa = 5_000_000
+        });
+
+        long unitPricePaisa = seed.UnitPricePaisa;
+        long excessPaisa = 10_00;
+        string invoiceNo = $"INV-{Guid.NewGuid():N}";
+
+        CompleteSaleResult result = await scope.SalesService.CompleteSaleAsync(new CompleteSaleRequest
+        {
+            InvoiceNo = invoiceNo,
+            ShiftId = seed.ShiftId,
+            TerminalId = seed.TerminalId,
+            CashierId = seed.CashierId,
+            CustomerId = customer.Id,
+            PaymentMethod = "CASH",
+            DiscountAmountPaisa = 0L,
+            AmountPaidPaisa = unitPricePaisa + excessPaisa,
+            ApplyExcessAsCustomerCredit = false,
+            Lines =
+            [
+                new SaleLineRequest
+                {
+                    ProductId = seed.ProductId,
+                    BatchId = seed.BatchId,
+                    BatchNumber = seed.BatchNumber,
+                    ProductName = seed.ProductName,
+                    Quantity = 1m,
+                    UnitPricePaisa = unitPricePaisa,
+                    DiscountAppliedPaisa = 0L
+                }
+            ]
+        });
+
+        result.ChangePaisa.Should().Be(excessPaisa);
+        result.CustomerCreditAppliedPaisa.Should().Be(0);
+        result.CustomerBalancePaisa.Should().Be(0);
+
+        await using IntegrationTestScope assertScope = _fixture.CreateScope();
+        Party? party = await assertScope.DbContext.Parties
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == customer.Id);
+        party!.CurrentBalancePaisa.Should().Be(0);
+
+        bool hasPayment = await assertScope.DbContext.PartyLedgers
+            .AsNoTracking()
+            .AnyAsync(e => e.PartyId == customer.Id && e.Type == "PAYMENT");
+        hasPayment.Should().BeFalse();
+
+        CashierShift? shift = await assertScope.DbContext.CashierShifts
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == seed.ShiftId);
+        shift!.ExpectedCashPaisa.Should().Be(unitPricePaisa);
+    }
 }

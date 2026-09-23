@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>🛒 Customer Display — Smart POS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <style>
+        * { box-sizing: border-box; }
+        html, body {
+            margin: 0;
+            min-height: 100%;
+            height: 100%;
+            font-family: Inter, "Segoe UI", sans-serif;
+            background: #0f172a;
+            color: #f8fafc;
+        }
+        body {
+            display: flex;
+            flex-direction: column;
+            padding: 28px 36px 32px;
+        }
+        h1 {
+            margin: 0 0 8px;
+            font-size: clamp(1.6rem, 3.2vw, 2.2rem);
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            color: #fff;
+        }
+        #cust {
+            color: #7dd3fc;
+            font-size: clamp(0.95rem, 1.8vw, 1.15rem);
+            font-weight: 600;
+            letter-spacing: 0.01em;
+        }
+        #lines {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow: auto;
+            margin: 28px 0 20px;
+        }
+        #lines:empty::before {
+            content: "Waiting for items...";
+            display: block;
+            color: #64748b;
+            font-size: 1.1rem;
+            font-weight: 550;
+            padding: 12px 0;
+        }
+        .row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 16px;
+            padding: 14px 0;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+            font-size: clamp(1.05rem, 2vw, 1.35rem);
+        }
+        .row span { color: #f1f5f9; font-weight: 550; }
+        .row strong {
+            color: #fff;
+            font-weight: 750;
+            font-variant-numeric: tabular-nums;
+        }
+        #tot {
+            margin-top: auto;
+            font-size: clamp(1.35rem, 2.8vw, 1.9rem);
+            font-weight: 800;
+            color: #fff;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.01em;
+        }
+        #tot .sep {
+            color: #64748b;
+            font-weight: 650;
+            margin: 0 0.35em;
+        }
+        #thank {
+            display: none;
+            margin: auto;
+            text-align: center;
+            padding: 48px 24px;
+        }
+        #thank h2 {
+            margin: 0;
+            font-size: clamp(2.2rem, 6vw, 3.4rem);
+            font-weight: 800;
+            letter-spacing: -0.03em;
+        }
+        #thank p {
+            margin: 14px 0 0;
+            color: #94a3b8;
+            font-size: clamp(1rem, 2vw, 1.25rem);
+            font-weight: 600;
+        }
+        body.is-thank #brand,
+        body.is-thank #cust,
+        body.is-thank #lines,
+        body.is-thank #tot {
+            display: none;
+        }
+        body.is-thank #thank {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div id="brand">
+        <h1>Smart POS</h1>
+    </div>
+    <div id="cust">WALK IN CUSTOMER · Invoice #—</div>
+    <div id="lines" aria-live="polite"></div>
+    <div id="tot">Due 0.00 · Paid 0.00</div>
+    <div id="thank">
+        <h2>Thank You! 🎉</h2>
+        <p>Have a wonderful day ahead.</p>
+    </div>
+    <script>
+        (function () {
+            var CFD_CHANNEL = 'smart-pos-customer';
+            var CFD_STORAGE_KEY = 'smart-pos-cfd-snapshot';
+
+            function escapeHtml(value) {
+                return String(value == null ? '' : value)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;');
+            }
+
+            function render(s) {
+                if (!s) {
+                    return;
+                }
+
+                var cust = document.getElementById('cust');
+                var lines = document.getElementById('lines');
+                var tot = document.getElementById('tot');
+                var name = (s.customerName || 'WALK IN CUSTOMER').toString().toUpperCase();
+                var invoice = s.invoiceNo || '—';
+                cust.textContent = name + ' · Invoice #' + invoice;
+
+                if (s.phase === 'thankYou') {
+                    document.body.classList.add('is-thank');
+                    return;
+                }
+
+                document.body.classList.remove('is-thank');
+                var items = s.items || [];
+                lines.innerHTML = items.map(function (i) {
+                    return '<div class="row"><span>' +
+                        escapeHtml(Number(i.qty || 0)) + ' × ' + escapeHtml(i.description || '') +
+                        '</span><strong>' + Number(i.total || 0).toFixed(2) + '</strong></div>';
+                }).join('');
+
+                tot.innerHTML = 'Due ' + Number(s.netAmount || 0).toFixed(2) +
+                    ' <span class="sep">·</span> Paid ' + Number(s.payment || 0).toFixed(2);
+            }
+
+            try {
+                var ch = new BroadcastChannel(CFD_CHANNEL);
+                ch.onmessage = function (e) { render(e.data); };
+            } catch (e) { /* ignore */ }
+
+            window.addEventListener('storage', function (e) {
+                if (e.key === CFD_STORAGE_KEY && e.newValue) {
+                    try { render(JSON.parse(e.newValue)); } catch (err) { /* ignore */ }
+                }
+            });
+
+            try {
+                render(JSON.parse(localStorage.getItem(CFD_STORAGE_KEY) || 'null'));
+            } catch (e) { /* ignore */ }
+        })();
+    </script>
+</body>
+</html>

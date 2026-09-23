@@ -41,7 +41,19 @@ public sealed class LoginApiClient(IApiClient apiClient, ILogger<LoginApiClient>
             return Result<CashierDto>.Fail(
                 ex.StatusCode == System.Net.HttpStatusCode.Unauthorized
                     ? "Invalid cashier PIN."
-                    : ex.Message);
+                    : ex.StatusCode is System.Net.HttpStatusCode.ServiceUnavailable
+                        or System.Net.HttpStatusCode.RequestTimeout
+                        ? ex.Message
+                        : ex.Message);
+        }
+        catch (OperationCanceledException)
+        {
+            return Result<CashierDto>.Fail("WebPos API request timed out or was cancelled.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected cashier login failure.");
+            return Result<CashierDto>.Fail(ex.Message);
         }
     }
 }

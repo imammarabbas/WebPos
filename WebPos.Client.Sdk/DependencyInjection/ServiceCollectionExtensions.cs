@@ -57,7 +57,7 @@ public static class ServiceCollectionExtensions
                     .Value;
 
                 string baseAddress = string.IsNullOrWhiteSpace(options.BaseAddress)
-                    ? "https://localhost:8285/"
+                    ? "http://localhost:8080/"
                     : options.BaseAddress.Trim();
 
                 if (!baseAddress.EndsWith('/'))
@@ -66,7 +66,9 @@ public static class ServiceCollectionExtensions
                 }
 
                 client.BaseAddress = new Uri(baseAddress, UriKind.Absolute);
-                client.Timeout = TimeSpan.FromSeconds(100);
+
+                int timeoutSeconds = options.TimeoutSeconds <= 0 ? 15 : options.TimeoutSeconds;
+                client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
 
                 string apiVersion = string.IsNullOrWhiteSpace(options.ApiVersion)
                     ? "1.0.0"

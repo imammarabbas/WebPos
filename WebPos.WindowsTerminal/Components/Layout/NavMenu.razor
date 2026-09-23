@@ -111,10 +111,7 @@
     protected override async Task OnInitializedAsync()
     {
         ShiftStatus.Changed += OnStatusChanged;
-        if (SessionService.IsActive)
-        {
-            await ShiftStatus.RefreshAsync();
-        }
+        await ShiftStatus.RefreshAsync();
     }
 
     private void OnStatusChanged() => InvokeAsync(StateHasChanged);

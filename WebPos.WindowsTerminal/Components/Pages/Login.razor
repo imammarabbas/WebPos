@@ -4,7 +4,6 @@
 @using WebPos.Client.Sdk
 @implements IDisposable
 @inject LoginApiClient LoginApi
-@inject IApiClient ApiClient
 @inject NavigationManager Navigation
 @inject TerminalOptions TerminalOptions
 @inject SecureEnrollmentCertificateStore CertificateStore
@@ -130,7 +129,7 @@
     private string _pin = string.Empty;
     private string? _errorMessage;
     private bool _isBusy;
-    private bool _terminalOnline = true;
+    private bool _terminalOnline;
     private string? _pressedKey;
     private CancellationTokenSource? _pressCts;
     private DotNetObjectReference<Login>? _selfRef;
@@ -167,6 +166,7 @@
         {
             _selfRef = DotNetObjectReference.Create(this);
             await Js.InvokeVoidAsync("webPosBindPinPad", _selfRef);
+            await Js.InvokeVoidAsync("webPosAllowNextScanFocus");
         }
         catch
         {
@@ -251,13 +251,13 @@
     {
         try
         {
-            await ShiftStatus.RefreshAsync();
-            await ApiClient.GetEnrollmentPublicKeyAsync();
-            _terminalOnline = true;
+            using CancellationTokenSource cts = new(TimeSpan.FromSeconds(8));
+            await ShiftStatus.RefreshAsync(cts.Token);
+            _terminalOnline = ShiftStatus.IsApiOnline;
         }
         catch
         {
-            _terminalOnline = SessionService.IsActive && ShiftStatus.IsApiOnline;
+            _terminalOnline = false;
         }
     }
 
@@ -310,11 +310,25 @@
         _pin = string.Empty;
         try
         {
+            if (!_terminalOnline)
+            {
+                using CancellationTokenSource probeCts = new(TimeSpan.FromSeconds(5));
+                await ShiftStatus.ProbeApiReachableAsync(probeCts.Token);
+                _terminalOnline = ShiftStatus.IsApiOnline;
+                if (!_terminalOnline)
+                {
+                    _errorMessage =
+                        $"Cannot reach API at {ShiftStatus.ApiBaseAddress}. Start WebPos on port 8080, then try again.";
+                    return;
+                }
+            }
+
             Result<CashierDto> result = await LoginApi.LoginAsync(pin);
 
             if (!result.Success)
             {
-                _errorMessage = result.ErrorMessage;
+                _errorMessage = FormatLoginError(result.ErrorMessage);
+                _ = RefreshTerminalStatusAsync();
                 return;
             }
 
@@ -324,6 +338,23 @@
         {
             _isBusy = false;
         }
+    }
+
+    private string FormatLoginError(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return "Login failed.";
+        }
+
+        if (raw.Contains("timed out", StringComparison.OrdinalIgnoreCase)
+            || raw.Contains("Failed to reach", StringComparison.OrdinalIgnoreCase)
+            || raw.Contains("cancelled", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Cannot reach API at {ShiftStatus.ApiBaseAddress}. Check that WebPos is running (http://localhost:8080).";
+        }
+
+        return raw;
     }
 
     private async Task OnLock()

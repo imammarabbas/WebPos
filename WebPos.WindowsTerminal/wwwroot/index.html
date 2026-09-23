@@ -134,6 +134,29 @@
 
             window.webPosFocusPrimary = focusPrimary;
 
+            window.webPosConsumeInitialScanFocus = function () {
+                try {
+                    if (sessionStorage.getItem('webPosSalesInitialFocusDone') === '1') {
+                        return false;
+                    }
+                    sessionStorage.setItem('webPosSalesInitialFocusDone', '1');
+                    return true;
+                } catch (err) {
+                    if (window.__webPosSalesInitialFocusDone) {
+                        return false;
+                    }
+                    window.__webPosSalesInitialFocusDone = true;
+                    return true;
+                }
+            };
+
+            window.webPosAllowNextScanFocus = function () {
+                try {
+                    sessionStorage.removeItem('webPosSalesInitialFocusDone');
+                } catch (err) { /* ignore */ }
+                window.__webPosSalesInitialFocusDone = false;
+            };
+
             function isInteractive(el) {
                 if (!(el instanceof Element)) {
                     return false;
@@ -147,14 +170,94 @@
                 );
             }
 
-            window.addEventListener('focus', function () {
-                focusPrimary();
-            });
-            document.addEventListener('visibilitychange', function () {
-                if (document.visibilityState === 'visible') {
-                    focusPrimary();
+            function isProtectedTypingTarget(el) {
+                if (!(el instanceof Element)) {
+                    return false;
                 }
-            });
+                if (el.closest(
+                    '.modal-backdrop,[role="dialog"],[role="menu"],[role="listbox"],' +
+                    '.pos-menu-flyout,.sf-scan-dropdown,.auth-shell'
+                )) {
+                    return true;
+                }
+                var tag = (el.tagName || '').toLowerCase();
+                if (tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'option') {
+                    return true;
+                }
+                if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') {
+                    return true;
+                }
+                return !!el.closest(
+                    'input,textarea,select,[contenteditable="true"],' +
+                    '.sf-cell-input,.cell-editor,.sp-items-table input'
+                );
+            }
+
+            function appendCharToSearch(el, ch) {
+                el.focus({ preventScroll: true });
+                var start = typeof el.selectionStart === 'number' ? el.selectionStart : el.value.length;
+                var end = typeof el.selectionEnd === 'number' ? el.selectionEnd : el.value.length;
+                el.value = el.value.slice(0, start) + ch + el.value.slice(end);
+                var pos = start + ch.length;
+                try {
+                    el.setSelectionRange(pos, pos);
+                } catch (err) { /* ignore */ }
+                try {
+                    el.dispatchEvent(new InputEvent('input', {
+                        bubbles: true,
+                        cancelable: true,
+                        data: ch,
+                        inputType: 'insertText'
+                    }));
+                } catch (err) {
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+            }
+
+            function rememberCaret() {
+                var el = document.activeElement;
+                if (!(el instanceof HTMLInputElement) && !(el instanceof HTMLTextAreaElement)) {
+                    return;
+                }
+                if (!el.id) {
+                    return;
+                }
+                if (el.id !== 'scanInput' && !el.classList.contains('sf-cell-input')) {
+                    return;
+                }
+                try {
+                    sessionStorage.setItem('webPosCaret', JSON.stringify({
+                        id: el.id,
+                        start: el.selectionStart || 0,
+                        end: el.selectionEnd || 0
+                    }));
+                } catch (err) { /* ignore */ }
+            }
+
+            window.webPosRestoreCaret = function (fallbackId) {
+                try {
+                    var raw = sessionStorage.getItem('webPosCaret');
+                    var caret = raw ? JSON.parse(raw) : null;
+                    var id = (caret && caret.id) || fallbackId;
+                    var el = id ? document.getElementById(id) : null;
+                    if (!el || el.disabled) {
+                        return false;
+                    }
+                    el.focus({ preventScroll: true });
+                    if (caret && typeof el.setSelectionRange === 'function') {
+                        var start = caret.start || 0;
+                        var end = caret.end || start;
+                        el.setSelectionRange(start, end);
+                    }
+                    return document.activeElement === el;
+                } catch (err) {
+                    return false;
+                }
+            };
+
+            document.addEventListener('selectionchange', rememberCaret);
+            document.addEventListener('keyup', rememberCaret, true);
+
             document.addEventListener('click', function (e) {
                 if (isInteractive(e.target)) {
                     return;
@@ -163,14 +266,48 @@
             }, false);
 
             window.addEventListener('keydown', function (e) {
-                if (e.key !== 'F11' && e.code !== 'F11') {
+                if (e.key === 'F11' || e.code === 'F11') {
+                    e.preventDefault();
+                    if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) {
+                        return;
+                    }
+                    toggleFullscreen();
                     return;
                 }
+
+                if (e.key && /^F([1-9]|1[0-2])$/.test(e.key)) {
+                    e.preventDefault();
+                }
+
+                if (e.key === 'Backspace'
+                    && !e.ctrlKey && !e.altKey && !e.metaKey
+                    && !document.querySelector('.auth-shell .keypad')
+                    && !isProtectedTypingTarget(document.activeElement)) {
+                    e.preventDefault();
+                }
+
+                if (e.ctrlKey || e.altKey || e.metaKey || !e.key || e.key.length !== 1) {
+                    return;
+                }
+                if (!/^[a-zA-Z0-9]$/.test(e.key)) {
+                    return;
+                }
+
+                var scan = document.getElementById('scanInput');
+                if (!scan || scan.disabled || scan.getAttribute('aria-hidden') === 'true') {
+                    return;
+                }
+                if (document.querySelector('.modal-backdrop, .auth-shell .keypad')) {
+                    return;
+                }
+                if (document.activeElement === scan || isProtectedTypingTarget(document.activeElement)) {
+                    return;
+                }
+
                 e.preventDefault();
-                if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) {
-                    return;
-                }
-                toggleFullscreen();
+                e.stopPropagation();
+                appendCharToSearch(scan, e.key);
+                rememberCaret();
             }, true);
         })();
         window.webPosWatchTableRows = function (el, netRef) {
@@ -195,6 +332,38 @@
             el.__rowWatch = new ResizeObserver(report);
             el.__rowWatch.observe(el);
             report();
+
+            if (!el.__webPosScrollBound) {
+                el.__webPosScrollBound = true;
+                try {
+                    var saved = sessionStorage.getItem('webPosTableScroll');
+                    if (saved) {
+                        el.scrollTop = parseInt(saved, 10) || 0;
+                    }
+                } catch (err) { /* ignore */ }
+                el.addEventListener('scroll', function () {
+                    try {
+                        sessionStorage.setItem('webPosTableScroll', String(el.scrollTop || 0));
+                    } catch (err) { /* ignore */ }
+                }, { passive: true });
+            }
+        };
+
+        window.webPosResetTableScroll = function () {
+            try {
+                sessionStorage.setItem('webPosTableScroll', '0');
+            } catch (err) { /* ignore */ }
+            var el = document.querySelector('.sp-table-scroll');
+            if (el) {
+                el.scrollTop = 0;
+            }
+        };
+
+        window.webPosSetScrollTop = function (el, top) {
+            if (!el) {
+                return;
+            }
+            el.scrollTop = top || 0;
         };
         window.webPosFlashLine = function (id) {
             if (!id) {
@@ -325,12 +494,12 @@
 
                 if (fkey) {
                     e.preventDefault();
-                    if (modalOpen || e.repeat) {
+                    if (e.repeat) {
                         return;
                     }
                     e.stopPropagation();
                     var action = document.querySelector('[data-pos-fkey="F' + fkey[1] + '"]');
-                    if (action && !action.disabled) {
+                    if (action && !action.disabled && !modalOpen) {
                         action.classList.add('is-pressed');
                         window.setTimeout(function () {
                             action.classList.remove('is-pressed');

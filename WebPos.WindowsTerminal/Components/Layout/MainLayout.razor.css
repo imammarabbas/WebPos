@@ -73,6 +73,12 @@ main {
     overflow: hidden;
 }
 
+/* Menu pages (Products, New Product, Customers, …) need a scrollport */
+.sales-content:has(.page-shell) {
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
 @media (max-width: 640.98px) {
     .top-row {
         justify-content: space-between;
