@@ -1,0 +1,101 @@
+.cfd-shell {
+    height: 100%;
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 28px 36px 32px;
+    box-sizing: border-box;
+    background: #0f172a;
+    color: #f8fafc;
+    font-family: Inter, "Segoe UI", sans-serif;
+}
+
+.cfd-header h1 {
+    margin: 0 0 8px;
+    font-size: clamp(1.6rem, 3.2vw, 2.2rem);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: #fff;
+}
+
+.cfd-meta {
+    color: #7dd3fc;
+    font-size: clamp(0.95rem, 1.8vw, 1.15rem);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.cfd-lines {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    margin: 28px 0 20px;
+}
+
+.cfd-empty {
+    color: #64748b;
+    font-size: 1.1rem;
+    font-weight: 550;
+    padding: 12px 0;
+}
+
+.cfd-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 16px;
+    padding: 14px 0;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+    font-size: clamp(1.05rem, 2vw, 1.35rem);
+}
+
+.cfd-row span {
+    color: #f1f5f9;
+    font-weight: 550;
+}
+
+.cfd-row strong {
+    color: #fff;
+    font-weight: 750;
+    font-variant-numeric: tabular-nums;
+}
+
+.cfd-tot {
+    margin-top: auto;
+    font-size: clamp(1.35rem, 2.8vw, 1.9rem);
+    font-weight: 800;
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+}
+
+.cfd-thank {
+    display: none;
+    margin: auto;
+    text-align: center;
+    padding: 48px 24px;
+}
+
+.cfd-thank h2 {
+    margin: 0;
+    font-size: clamp(2.2rem, 6vw, 3.4rem);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+}
+
+.cfd-thank p {
+    margin: 14px 0 0;
+    color: #94a3b8;
+    font-size: clamp(1rem, 2vw, 1.25rem);
+    font-weight: 600;
+}
+
+.cfd-shell.is-thank .cfd-header,
+.cfd-shell.is-thank .cfd-lines,
+.cfd-shell.is-thank .cfd-tot {
+    display: none;
+}
+
+.cfd-shell.is-thank .cfd-thank {
+    display: block;
+}

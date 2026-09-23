@@ -42,6 +42,10 @@ public sealed class SalesApiClient(
             PaymentMethod = request.PaymentMethod,
             DiscountAmountPaisa = request.DiscountAmountPaisa,
             DiscountReason = request.DiscountReason,
+            AmountPaidPaisa = request.AmountPaidPaisa,
+            CashAccountId = request.CashAccountId,
+            ApplyExcessAsCustomerCredit = request.ApplyExcessAsCustomerCredit,
+            OnlineTxnRef = request.OnlineTxnRef,
             Lines = request.Lines
         };
 
@@ -171,6 +175,10 @@ public sealed class SalesApiClient(
         long discountAmountPaisa = 0,
         string? discountReason = null,
         string? invoiceNo = null,
+        long? amountPaidPaisa = null,
+        Guid? cashAccountId = null,
+        bool applyExcessAsCustomerCredit = false,
+        string? onlineTxnRef = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(lines);
@@ -219,6 +227,10 @@ public sealed class SalesApiClient(
             DiscountReason = discountAmountPaisa > 0
                 ? (string.IsNullOrWhiteSpace(discountReason) ? "POS discount" : discountReason)
                 : null,
+            AmountPaidPaisa = amountPaidPaisa,
+            CashAccountId = cashAccountId,
+            ApplyExcessAsCustomerCredit = applyExcessAsCustomerCredit,
+            OnlineTxnRef = onlineTxnRef,
             Lines = saleLines
         };
 

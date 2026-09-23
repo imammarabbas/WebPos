@@ -1,0 +1,690 @@
+@using System.Globalization
+@using Common.Models
+@using WebPos.WindowsTerminal.Services
+@inject IJSRuntime Js
+
+@if (Visible)
+{
+    <div class="modal-backdrop payment-modal-backdrop is-open" @onclick="CancelAsync" @onkeydown="OnModalKeyDown">
+        <div class="payment-modal" role="dialog" aria-modal="true" aria-labelledby="paymentModalTitle"
+             @onclick:stopPropagation="true" tabindex="0" @ref="_dialogRef">
+            <div class="payment-modal-head">
+                <h2 id="paymentModalTitle">Payment Breakdown</h2>
+                <button type="button" class="payment-modal-close" @onclick="CancelAsync" aria-label="Close">
+                    <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                </button>
+            </div>
+
+            <div class="payment-mode-tabs" role="tablist">
+                <button type="button"
+                        class="payment-mode-tab @(_mode == PaymentUiMode.Cash ? "is-active" : null)"
+                        role="tab"
+                        aria-selected="@(_mode == PaymentUiMode.Cash)"
+                        @onclick="() => SelectMode(PaymentUiMode.Cash)">CASH</button>
+                <button type="button"
+                        class="payment-mode-tab @(_mode == PaymentUiMode.Online ? "is-active" : null)"
+                        role="tab"
+                        aria-selected="@(_mode == PaymentUiMode.Online)"
+                        @onclick="() => SelectMode(PaymentUiMode.Online)">ONLINE</button>
+                <button type="button"
+                        class="payment-mode-tab @(_mode == PaymentUiMode.Credit ? "is-active" : null)"
+                        role="tab"
+                        aria-selected="@(_mode == PaymentUiMode.Credit)"
+                        disabled="@(!HasRegisteredCustomer)"
+                        @onclick="() => SelectMode(PaymentUiMode.Credit)">CREDIT</button>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <div class="payment-modal-alert is-visible" role="alert">@_error</div>
+            }
+
+            <div class="payment-summary-grid">
+                <div class="label">Lines / Qty</div>
+                <div class="value">@LineCount / @QtyDisplay</div>
+                <div class="label">Subtotal</div>
+                <div class="value">@FormatRs(SubtotalPaisa)</div>
+                <div class="label">Discount</div>
+                <div class="value">@FormatRs(DiscountPaisa)</div>
+                <div class="label">Previous Due</div>
+                <div class="value">@FormatRs(PreviousDuePaisa)</div>
+                <div class="label due">Amount Due</div>
+                <div class="value due">@FormatRs(AmountDuePaisa)</div>
+                <div class="label">@_changeLabel</div>
+                <div class="value">@FormatRs(_changeOrCreditPaisa)</div>
+            </div>
+
+            @if (_mode != PaymentUiMode.Credit)
+            {
+                <div class="payment-field" id="pmTenderField">
+                    <label for="pm-tender">Payment Received</label>
+                    <input id="pm-tender"
+                           @ref="_tenderInputRef"
+                           type="text"
+                           inputmode="decimal"
+                           value="@_tenderText"
+                           @oninput="OnTenderInput"
+                           @onfocus="OnTenderFocusAsync"
+                           autocomplete="off" />
+                </div>
+            }
+
+            @if (_mode == PaymentUiMode.Online)
+            {
+                <div class="payment-online-fields is-visible">
+                    <div class="payment-field">
+                        <label>Sub-Account</label>
+                        <div class="payment-account-pills">
+                            @foreach (PaymentAccountDto wallet in _walletAccounts)
+                            {
+                                <button type="button"
+                                        class="channel-pill @(IsSelectedAccount(wallet.Id) ? "active" : null)"
+                                        @onclick="() => SelectAccount(wallet)">
+                                    @wallet.Name
+                                </button>
+                            }
+                            @foreach (CheckoutPaymentOption fallback in _fallbackChannels)
+                            {
+                                <button type="button"
+                                        class="channel-pill @(string.Equals(_fallbackMethod, fallback.Method, StringComparison.Ordinal) ? "active" : null)"
+                                        @onclick="() => SelectFallback(fallback.Method)">
+                                    @fallback.Label
+                                </button>
+                            }
+                        </div>
+                    </div>
+
+                    @if (_bankAccounts.Count > 1)
+                    {
+                        <div class="payment-field">
+                            <label for="pm-bank">Bank account</label>
+                            <select id="pm-bank" @onchange="OnBankChanged">
+                                @foreach (PaymentAccountDto bank in _bankAccounts)
+                                {
+                                    <option value="@bank.Id" selected="@(IsSelectedAccount(bank.Id))">@bank.Name</option>
+                                }
+                            </select>
+                        </div>
+                    }
+                    else if (_bankAccounts.Count == 1)
+                    {
+                        <div class="payment-field muted-row">
+                            <span>Bank:</span>
+                            <strong>@_bankAccounts[0].Name</strong>
+                            <button type="button"
+                                    class="channel-pill @(IsSelectedAccount(_bankAccounts[0].Id) ? "active" : null)"
+                                    @onclick="() => SelectAccount(_bankAccounts[0])">
+                                Use bank
+                            </button>
+                        </div>
+                    }
+
+                    <div class="payment-field">
+                        <label for="pm-txn-ref">Transaction Reference / Txn ID</label>
+                        <input id="pm-txn-ref"
+                               type="text"
+                               autocomplete="off"
+                               placeholder="Required"
+                               value="@_txnRef"
+                               @oninput="OnTxnRefInput" />
+                    </div>
+                </div>
+            }
+
+            @if (_mode == PaymentUiMode.Cash
+                 && HasRegisteredCustomer
+                 && _tenderPaisa > AmountDuePaisa)
+            {
+                <div class="payment-overpay-choice is-visible">
+                    <div class="payment-field">
+                        <label>Overpayment handling</label>
+                        <div class="overpay-toggle">
+                            <button type="button"
+                                    class="overpay-btn @(!_applyExcessCredit ? "is-active" : null)"
+                                    @onclick="() => SetOverpay(false)">
+                                Return Cash Change
+                            </button>
+                            <button type="button"
+                                    class="overpay-btn @(_applyExcessCredit ? "is-active" : null)"
+                                    @onclick="() => SetOverpay(true)">
+                                Credit to Customer Balance
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }
+
+            <div class="payment-modal-actions">
+                <button type="button" class="payment-btn-cancel" @onclick="CancelAsync">Cancel</button>
+                <button type="button" class="payment-btn-confirm" disabled="@_confirming" @onclick="ConfirmAsync">
+                    Confirm · Enter
+                </button>
+            </div>
+            <div class="payment-modal-hint">Alt+C focus payment · Save/F12 open · Enter confirm · Escape cancel</div>
+        </div>
+    </div>
+}
+
+@code {
+    public enum PaymentUiMode
+    {
+        Cash,
+        Online,
+        Credit
+    }
+
+    public sealed class PaymentCheckoutResult
+    {
+        public required string PaymentMethod { get; init; }
+        public long AmountPaidPaisa { get; init; }
+        public Guid? CashAccountId { get; init; }
+        public bool ApplyExcessAsCustomerCredit { get; init; }
+        public string? OnlineTxnRef { get; init; }
+        public PaymentUiMode Mode { get; init; }
+        public long ChangePaisa { get; init; }
+    }
+
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public int LineCount { get; set; }
+    [Parameter] public decimal QuantityTotal { get; set; }
+    [Parameter] public long SubtotalPaisa { get; set; }
+    [Parameter] public long DiscountPaisa { get; set; }
+    [Parameter] public long AmountDuePaisa { get; set; }
+    [Parameter] public long PreviousDuePaisa { get; set; }
+    [Parameter] public PartyDto? Customer { get; set; }
+    [Parameter] public PaymentUiMode InitialMode { get; set; } = PaymentUiMode.Cash;
+    [Parameter] public string? InitialOnlineMethod { get; set; }
+    [Parameter] public string? InitialTxnRef { get; set; }
+    [Parameter] public string? InitialTenderText { get; set; }
+    [Parameter] public IReadOnlyList<PaymentAccountDto> PaymentAccounts { get; set; } = [];
+    [Parameter] public EventCallback OnCancel { get; set; }
+    [Parameter] public EventCallback<PaymentCheckoutResult> OnConfirm { get; set; }
+
+    private ElementReference _dialogRef;
+    private ElementReference _tenderInputRef;
+    private bool _wasVisible;
+    private bool _confirming;
+    private string? _error;
+    private PaymentUiMode _mode = PaymentUiMode.Cash;
+    private string _tenderText = string.Empty;
+    private long _tenderPaisa;
+    private string _txnRef = string.Empty;
+    private bool _applyExcessCredit;
+    private Guid? _selectedAccountId;
+    private string? _fallbackMethod;
+    private List<PaymentAccountDto> _walletAccounts = [];
+    private List<PaymentAccountDto> _bankAccounts = [];
+    private List<CheckoutPaymentOption> _fallbackChannels = [];
+
+    private bool HasRegisteredCustomer => Customer is not null;
+
+    private string QtyDisplay => QuantityTotal.ToString("0.###", CultureInfo.InvariantCulture);
+
+    private string _changeLabel =>
+        _mode == PaymentUiMode.Credit
+            ? "On Account"
+            : _applyExcessCredit && _tenderPaisa > AmountDuePaisa
+                ? "Credit to Balance"
+                : "Change Due";
+
+    private long _changeOrCreditPaisa =>
+        _mode == PaymentUiMode.Credit
+            ? AmountDuePaisa
+            : Math.Max(0L, _tenderPaisa - AmountDuePaisa);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Visible && !_wasVisible)
+        {
+            ResetFromParent();
+            await FocusTenderAsync();
+        }
+
+        _wasVisible = Visible;
+    }
+
+    private void ResetFromParent()
+    {
+        _error = null;
+        _confirming = false;
+        _mode = InitialMode;
+        _txnRef = InitialTxnRef ?? string.Empty;
+        _applyExcessCredit = false;
+        _selectedAccountId = null;
+        _fallbackMethod = null;
+
+        BuildAccountLists();
+
+        if (_mode == PaymentUiMode.Credit && !HasRegisteredCustomer)
+        {
+            _mode = PaymentUiMode.Cash;
+        }
+
+        if (_mode == PaymentUiMode.Cash)
+        {
+            if (!string.IsNullOrWhiteSpace(InitialTenderText) && TryParseRs(InitialTenderText, out long given))
+            {
+                _tenderPaisa = given;
+                _tenderText = FormatRs(given);
+            }
+            else
+            {
+                _tenderPaisa = AmountDuePaisa;
+                _tenderText = FormatRs(AmountDuePaisa);
+            }
+        }
+        else if (_mode == PaymentUiMode.Online)
+        {
+            _tenderPaisa = AmountDuePaisa;
+            _tenderText = FormatRs(AmountDuePaisa);
+            SelectDefaultOnline();
+        }
+        else
+        {
+            _tenderPaisa = 0;
+            _tenderText = string.Empty;
+        }
+    }
+
+    private void BuildAccountLists()
+    {
+        _walletAccounts = PaymentAccounts
+            .Where(IsWalletAccount)
+            .OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        _bankAccounts = PaymentAccounts
+            .Where(IsBankAccount)
+            .OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        HashSet<string> coveredKeys = PaymentAccounts
+            .Select(a => a.PaymentMethodKey)
+            .Where(k => !string.IsNullOrWhiteSpace(k))
+            .Select(k => k!.ToUpperInvariant())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        _fallbackChannels = [];
+        if (_walletAccounts.Count == 0 && _bankAccounts.Count == 0)
+        {
+            _fallbackChannels = CheckoutPaymentMethods.OnlineChannels.ToList();
+        }
+        else
+        {
+            foreach (CheckoutPaymentOption channel in CheckoutPaymentMethods.OnlineChannels)
+            {
+                if (!coveredKeys.Contains(channel.Method)
+                    && !string.Equals(channel.Method, CheckoutPaymentMethods.BankTransfer, StringComparison.OrdinalIgnoreCase))
+                {
+                    _fallbackChannels.Add(channel);
+                }
+            }
+
+            if (_bankAccounts.Count == 0
+                && !coveredKeys.Contains(CheckoutPaymentMethods.BankTransfer))
+            {
+                _fallbackChannels.Add(
+                    CheckoutPaymentMethods.OnlineChannels.First(c =>
+                        string.Equals(c.Method, CheckoutPaymentMethods.BankTransfer, StringComparison.OrdinalIgnoreCase)));
+            }
+        }
+    }
+
+    private void SelectDefaultOnline()
+    {
+        if (!string.IsNullOrWhiteSpace(InitialOnlineMethod))
+        {
+            PaymentAccountDto? byKey = PaymentAccounts.FirstOrDefault(a =>
+                string.Equals(a.PaymentMethodKey, InitialOnlineMethod, StringComparison.OrdinalIgnoreCase));
+            if (byKey is not null)
+            {
+                SelectAccount(byKey);
+                return;
+            }
+
+            if (_fallbackChannels.Any(c =>
+                    string.Equals(c.Method, InitialOnlineMethod, StringComparison.OrdinalIgnoreCase)))
+            {
+                SelectFallback(InitialOnlineMethod!);
+                return;
+            }
+        }
+
+        if (_walletAccounts.Count > 0)
+        {
+            SelectAccount(_walletAccounts[0]);
+            return;
+        }
+
+        if (_bankAccounts.Count > 0)
+        {
+            SelectAccount(_bankAccounts[0]);
+            return;
+        }
+
+        if (_fallbackChannels.Count > 0)
+        {
+            SelectFallback(_fallbackChannels[0].Method);
+        }
+    }
+
+    private static bool IsWalletAccount(PaymentAccountDto a) =>
+        string.Equals(a.Type, "MOBILE", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(a.PaymentMethodKey, CheckoutPaymentMethods.EasyPaisa, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(a.PaymentMethodKey, CheckoutPaymentMethods.JazzCash, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsBankAccount(PaymentAccountDto a) =>
+        string.Equals(a.Type, "BANK", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(a.PaymentMethodKey, CheckoutPaymentMethods.BankTransfer, StringComparison.OrdinalIgnoreCase);
+
+    private bool IsSelectedAccount(Guid id) => _selectedAccountId == id;
+
+    private void SelectMode(PaymentUiMode mode)
+    {
+        if (mode == PaymentUiMode.Credit && !HasRegisteredCustomer)
+        {
+            _error = "Select a registered customer for credit sales.";
+            return;
+        }
+
+        _error = null;
+        _mode = mode;
+        _applyExcessCredit = false;
+
+        if (mode == PaymentUiMode.Credit)
+        {
+            _tenderPaisa = 0;
+            _tenderText = string.Empty;
+            return;
+        }
+
+        if (_tenderPaisa <= 0)
+        {
+            _tenderPaisa = AmountDuePaisa;
+            _tenderText = FormatRs(AmountDuePaisa);
+        }
+
+        if (mode == PaymentUiMode.Online && _selectedAccountId is null && _fallbackMethod is null)
+        {
+            SelectDefaultOnline();
+        }
+    }
+
+    private void SelectAccount(PaymentAccountDto account)
+    {
+        _selectedAccountId = account.Id;
+        _fallbackMethod = null;
+        _error = null;
+    }
+
+    private void SelectFallback(string method)
+    {
+        _fallbackMethod = method;
+        _selectedAccountId = null;
+        _error = null;
+    }
+
+    private void OnBankChanged(ChangeEventArgs e)
+    {
+        if (Guid.TryParse(e.Value?.ToString(), out Guid id))
+        {
+            PaymentAccountDto? bank = _bankAccounts.FirstOrDefault(b => b.Id == id);
+            if (bank is not null)
+            {
+                SelectAccount(bank);
+            }
+        }
+    }
+
+    private void SetOverpay(bool credit)
+    {
+        _applyExcessCredit = credit;
+    }
+
+    private void OnTenderInput(ChangeEventArgs e)
+    {
+        _tenderText = e.Value?.ToString() ?? string.Empty;
+        if (TryParseRs(_tenderText, out long paisa))
+        {
+            _tenderPaisa = paisa;
+        }
+        else if (string.IsNullOrWhiteSpace(_tenderText))
+        {
+            _tenderPaisa = 0;
+        }
+
+        if (_tenderPaisa <= AmountDuePaisa)
+        {
+            _applyExcessCredit = false;
+        }
+    }
+
+    private void OnTxnRefInput(ChangeEventArgs e) =>
+        _txnRef = e.Value?.ToString() ?? string.Empty;
+
+    private async Task OnTenderFocusAsync()
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("webPosSelectById", "pm-tender");
+        }
+        catch
+        {
+            /* ignore */
+        }
+    }
+
+    private async Task FocusTenderAsync()
+    {
+        try
+        {
+            await Task.Yield();
+            if (_mode != PaymentUiMode.Credit)
+            {
+                await Js.InvokeVoidAsync("webPosFocusById", "pm-tender");
+                await Js.InvokeVoidAsync("webPosSelectById", "pm-tender");
+            }
+            else
+            {
+                await _dialogRef.FocusAsync();
+            }
+        }
+        catch
+        {
+            /* ignore */
+        }
+    }
+
+    private async Task OnModalKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            await CancelAsync();
+            return;
+        }
+
+        if (e.Key == "Enter" && !e.CtrlKey && !e.AltKey)
+        {
+            await ConfirmAsync();
+        }
+    }
+
+    private async Task CancelAsync()
+    {
+        if (_confirming)
+        {
+            return;
+        }
+
+        await OnCancel.InvokeAsync();
+    }
+
+    private async Task ConfirmAsync()
+    {
+        if (_confirming)
+        {
+            return;
+        }
+
+        _error = null;
+
+        if (_mode == PaymentUiMode.Credit)
+        {
+            if (!HasRegisteredCustomer)
+            {
+                _error = "Select a registered customer for credit sales.";
+                return;
+            }
+
+            _confirming = true;
+            try
+            {
+                await OnConfirm.InvokeAsync(new PaymentCheckoutResult
+                {
+                    PaymentMethod = CheckoutPaymentMethods.CustomerAccount,
+                    AmountPaidPaisa = 0,
+                    CashAccountId = null,
+                    ApplyExcessAsCustomerCredit = false,
+                    OnlineTxnRef = null,
+                    Mode = PaymentUiMode.Credit,
+                    ChangePaisa = 0
+                });
+            }
+            finally
+            {
+                _confirming = false;
+            }
+
+            return;
+        }
+
+        if (!TryParseRs(_tenderText, out long paid) || paid < AmountDuePaisa)
+        {
+            _error = "Payment received must cover the amount due.";
+            return;
+        }
+
+        string paymentMethod;
+        Guid? cashAccountId = null;
+        string? txnRef = null;
+
+        if (_mode == PaymentUiMode.Cash)
+        {
+            paymentMethod = CheckoutPaymentMethods.Cash;
+            if (_applyExcessCredit && paid > AmountDuePaisa && !HasRegisteredCustomer)
+            {
+                _error = "A registered customer is required to credit excess payment.";
+                return;
+            }
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(_txnRef))
+            {
+                _error = "Enter the online transaction reference.";
+                return;
+            }
+
+            txnRef = _txnRef.Trim();
+
+            if (_selectedAccountId is Guid accountId)
+            {
+                PaymentAccountDto? account = PaymentAccounts.FirstOrDefault(a => a.Id == accountId);
+                if (account is null)
+                {
+                    _error = "Select a valid payment account.";
+                    return;
+                }
+
+                cashAccountId = account.Id;
+                paymentMethod = ResolveMethodForAccount(account);
+            }
+            else if (!string.IsNullOrWhiteSpace(_fallbackMethod))
+            {
+                paymentMethod = _fallbackMethod!;
+            }
+            else
+            {
+                _error = "Select an online payment account.";
+                return;
+            }
+        }
+
+        long excess = paid - AmountDuePaisa;
+        bool applyCredit = _mode == PaymentUiMode.Cash && _applyExcessCredit && excess > 0;
+
+        _confirming = true;
+        try
+        {
+            await OnConfirm.InvokeAsync(new PaymentCheckoutResult
+            {
+                PaymentMethod = paymentMethod,
+                AmountPaidPaisa = paid,
+                CashAccountId = cashAccountId,
+                ApplyExcessAsCustomerCredit = applyCredit,
+                OnlineTxnRef = txnRef,
+                Mode = _mode,
+                ChangePaisa = applyCredit ? 0 : excess
+            });
+        }
+        finally
+        {
+            _confirming = false;
+        }
+    }
+
+    private static string ResolveMethodForAccount(PaymentAccountDto account)
+    {
+        if (!string.IsNullOrWhiteSpace(account.PaymentMethodKey))
+        {
+            return account.PaymentMethodKey.Trim().ToUpperInvariant();
+        }
+
+        if (string.Equals(account.Type, "BANK", StringComparison.OrdinalIgnoreCase))
+        {
+            return CheckoutPaymentMethods.BankTransfer;
+        }
+
+        if (string.Equals(account.Type, "MOBILE", StringComparison.OrdinalIgnoreCase))
+        {
+            string code = account.AccountCode.ToUpperInvariant();
+            if (code.Contains("JAZZ", StringComparison.Ordinal))
+            {
+                return CheckoutPaymentMethods.JazzCash;
+            }
+
+            if (code.Contains("EASY", StringComparison.Ordinal))
+            {
+                return CheckoutPaymentMethods.EasyPaisa;
+            }
+        }
+
+        return CheckoutPaymentMethods.BankTransfer;
+    }
+
+    private static bool TryParseRs(string text, out long paisa)
+    {
+        paisa = 0;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        string cleaned = text.Trim().Replace(",", "", StringComparison.Ordinal);
+        if (!decimal.TryParse(cleaned, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal rs)
+            && !decimal.TryParse(cleaned, NumberStyles.Number, CultureInfo.CurrentCulture, out rs))
+        {
+            return false;
+        }
+
+        if (rs < 0)
+        {
+            return false;
+        }
+
+        paisa = (long)Math.Round(rs * 100m, MidpointRounding.AwayFromZero);
+        return true;
+    }
+
+    private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+}

@@ -1,0 +1,70 @@
+@inject CustomerDisplayState DisplayState
+@implements IDisposable
+
+<div class="cfd-shell @(Snapshot.Phase == "thankYou" ? "is-thank" : null)">
+    <header class="cfd-header">
+        <h1>Smart POS</h1>
+        <div class="cfd-meta">@CustomerHeader</div>
+    </header>
+
+    <main class="cfd-lines" aria-live="polite">
+        @if (Snapshot.Items.Count == 0)
+        {
+            <div class="cfd-empty">Waiting for items...</div>
+        }
+        else
+        {
+            @foreach (CustomerDisplayLine line in Snapshot.Items)
+            {
+                <div class="cfd-row">
+                    <span>@FormatQty(line.Quantity) × @line.Description</span>
+                    <strong>@FormatMoney(line.LineTotal)</strong>
+                </div>
+            }
+        }
+    </main>
+
+    <footer class="cfd-tot">
+        Total @FormatMoney(Snapshot.NetAmount)
+    </footer>
+
+    <div class="cfd-thank" aria-hidden="@(Snapshot.Phase != "thankYou")">
+        <h2>Thank You!</h2>
+        <p>Have a wonderful day ahead.</p>
+    </div>
+</div>
+
+@code {
+    private CustomerDisplaySnapshot Snapshot = CustomerDisplayState.Empty;
+
+    private string CustomerHeader =>
+        $"{(string.IsNullOrWhiteSpace(Snapshot.CustomerName) ? "WALK IN CUSTOMER" : Snapshot.CustomerName).ToUpperInvariant()} · Invoice #{Snapshot.InvoiceNo}";
+
+    protected override void OnInitialized()
+    {
+        Snapshot = DisplayState.Current;
+        DisplayState.Changed += OnDisplayChanged;
+    }
+
+    private void OnDisplayChanged()
+    {
+        _ = InvokeAsync(() =>
+        {
+            Snapshot = DisplayState.Current;
+            StateHasChanged();
+        });
+    }
+
+    private static string FormatQty(decimal qty) =>
+        qty % 1m == 0m
+            ? qty.ToString("0", System.Globalization.CultureInfo.InvariantCulture)
+            : qty.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static string FormatMoney(decimal amount) =>
+        amount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+
+    public void Dispose()
+    {
+        DisplayState.Changed -= OnDisplayChanged;
+    }
+}

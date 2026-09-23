@@ -83,13 +83,21 @@ public static class MauiProgram
 
         builder.Services.AddMauiBlazorWebView();
 
+        string contentRoot = AppContext.BaseDirectory;
         builder.Configuration
-            .AddJsonFile("appsettings.json", optional: true)
-            .AddJsonFile("appsettings.Development.json", optional: true)
+            .SetBasePath(contentRoot)
+            .AddJsonFile("appsettings.json", optional: true, reloadOnChange: false)
+            .AddJsonFile("appsettings.Development.json", optional: true, reloadOnChange: false)
             .AddEnvironmentVariables();
 
         // Override via env: WebPosSdk__BaseAddress=http://localhost:8080/
         builder.Services.AddWebPosSdk(builder.Configuration);
+
+        string? configuredBase = builder.Configuration["WebPosSdk:BaseAddress"];
+#if DEBUG
+        System.Diagnostics.Debug.WriteLine(
+            $"[WebPos.WindowsTerminal] ContentRoot={contentRoot}; WebPosSdk:BaseAddress={configuredBase ?? "(unset → SDK default)"}");
+#endif
 
         IKeyProvider keyProvider =
             new MutableKeyProvider(new ConfigurationKeyProvider(builder.Configuration));
@@ -116,7 +124,10 @@ public static class MauiProgram
         builder.Services.AddSingleton<LoginApiClient>();
         builder.Services.AddSingleton<ShiftApiClient>();
         builder.Services.AddSingleton<SalesApiClient>();
+        builder.Services.AddSingleton<CashAccountApiClient>();
         builder.Services.AddSingleton<CartService>();
+        builder.Services.AddSingleton<CustomerDisplayState>();
+        builder.Services.AddSingleton<CustomerDisplayWindowService>();
         builder.Services.AddSingleton<CustomerApiClient>();
         builder.Services.AddSingleton<ProductAdminApiClient>();
         builder.Services.AddSingleton<WhatsAppReceiptService>();

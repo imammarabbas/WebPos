@@ -631,6 +631,14 @@ public sealed class ApiClient : IApiClient
             content: null,
             cancellationToken);
 
+    public Task<IReadOnlyList<PaymentAccountDto>> ListPaymentAccountsAsync(
+        CancellationToken cancellationToken = default) =>
+        SendAsync<IReadOnlyList<PaymentAccountDto>>(
+            HttpMethod.Get,
+            "api/cash/payment-accounts",
+            content: null,
+            cancellationToken);
+
     private async Task<TResponse> SendAsync<TResponse>(
         HttpMethod method,
         string path,

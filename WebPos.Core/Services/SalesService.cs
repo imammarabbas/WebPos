@@ -64,19 +64,62 @@ public sealed class SalesService : ISalesService
                     "The shift is inactive or is not authorized for this terminal and cashier.");
             }
 
-            if (string.Equals(request.PaymentMethod, "CREDIT", StringComparison.OrdinalIgnoreCase))
+            string paymentMethod = request.PaymentMethod.ToUpperInvariant();
+            bool isCredit = string.Equals(paymentMethod, "CREDIT", StringComparison.OrdinalIgnoreCase);
+            bool isCash = string.Equals(paymentMethod, "CASH", StringComparison.OrdinalIgnoreCase);
+
+            long amountPaid;
+            long changePaisa = 0L;
+            long customerCreditApplied = 0L;
+
+            if (isCredit)
             {
                 if (request.CustomerId is null)
                 {
                     throw new InvalidOperationException("CREDIT sales require a customer.");
                 }
 
-                Party? customer = await context.Parties
-                    .FirstOrDefaultAsync(p => p.Id == request.CustomerId.Value, ct);
-
-                if (customer is null || !string.Equals(customer.PartyType, "CUSTOMER", StringComparison.OrdinalIgnoreCase))
+                amountPaid = 0L;
+            }
+            else
+            {
+                amountPaid = request.AmountPaidPaisa ?? netPaisa;
+                if (amountPaid < netPaisa)
                 {
-                    throw new InvalidOperationException("CREDIT sales require a valid customer party profile.");
+                    throw new InvalidOperationException(
+                        "Amount paid must cover the sale total.");
+                }
+
+                long excess = amountPaid - netPaisa;
+                if (excess > 0 && request.ApplyExcessAsCustomerCredit)
+                {
+                    if (request.CustomerId is null)
+                    {
+                        throw new InvalidOperationException(
+                            "A registered customer is required to credit excess payment.");
+                    }
+
+                    customerCreditApplied = excess;
+                }
+                else
+                {
+                    changePaisa = excess;
+                }
+            }
+
+            if (request.CustomerId is Guid requiredCustomerId
+                && (isCredit || customerCreditApplied > 0))
+            {
+                Party? customer = await context.Parties
+                    .FirstOrDefaultAsync(p => p.Id == requiredCustomerId, ct);
+
+                if (customer is null
+                    || !string.Equals(customer.PartyType, "CUSTOMER", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        isCredit
+                            ? "CREDIT sales require a valid customer party profile."
+                            : "Excess customer credit requires a valid customer party profile.");
                 }
             }
 
@@ -143,7 +186,6 @@ public sealed class SalesService : ISalesService
             string receiptNumber = request.InvoiceNo;
             DateTimeOffset now = DateTimeOffset.UtcNow;
 
-            string paymentMethod = request.PaymentMethod.ToUpperInvariant();
             SalesInvoice invoice = new()
             {
                 InvoiceNo = request.InvoiceNo,
@@ -157,7 +199,7 @@ public sealed class SalesService : ISalesService
                 DiscountReason = request.DiscountReason,
                 ReceiptNumber = receiptNumber,
                 PaymentMethod = paymentMethod,
-                AmountPaidPaisa = paymentMethod == "CREDIT" ? 0 : netPaisa,
+                AmountPaidPaisa = isCredit ? 0 : netPaisa,
                 CreatedAt = now
             };
             context.SalesInvoices.Add(invoice);
@@ -215,7 +257,7 @@ public sealed class SalesService : ISalesService
 
             string paymentAccount;
             bool affectsTill;
-            if (string.Equals(paymentMethod, "CASH", StringComparison.OrdinalIgnoreCase))
+            if (isCash)
             {
                 CashPaymentResolution till = await _cashAccountService.ResolveTillAccountForTerminalAsync(
                     shift.TerminalId,
@@ -226,11 +268,17 @@ public sealed class SalesService : ISalesService
             else
             {
                 CashPaymentResolution payment = await _cashAccountService.ResolvePaymentAccountAsync(
-                    cashAccountId: null,
+                    isCredit ? null : request.CashAccountId,
                     paymentMethod,
                     ct);
                 paymentAccount = payment.AccountCode;
                 affectsTill = payment.AffectsTillDrawer;
+            }
+
+            string saleDetails = $"Sale invoice {request.InvoiceNo}";
+            if (!string.IsNullOrWhiteSpace(request.OnlineTxnRef))
+            {
+                saleDetails = $"{saleDetails}; txn {request.OnlineTxnRef.Trim()}";
             }
 
             List<LedgerPosting> postings =
@@ -264,7 +312,7 @@ public sealed class SalesService : ISalesService
                 {
                     TransactionType = "SALE",
                     ReferenceNo = receiptNumber,
-                    ReferenceDetails = $"Sale invoice {request.InvoiceNo}",
+                    ReferenceDetails = saleDetails,
                     ShiftId = request.ShiftId,
                     PartyId = request.CustomerId,
                     Postings = postings
@@ -277,7 +325,7 @@ public sealed class SalesService : ISalesService
                     partyId,
                     netPaisa,
                     "SALE",
-                    request.PaymentMethod,
+                    paymentMethod,
                     request.InvoiceNo,
                     ct);
             }
@@ -287,6 +335,57 @@ public sealed class SalesService : ISalesService
                 shift.ExpectedCashPaisa += netPaisa;
             }
 
+            if (customerCreditApplied > 0 && request.CustomerId is Guid creditPartyId)
+            {
+                string excessRef = $"{receiptNumber}-ADV";
+                await _transactionService.PostBalancedEntriesAsync(
+                    new DoubleEntryPostRequest
+                    {
+                        TransactionType = "CUSTOMER_PAYMENT",
+                        ReferenceNo = excessRef,
+                        ReferenceDetails = $"Excess from sale {request.InvoiceNo}",
+                        ShiftId = request.ShiftId,
+                        PartyId = creditPartyId,
+                        Postings =
+                        [
+                            new LedgerPosting
+                            {
+                                AccountCode = paymentAccount,
+                                DebitPaisa = customerCreditApplied,
+                                CreditPaisa = 0
+                            },
+                            new LedgerPosting
+                            {
+                                AccountCode = LedgerAccounts.AccountsReceivable,
+                                DebitPaisa = 0,
+                                CreditPaisa = customerCreditApplied
+                            }
+                        ]
+                    },
+                    ct);
+
+                await _partyLedgerService.RecordPartyTransactionAsync(
+                    creditPartyId,
+                    customerCreditApplied,
+                    "PAYMENT",
+                    paymentMethod,
+                    excessRef,
+                    ct);
+
+                if (affectsTill)
+                {
+                    shift.ExpectedCashPaisa += customerCreditApplied;
+                }
+            }
+
+            long? customerBalance = null;
+            if (request.CustomerId is Guid balancePartyId)
+            {
+                Party? balanceParty = await context.Parties
+                    .FirstOrDefaultAsync(p => p.Id == balancePartyId, ct);
+                customerBalance = balanceParty?.CurrentBalancePaisa;
+            }
+
             return new CompleteSaleResult
             {
                 InvoiceNo = request.InvoiceNo,
@@ -294,7 +393,11 @@ public sealed class SalesService : ISalesService
                 TotalAmountPaisa = netPaisa,
                 GrossAmountPaisa = grossPaisa,
                 DiscountAmountPaisa = request.DiscountAmountPaisa,
-                TransactionGroupId = transactionGroupId
+                TransactionGroupId = transactionGroupId,
+                AmountPaidPaisa = amountPaid,
+                ChangePaisa = changePaisa,
+                CustomerCreditAppliedPaisa = customerCreditApplied,
+                CustomerBalancePaisa = customerBalance
             };
         }, cancellationToken);
 

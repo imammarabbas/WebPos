@@ -21,6 +21,10 @@ internal static class ApiModelMapper
             PaymentMethod = request.PaymentMethod,
             DiscountAmountPaisa = request.DiscountAmountPaisa,
             DiscountReason = request.DiscountReason,
+            AmountPaidPaisa = request.AmountPaidPaisa,
+            CashAccountId = request.CashAccountId,
+            ApplyExcessAsCustomerCredit = request.ApplyExcessAsCustomerCredit,
+            OnlineTxnRef = request.OnlineTxnRef,
             Lines = request.Lines.Select(l => new CoreSaleLine
             {
                 ProductId = l.ProductId,
@@ -41,7 +45,11 @@ internal static class ApiModelMapper
             TotalAmountPaisa = result.TotalAmountPaisa,
             GrossAmountPaisa = result.GrossAmountPaisa,
             DiscountAmountPaisa = result.DiscountAmountPaisa,
-            TransactionGroupId = result.TransactionGroupId
+            TransactionGroupId = result.TransactionGroupId,
+            AmountPaidPaisa = result.AmountPaidPaisa,
+            ChangePaisa = result.ChangePaisa,
+            CustomerCreditAppliedPaisa = result.CustomerCreditAppliedPaisa,
+            CustomerBalancePaisa = result.CustomerBalancePaisa
         };
 
     public static CoreReturnItemsRequest ToCore(ReturnItemsRequest request) =>

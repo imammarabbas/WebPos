@@ -181,4 +181,7 @@ public interface IApiClient
 
     Task<StoreStatusDto> GetStoreStatusAsync(
         CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<PaymentAccountDto>> ListPaymentAccountsAsync(
+        CancellationToken cancellationToken = default);
 }
