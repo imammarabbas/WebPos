@@ -6,6 +6,7 @@
 @using WebPos.WindowsTerminal.Services
 @implements IDisposable
 @inject SalesApiClient SalesApi
+@inject CashAccountApiClient CashAccounts
 @inject CartService CartService
 @inject CustomerApiClient CustomerApi
 @inject WhatsAppReceiptService WhatsAppReceiptService
@@ -19,6 +20,7 @@
 @inject NavigationManager Navigation
 @inject IJSRuntime Js
 @inject ILogger<SalesTerminal> Logger
+@inject CustomerDisplayState CustomerDisplayState
 
 <PageTitle>Smart POS</PageTitle>
 
@@ -127,7 +129,7 @@
                                     int index = row;
                                     CartLine line = cartLines[index];
                                     bool selected = index == _selectedLineIndex;
-                                    <tr class="@(selected ? "selected row-selected" : null) @(index % 2 == 1 ? "zebra" : null)"
+                                    <tr class="@(selected ? "selected row-selected" : null) @(line.LineId == _lastScannedLineId ? "item-added" : null) @(index % 2 == 1 ? "zebra" : null)"
                                         data-line-id="@line.LineId"
                                         @onmousedown="() => SelectLine(index)"
                                         @onclick="() => SelectLine(index)">
@@ -204,7 +206,7 @@
                                 {
                                     <tr class="sp-empty-row @(row % 2 == 1 ? "zebra" : null)">
                                         <td class="col-sr text-center empty">@(row + 1)</td>
-                                        <td class="empty"></td>
+                                        <td class="col-code empty"><span class="sp-item-code-placeholder">Item code</span></td>
                                         <td class="empty"></td>
                                         <td class="empty"></td>
                                         <td class="empty"></td>
@@ -257,15 +259,14 @@
             <div class="sp-finance-panel">
                 <div class="sp-invoice-summary">
                     <div class="sp-summary-item">
-                        <div class="sp-summary-label">Sub Total</div>
-                        <div class="sp-summary-value">@FormatRs(CartService.SubtotalPaisa)</div>
-                    </div>
-                    <div class="sp-summary-item">
                         <div class="sp-summary-label">Previous Due</div>
                         <div class="sp-summary-value">@FormatRs(PreviousDuePaisa)</div>
                     </div>
                     <div class="sp-summary-item">
-                        <div class="sp-summary-label">Discount</div>
+                        <div class="sp-summary-label">
+                            Discount
+                            <span class="sp-shortcut-hint" title="Alt+Shift+P / Alt+Shift+C">Alt+Shift+P/C</span>
+                        </div>
                         <div class="sp-discount-display">
                             <input id="pos-discount-pct"
                                    type="text"
@@ -289,40 +290,25 @@
                                    disabled="@_isBusy" />
                         </div>
                     </div>
-                    <div class="sp-summary-item">
-                        <div class="sp-summary-label">Payment Received</div>
+                    <div class="sp-summary-item sp-payment-preview">
+                        <div class="sp-summary-label">
+                            Payment Received
+                            <span class="sp-shortcut-hint" title="Alt+C">Alt+C</span>
+                        </div>
                         <input id="pos-payment"
                                class="sp-summary-input"
                                type="text"
                                inputmode="decimal"
                                placeholder="0.00"
+                               title="Alt+C focuses · Save opens Payment Breakdown"
                                @bind="_cashGivenText"
                                @bind:event="oninput"
                                @onfocus="OnPaymentFocusAsync"
                                @onblur="OnPaymentBlur"
-                               disabled="@(_isBusy || _paymentMode != PaymentUiMode.Cash)" />
-                        <div class="sp-pay-modes">
-                            <button type="button" class="sp-pay-link @(_paymentMode == PaymentUiMode.Cash ? "active" : null)" @onclick="SelectCashMode">Cash</button>
-                            <button type="button" class="sp-pay-link @(_paymentMode == PaymentUiMode.Online ? "active" : null)" @onclick="SelectOnlineMode">Online</button>
-                            <button type="button" class="sp-pay-link @(_paymentMode == PaymentUiMode.Credit ? "active" : null)" disabled="@(_selectedCustomer is null)" @onclick="SelectCreditMode">Credit</button>
-                        </div>
-                        @if (_paymentMode == PaymentUiMode.Online)
-                        {
-                            <div class="sp-online-row sf-online-row">
-                                @foreach (CheckoutPaymentOption channel in CheckoutPaymentMethods.OnlineChannels)
-                                {
-                                    <button type="button"
-                                            class="channel-pill @(string.Equals(_onlineChannel, channel.Method, StringComparison.Ordinal) ? "active" : string.Empty)"
-                                            @onclick="() => _onlineChannel = channel.Method">
-                                        @channel.Label
-                                    </button>
-                                }
-                                <input class="txn-ref-input" placeholder="Txn ref" @bind="_onlineTxnRef" @bind:event="oninput" disabled="@_isBusy" />
-                            </div>
-                        }
+                               disabled="@(_isBusy || ModalOpen)" />
                     </div>
                     <div class="sp-summary-item sp-balance-summary">
-                        <div class="sp-summary-label">Net Balance / Change</div>
+                        <div class="sp-summary-label">Net Balance</div>
                         <div class="sp-summary-value sp-balance-value">@FormatRs(DisplayBalancePaisa)</div>
                     </div>
                 </div>
@@ -331,66 +317,52 @@
     </main>
 
     <section class="sp-action-bar" role="toolbar" aria-label="POS shortcuts">
-        <button type="button" class="sp-action-btn" data-pos-fkey="F1" disabled="@ModalOpen" @onclick="OpenCalculator">
-            <i class="fa-solid fa-calculator" aria-hidden="true"></i>
-            <span class="sp-action-key">F1</span>
-            <span class="sp-action-label">Open Calculator</span>
-        </button>
-        <button type="button" class="sp-action-btn" data-pos-fkey="F2" disabled="@ModalOpen" @onclick="OpenItemSearch">
-            <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
-            <span class="sp-action-key">F2</span>
-            <span class="sp-action-label">Search Product</span>
-        </button>
-        <button type="button" class="sp-action-btn" data-pos-fkey="F3" disabled="@ModalOpen" @onclick="OpenAddCustomer">
-            <i class="fa-solid fa-user-plus" aria-hidden="true"></i>
-            <span class="sp-action-key">F3</span>
-            <span class="sp-action-label">Add Customer</span>
-        </button>
-        <button type="button" class="sp-action-btn" data-pos-fkey="F4" disabled="@ModalOpen" @onclick="OpenSearchCustomerAsync">
-            <i class="fa-solid fa-user" aria-hidden="true"></i>
-            <span class="sp-action-key">F4</span>
-            <span class="sp-action-label">Search Customer</span>
-        </button>
-        <button type="button" class="sp-action-btn" data-pos-fkey="F5" disabled="@ModalOpen" @onclick="GoSaleReturn">
-            <i class="fa-solid fa-arrow-rotate-left" aria-hidden="true"></i>
-            <span class="sp-action-key">F5</span>
-            <span class="sp-action-label">Sale Return</span>
-        </button>
-        <button type="button" class="sp-action-btn" data-pos-fkey="F6" disabled="@(_isBusy || ModalOpen)" @onclick="DuplicateLastInvoiceAsync">
-            <i class="fa-solid fa-file-invoice" aria-hidden="true"></i>
-            <span class="sp-action-key">F6</span>
-            <span class="sp-action-label">Duplicate Invoice</span>
-        </button>
-        <button type="button" class="sp-action-btn @(_printOnPrinter ? "is-on" : null)" data-pos-fkey="F7" disabled="@ModalOpen" @onclick="TogglePrintInvoice">
-            <i class="fa-solid fa-print" aria-hidden="true"></i>
-            <span class="sp-action-key">F7</span>
-            <span class="sp-action-label">Print Invoice</span>
-        </button>
-        <button type="button" class="sp-action-btn" data-pos-fkey="F8" disabled="@(_isBusy || ModalOpen)" @onclick="NewSale">
-            <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
-            <span class="sp-action-key">F8</span>
-            <span class="sp-action-label">Clear Invoice</span>
-        </button>
-        <button type="button" class="sp-action-btn" data-pos-fkey="F9" disabled="@ModalOpen" @onclick="GoInvoiceList">
-            <i class="fa-solid fa-list" aria-hidden="true"></i>
-            <span class="sp-action-key">F9</span>
-            <span class="sp-action-label">Invoice List</span>
-        </button>
-        <button type="button"
-                class="sp-save"
-                id="saveInvoiceButton"
-                disabled="@(_isBusy || (!CartService.IsEmpty && !CanPay))"
-                @onclick="OnSaveInvoiceClick">
-            <div class="sp-save-icon">
-                <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
-            </div>
-            <div class="sp-save-title">Save Invoice</div>
-            <div class="sp-save-shortcuts">
-                <span class="sp-shortcut-chip">Insert</span>
-                <span class="sp-shortcut-chip">Ctrl + Enter</span>
-                <span class="sp-shortcut-chip">F12</span>
-            </div>
-        </button>
+        <div class="sp-category-shortcuts" aria-label="Category shortcuts">
+            @foreach ((string name, string icon) in CategoryChipItems)
+            {
+                bool chipActive = string.Equals(_activeCategoryChip, name, StringComparison.OrdinalIgnoreCase);
+                <button type="button"
+                        class="sp-category-chip @(chipActive ? "is-active" : null)"
+                        disabled="@(_isBusy || ModalOpen)"
+                        title="@name"
+                        @onclick="() => OnCategoryChipAsync(name)">
+                    <i class="fa-solid @icon" aria-hidden="true"></i>
+                    <span>@name</span>
+                </button>
+            }
+        </div>
+        <div class="sp-action-bar-shortcuts">
+            <button type="button" class="sp-action-btn" data-pos-fkey="F2" disabled="@ModalOpen" @onclick="OpenItemSearch">
+                <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                <span class="sp-action-key">F2</span>
+                <span class="sp-action-label">Search Product</span>
+            </button>
+            <button type="button" class="sp-action-btn" data-pos-fkey="F4" disabled="@ModalOpen" @onclick="OpenSearchCustomerAsync">
+                <i class="fa-solid fa-user" aria-hidden="true"></i>
+                <span class="sp-action-key">F4</span>
+                <span class="sp-action-label">Search Customer</span>
+            </button>
+            <button type="button" class="sp-action-btn" data-pos-fkey="F8" disabled="@(_isBusy || ModalOpen)" @onclick="NewSale">
+                <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+                <span class="sp-action-key">F8</span>
+                <span class="sp-action-label">Clear Invoice</span>
+            </button>
+            <button type="button"
+                    class="sp-save"
+                    id="saveInvoiceButton"
+                    disabled="@(_isBusy || (!CartService.IsEmpty && !CanPay))"
+                    @onclick="OnSaveInvoiceClick">
+                <div class="sp-save-icon">
+                    <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
+                </div>
+                <div class="sp-save-title">Save Invoice</div>
+                <div class="sp-save-shortcuts">
+                    <span class="sp-shortcut-chip">Insert</span>
+                    <span class="sp-shortcut-chip">Ctrl + Enter</span>
+                    <span class="sp-shortcut-chip">F12</span>
+                </div>
+            </button>
+        </div>
     </section>
 
     <footer class="sp-status-bar">
@@ -462,6 +434,22 @@
 
 <CalculatorModal Visible="@_showCalculator"
                  OnClose="() => _showCalculator = false" />
+
+<PaymentModal Visible="@_showPaymentModal"
+              LineCount="CartService.Lines.Count"
+              QuantityTotal="CartService.Lines.Sum(l => l.Quantity)"
+              SubtotalPaisa="CartService.SubtotalPaisa"
+              DiscountPaisa="DiscountAmountPaisa"
+              AmountDuePaisa="PayablePaisa"
+              PreviousDuePaisa="PreviousDuePaisa"
+              Customer="@(_useWalkInCustomer ? null : _selectedCustomer)"
+              InitialMode="ToModalPaymentMode()"
+              InitialOnlineMethod="@_onlineChannel"
+              InitialTxnRef="@_onlineTxnRef"
+              InitialTenderText="@_cashGivenText"
+              PaymentAccounts="_paymentAccounts"
+              OnCancel="ClosePaymentModal"
+              OnConfirm="OnPaymentConfirmedAsync" />
 
 <CreatePurchaseOrderModal @ref="_createPurchaseOrderModal"
                           Visible="_showCreatePurchaseOrder"
@@ -584,10 +572,15 @@
     private PartyDto? _selectedCustomer;
     private SaleMasterDto? _variantMaster;
     private string? _categoryPickName;
+    private string? _activeCategoryChip;
+    private string _cfdPhase = "selling";
     private PaymentUiMode _paymentMode = PaymentUiMode.Cash;
     private DateTime _now = DateTime.Now;
     private Timer? _clockTimer;
     private int _selectedLineIndex = -1;
+    private bool _restoreUiPending;
+    private bool _showPaymentModal;
+    private IReadOnlyList<PaymentAccountDto> _paymentAccounts = [];
 
     private bool ModalOpen =>
         _showPhonePrompt
@@ -598,6 +591,7 @@
         || _showCustomerSearch
         || _showCustomerAdd
         || _showCalculator
+        || _showPaymentModal
         || _variantMaster is not null
         || !string.IsNullOrWhiteSpace(_categoryPickName);
 
@@ -799,7 +793,7 @@
 
             if (_paymentMode == PaymentUiMode.Online)
             {
-                return string.IsNullOrWhiteSpace(_onlineTxnRef) ? 0 : PayablePaisa;
+                return PayablePaisa;
             }
 
             if (TryParseRs(_cashGivenText, out long given) && given > 0)
@@ -821,34 +815,8 @@
     private long CustomerNetBalancePaisa =>
         PreviousDuePaisa + PayablePaisa - PaymentReceivedPaisa;
 
-    private bool CanPay
-    {
-        get
-        {
-            if (CartService.IsEmpty || DiscountAmountPaisa > CartService.SubtotalPaisa)
-            {
-                return false;
-            }
-
-            if (_paymentMode == PaymentUiMode.Credit)
-            {
-                return _selectedCustomer is not null;
-            }
-
-            if (_paymentMode == PaymentUiMode.Cash)
-            {
-                if (string.IsNullOrWhiteSpace(_cashGivenText))
-                {
-                    return true;
-                }
-
-                return TryParseRs(_cashGivenText, out long given) && given >= PayablePaisa;
-            }
-
-            return !string.IsNullOrWhiteSpace(_onlineTxnRef)
-                   && !string.IsNullOrWhiteSpace(_onlineChannel);
-        }
-    }
+    private bool CanPay =>
+        !CartService.IsEmpty && DiscountAmountPaisa <= CartService.SubtotalPaisa;
 
     protected override async Task OnInitializedAsync()
     {
@@ -884,6 +852,7 @@
                 LoadMastersAsync(),
                 LoadQuickLinksAsync(),
                 LoadCustomersAsync(),
+                LoadPaymentAccountsAsync(),
                 ShiftStatus.RefreshAsync());
         }
         catch (Exception ex)
@@ -893,6 +862,7 @@
         }
 
         AssignDraftInvoiceNo();
+        RestorePosUiState();
 
         Uri uri = Navigation.ToAbsoluteUri(Navigation.Uri);
         if (uri.Query.Contains("orders=1", StringComparison.OrdinalIgnoreCase)
@@ -956,7 +926,6 @@
         {
             if (firstRender)
             {
-                _scanFocus.RequestScan();
                 try
                 {
                     await Js.InvokeVoidAsync("webPosBindPosShortcuts");
@@ -965,6 +934,29 @@
                 catch
                 {
                     /* ignore until DOM ready */
+                }
+
+                bool initialSessionFocus = false;
+                try
+                {
+                    initialSessionFocus = await Js.InvokeAsync<bool>("webPosConsumeInitialScanFocus");
+                }
+                catch
+                {
+                    initialSessionFocus = !_restoreUiPending;
+                }
+
+                if (_restoreUiPending)
+                {
+                    _restoreUiPending = false;
+                    if (!ModalOpen)
+                    {
+                        await RestorePosUiFocusAsync();
+                    }
+                }
+                else if (initialSessionFocus)
+                {
+                    _scanFocus.RequestScan();
                 }
             }
 
@@ -1016,6 +1008,8 @@
             {
                 await FocusScanAsync();
             }
+
+            await PublishCfdSnapshotAsync();
         }
         catch (Exception ex)
         {
@@ -1068,8 +1062,45 @@
     {
         if (!_isDisposed)
         {
+            if (_cfdPhase == "thankYou" && !CartService.IsEmpty)
+            {
+                _cfdPhase = "selling";
+            }
+
             _ = InvokeAsync(StateHasChanged);
         }
+    }
+
+    private Task PublishCfdSnapshotAsync(string? phaseOverride = null)
+    {
+        string phase = phaseOverride ?? _cfdPhase;
+        // Keep thank-you overlay until the next sell action clears _cfdPhase.
+        if (phase == "thankYou" && phaseOverride is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        long duePaisa = PreviousDuePaisa + PayablePaisa;
+        long paidPaisa = PaymentReceivedPaisa;
+
+        IReadOnlyList<CustomerDisplayLine> items = CartService.Lines
+            .Select(line => new CustomerDisplayLine(
+                Description: string.IsNullOrWhiteSpace(line.DescriptionOverride)
+                    ? (line.Product.Name ?? string.Empty)
+                    : line.DescriptionOverride!,
+                Quantity: line.Quantity,
+                LineTotal: line.LineTotalPaisa / 100m))
+            .ToList();
+
+        CustomerDisplayState.Publish(new CustomerDisplaySnapshot(
+            CustomerName: CustomerNameDisplay,
+            InvoiceNo: string.IsNullOrWhiteSpace(_draftInvoiceNo) ? "—" : _draftInvoiceNo,
+            Items: items,
+            NetAmount: duePaisa / 100m,
+            Payment: paidPaisa / 100m,
+            Phase: phase));
+
+        return Task.CompletedTask;
     }
 
     private void OnShiftStatusChanged()
@@ -1171,6 +1202,14 @@
 
         _customers = [];
         _customerLoadError = result.ErrorMessage;
+    }
+
+    private async Task LoadPaymentAccountsAsync()
+    {
+        Result<IReadOnlyList<PaymentAccountDto>> result = await CashAccounts.ListPaymentAccountsAsync();
+        _paymentAccounts = result.Success && result.Data is not null
+            ? result.Data
+            : [];
     }
 
     private SalesProductDto? ResolveProductFromScan(string input)
@@ -2088,6 +2127,8 @@
         _discountPctText = string.Empty;
         _selectedLineIndex = -1;
         _lastScannedLineId = null;
+        try { _ = Js.InvokeVoidAsync("webPosResetTableScroll"); }
+        catch { /* ignore */ }
     }
 
     private void AssignDraftInvoiceNo()
@@ -2106,6 +2147,7 @@
         _remarks = string.Empty;
         _whatsAppReceipt = false;
         _printOnPrinter = false;
+        _cfdPhase = "selling";
         AssignDraftInvoiceNo();
         _successMessage = "New sale.";
         _ = FocusScanAsync();
@@ -2265,9 +2307,81 @@
 
     private void CloseVariant() => _variantMaster = null;
 
+    private static readonly (string Name, string Icon)[] DefaultCategoryChips =
+    [
+        ("Soft Drinks", "fa-bottle-water"),
+        ("Snacks", "fa-cookie"),
+        ("Dairy", "fa-cow"),
+        ("Grocery", "fa-basket-shopping"),
+        ("Promo", "fa-tags")
+    ];
+
+    private IEnumerable<(string Name, string Icon)> CategoryChipItems
+    {
+        get
+        {
+            if (_quickLinks.Count > 0)
+            {
+                return _quickLinks
+                    .OrderBy(l => l.SortOrder)
+                    .ThenBy(l => l.Name, StringComparer.OrdinalIgnoreCase)
+                    .Take(5)
+                    .Select(l => (l.Name, CategoryIconFor(l.Name)));
+            }
+
+            return DefaultCategoryChips;
+        }
+    }
+
+    private static string CategoryIconFor(string name)
+    {
+        string n = name ?? string.Empty;
+        if (n.Contains("drink", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("soda", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("beverage", StringComparison.OrdinalIgnoreCase))
+        {
+            return "fa-bottle-water";
+        }
+
+        if (n.Contains("snack", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("cookie", StringComparison.OrdinalIgnoreCase))
+        {
+            return "fa-cookie";
+        }
+
+        if (n.Contains("dairy", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("milk", StringComparison.OrdinalIgnoreCase))
+        {
+            return "fa-cow";
+        }
+
+        if (n.Contains("promo", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("offer", StringComparison.OrdinalIgnoreCase))
+        {
+            return "fa-tags";
+        }
+
+        return "fa-basket-shopping";
+    }
+
+    private async Task OnCategoryChipAsync(string name)
+    {
+        _activeCategoryChip = name;
+        SaleQuickLinkDto? link = _quickLinks.FirstOrDefault(l =>
+            string.Equals(l.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (link is not null)
+        {
+            await OnQuickLinkAsync(link);
+            return;
+        }
+
+        OpenCategoryPick(name);
+    }
+
     private void OpenCategoryPick(string category)
     {
         _categoryPickName = category;
+        _activeCategoryChip = category;
         _errorMessage = null;
     }
 
@@ -2438,11 +2552,235 @@
                 return;
             }
 
-            await PayNowAsync();
+            await OpenPaymentModalAsync();
         }
         finally
         {
             _saveInFlight = false;
+        }
+    }
+
+    private PaymentModal.PaymentUiMode ToModalPaymentMode() =>
+        _paymentMode switch
+        {
+            PaymentUiMode.Online => PaymentModal.PaymentUiMode.Online,
+            PaymentUiMode.Credit => PaymentModal.PaymentUiMode.Credit,
+            _ => PaymentModal.PaymentUiMode.Cash
+        };
+
+    private async Task OpenPaymentModalAsync()
+    {
+        _checkoutError = null;
+        _errorMessage = null;
+        _successMessage = null;
+
+        if (!_useWalkInCustomer && _selectedCustomer is null)
+        {
+            _checkoutError = "Select a registered customer or switch to Walk-in.";
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_discountRsText) && !TryParseRs(_discountRsText, out _))
+        {
+            _checkoutError = "Enter a valid discount amount.";
+            return;
+        }
+
+        if (DiscountAmountPaisa > CartService.SubtotalPaisa)
+        {
+            _checkoutError = "Discount cannot exceed the cart total.";
+            return;
+        }
+
+        if (_paymentAccounts.Count == 0)
+        {
+            await LoadPaymentAccountsAsync();
+        }
+
+        _showPaymentModal = true;
+    }
+
+    private void ClosePaymentModal()
+    {
+        _showPaymentModal = false;
+        _ = RequestScanFocusAsync();
+    }
+
+    private Task OnPaymentConfirmedAsync(PaymentModal.PaymentCheckoutResult choice) =>
+        CompleteSaleFromModalAsync(choice);
+
+    private async Task CompleteSaleFromModalAsync(PaymentModal.PaymentCheckoutResult choice)
+    {
+        _checkoutError = null;
+        _errorMessage = null;
+        _successMessage = null;
+
+        _paymentMode = choice.Mode switch
+        {
+            PaymentModal.PaymentUiMode.Online => PaymentUiMode.Online,
+            PaymentModal.PaymentUiMode.Credit => PaymentUiMode.Credit,
+            _ => PaymentUiMode.Cash
+        };
+
+        if (choice.Mode == PaymentModal.PaymentUiMode.Cash)
+        {
+            _cashGivenText = FormatRs(choice.AmountPaidPaisa);
+        }
+        else if (choice.Mode == PaymentModal.PaymentUiMode.Online)
+        {
+            _onlineChannel = choice.PaymentMethod;
+            _onlineTxnRef = choice.OnlineTxnRef ?? string.Empty;
+            _cashGivenText = FormatRs(choice.AmountPaidPaisa);
+        }
+
+        Guid? customerId = _selectedCustomer?.Id;
+        long? changePaisa = choice.ChangePaisa > 0 ? choice.ChangePaisa : null;
+        string? txnRef = choice.OnlineTxnRef;
+        long discountPaisa = DiscountAmountPaisa;
+
+        List<CartLine> saleLines = CartService.Lines
+            .Select(line => new CartLine
+            {
+                LineId = line.LineId,
+                Product = line.Product,
+                Quantity = line.Quantity,
+                UnitPriceOverridePaisa = line.UnitPriceOverridePaisa,
+                DescriptionOverride = line.DescriptionOverride,
+                PackingOverride = line.PackingOverride
+            })
+            .ToList();
+        string? customerPhone = _selectedCustomer?.PhoneNumber;
+        bool whatsApp = _whatsAppReceipt;
+        bool printPrinter = _printOnPrinter;
+
+        _isBusy = true;
+        try
+        {
+            Result<CompleteSaleResult> result = await SalesApi.CompleteCartAsync(
+                CartService.Lines,
+                choice.PaymentMethod,
+                customerId,
+                discountPaisa,
+                invoiceNo: string.IsNullOrWhiteSpace(_draftInvoiceNo) ? null : $"POS-{_draftInvoiceNo}",
+                amountPaidPaisa: choice.Mode == PaymentModal.PaymentUiMode.Credit
+                    ? null
+                    : choice.AmountPaidPaisa,
+                cashAccountId: choice.CashAccountId,
+                applyExcessAsCustomerCredit: choice.ApplyExcessAsCustomerCredit,
+                onlineTxnRef: txnRef);
+
+            if (!result.Success)
+            {
+                _checkoutError = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                    ? "Sale failed."
+                    : result.ErrorMessage;
+                return;
+            }
+
+            CompleteSaleResult sale = result.Data!;
+            string paymentLabel = CheckoutPaymentMethods.DisplayLabel(choice.PaymentMethod);
+
+            long thankYouDue = PreviousDuePaisa + PayablePaisa;
+            long thankYouPaid = choice.Mode == PaymentModal.PaymentUiMode.Credit
+                ? 0
+                : choice.AmountPaidPaisa;
+            string thankYouCustomer = CustomerNameDisplay;
+            string thankYouInvoice = string.IsNullOrWhiteSpace(_draftInvoiceNo) ? "—" : _draftInvoiceNo;
+            _cfdPhase = "thankYou";
+            CustomerDisplayState.Publish(new CustomerDisplaySnapshot(
+                CustomerName: thankYouCustomer,
+                InvoiceNo: thankYouInvoice,
+                Items: saleLines
+                    .Select(line => new CustomerDisplayLine(
+                        Description: string.IsNullOrWhiteSpace(line.DescriptionOverride)
+                            ? (line.Product.Name ?? string.Empty)
+                            : line.DescriptionOverride!,
+                        Quantity: line.Quantity,
+                        LineTotal: line.LineTotalPaisa / 100m))
+                    .ToList(),
+                NetAmount: thankYouDue / 100m,
+                Payment: thankYouPaid / 100m,
+                Phase: "thankYou"));
+
+            if (_selectedCustomer is not null && sale.CustomerBalancePaisa is long bal)
+            {
+                _selectedCustomer = new PartyDto
+                {
+                    Id = _selectedCustomer.Id,
+                    Name = _selectedCustomer.Name,
+                    Role = _selectedCustomer.Role,
+                    PhoneNumber = _selectedCustomer.PhoneNumber,
+                    Address = _selectedCustomer.Address,
+                    CreditLimitPaisa = _selectedCustomer.CreditLimitPaisa,
+                    CurrentBalancePaisa = bal
+                };
+            }
+
+            LastSaleReceiptStore.Set(new LastSaleReceipt
+            {
+                Sale = sale,
+                Lines = saleLines,
+                PaymentLabel = paymentLabel,
+                OnlineTxnRef = txnRef,
+                ChangePaisa = changePaisa ?? (sale.ChangePaisa > 0 ? sale.ChangePaisa : null),
+                CustomerPhone = customerPhone
+            });
+
+            _showPaymentModal = false;
+            _qtyText.Clear();
+            _priceText.Clear();
+            _totalText.Clear();
+            _codeText.Clear();
+            CartService.Clear();
+            _cashGivenText = string.Empty;
+            _onlineTxnRef = string.Empty;
+            _discountRsText = string.Empty;
+            _discountPctText = string.Empty;
+            _remarks = string.Empty;
+            _selectedCustomer = null;
+            _useWalkInCustomer = true;
+            _paymentMode = PaymentUiMode.Cash;
+            _selectedLineIndex = -1;
+            _lastScannedLineId = null;
+            _whatsAppReceipt = false;
+            _printOnPrinter = false;
+            AssignDraftInvoiceNo();
+            try { await Js.InvokeVoidAsync("webPosResetTableScroll"); }
+            catch { /* ignore */ }
+
+            await Task.WhenAll(
+                LoadProductsAsync(),
+                LoadMastersAsync(),
+                LoadQuickLinksAsync(),
+                LoadCustomersAsync(),
+                ShiftStatus.RefreshAsync());
+
+            if (whatsApp)
+            {
+                await WhatsAppReceiptAsync();
+            }
+
+            if (printPrinter)
+            {
+                await PrintReceiptAsync();
+            }
+
+            await FocusScanAsync();
+        }
+        catch (SessionNotActiveException)
+        {
+            _checkoutError = "Start Shift before processing a sale.";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Payment modal checkout failed.");
+            _checkoutError = string.IsNullOrWhiteSpace(ex.Message)
+                ? "Unexpected sale error. Try again."
+                : ex.Message;
+        }
+        finally
+        {
+            _isBusy = false;
         }
     }
 
@@ -2485,178 +2823,6 @@
         }
 
         _cashGivenText = FormatRs(paisa);
-    }
-
-    private async Task PayNowAsync()
-    {
-        _checkoutError = null;
-        _errorMessage = null;
-        _successMessage = null;
-
-        if (CartService.IsEmpty)
-        {
-            _checkoutError = "Cart is empty.";
-            return;
-        }
-
-        if (!_useWalkInCustomer && _selectedCustomer is null)
-        {
-            _checkoutError = "Select a registered customer or switch to Walk-in.";
-            return;
-        }
-
-        if (!string.IsNullOrWhiteSpace(_discountRsText) && !TryParseRs(_discountRsText, out _))
-        {
-            _checkoutError = "Enter a valid discount amount.";
-            return;
-        }
-
-        if (DiscountAmountPaisa > CartService.SubtotalPaisa)
-        {
-            _checkoutError = "Discount cannot exceed the cart total.";
-            return;
-        }
-
-        string paymentMethod;
-        Guid? customerId = _selectedCustomer?.Id;
-        long? changePaisa = null;
-        string? txnRef = null;
-        long discountPaisa = DiscountAmountPaisa;
-
-        if (_paymentMode == PaymentUiMode.Credit)
-        {
-            if (_selectedCustomer is null)
-            {
-                _checkoutError = "Select a registered customer for credit sales.";
-                return;
-            }
-
-            paymentMethod = CheckoutPaymentMethods.CustomerAccount;
-        }
-        else if (_paymentMode == PaymentUiMode.Cash)
-        {
-            paymentMethod = CheckoutPaymentMethods.Cash;
-            if (!string.IsNullOrWhiteSpace(_cashGivenText))
-            {
-                if (!TryParseRs(_cashGivenText, out long given) || given < PayablePaisa)
-                {
-                    _checkoutError = "Cash given must cover the total.";
-                    return;
-                }
-
-                changePaisa = given - PayablePaisa;
-            }
-        }
-        else
-        {
-            if (string.IsNullOrWhiteSpace(_onlineTxnRef))
-            {
-                _checkoutError = "Enter the online transaction reference.";
-                return;
-            }
-
-            paymentMethod = _onlineChannel;
-            txnRef = _onlineTxnRef.Trim();
-        }
-
-        List<CartLine> saleLines = CartService.Lines
-            .Select(line => new CartLine
-            {
-                LineId = line.LineId,
-                Product = line.Product,
-                Quantity = line.Quantity,
-                UnitPriceOverridePaisa = line.UnitPriceOverridePaisa,
-                DescriptionOverride = line.DescriptionOverride,
-                PackingOverride = line.PackingOverride
-            })
-            .ToList();
-        string? customerPhone = _selectedCustomer?.PhoneNumber;
-        bool whatsApp = _whatsAppReceipt;
-        bool printPrinter = _printOnPrinter;
-
-        _isBusy = true;
-        try
-        {
-            Result<CompleteSaleResult> result = await SalesApi.CompleteCartAsync(
-                CartService.Lines,
-                paymentMethod,
-                customerId,
-                discountPaisa,
-                invoiceNo: string.IsNullOrWhiteSpace(_draftInvoiceNo) ? null : $"POS-{_draftInvoiceNo}");
-
-            if (!result.Success)
-            {
-                _checkoutError = string.IsNullOrWhiteSpace(result.ErrorMessage)
-                    ? "Sale failed."
-                    : result.ErrorMessage;
-                return;
-            }
-
-            CompleteSaleResult sale = result.Data!;
-            string paymentLabel = CheckoutPaymentMethods.DisplayLabel(paymentMethod);
-
-            LastSaleReceiptStore.Set(new LastSaleReceipt
-            {
-                Sale = sale,
-                Lines = saleLines,
-                PaymentLabel = paymentLabel,
-                OnlineTxnRef = txnRef,
-                ChangePaisa = changePaisa,
-                CustomerPhone = customerPhone
-            });
-
-            _qtyText.Clear();
-            _priceText.Clear();
-            _totalText.Clear();
-            _codeText.Clear();
-            CartService.Clear();
-            _cashGivenText = string.Empty;
-            _onlineTxnRef = string.Empty;
-            _discountRsText = string.Empty;
-            _discountPctText = string.Empty;
-            _remarks = string.Empty;
-            _selectedCustomer = null;
-            _useWalkInCustomer = true;
-            _paymentMode = PaymentUiMode.Cash;
-            _selectedLineIndex = -1;
-            _lastScannedLineId = null;
-            _whatsAppReceipt = false;
-            _printOnPrinter = false;
-            AssignDraftInvoiceNo();
-
-            await Task.WhenAll(
-                LoadProductsAsync(),
-                LoadMastersAsync(),
-                LoadQuickLinksAsync(),
-                ShiftStatus.RefreshAsync());
-
-            if (whatsApp)
-            {
-                await WhatsAppReceiptAsync();
-            }
-
-            if (printPrinter)
-            {
-                await PrintReceiptAsync();
-            }
-
-            await FocusScanAsync();
-        }
-        catch (SessionNotActiveException)
-        {
-            _checkoutError = "Start Shift before processing a sale.";
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "PayNow failed with unexpected error.");
-            _checkoutError = string.IsNullOrWhiteSpace(ex.Message)
-                ? "Unexpected sale error. Try again."
-                : ex.Message;
-        }
-        finally
-        {
-            _isBusy = false;
-        }
     }
 
     private async Task WhatsAppReceiptAsync()
@@ -2763,6 +2929,12 @@
                 return;
             }
 
+            if (_showPaymentModal)
+            {
+                ClosePaymentModal();
+                return;
+            }
+
             if (_showCalculator)
             {
                 _showCalculator = false;
@@ -2816,6 +2988,36 @@
                 ClosePurchaseOrders();
                 return;
             }
+        }
+
+        if (e.AltKey && e.ShiftKey && (e.Key == "p" || e.Key == "P"))
+        {
+            if (!_isBusy && !_showPaymentModal)
+            {
+                await OnDiscountFocusAsync();
+            }
+
+            return;
+        }
+
+        if (e.AltKey && e.ShiftKey && (e.Key == "c" || e.Key == "C"))
+        {
+            if (!_isBusy && !_showPaymentModal)
+            {
+                await OnDiscountRsFocusAsync();
+            }
+
+            return;
+        }
+
+        if (e.AltKey && (e.Key == "c" || e.Key == "C"))
+        {
+            if (!_isBusy && !_showPaymentModal)
+            {
+                await OnPaymentFocusAsync();
+            }
+
+            return;
         }
 
         if (ModalOpen || _isBusy)
@@ -3073,6 +3275,191 @@
         return true;
     }
 
+    private void CapturePosUiState()
+    {
+        PosUiStateStore.Shared.Save(new PosUiSnapshot
+        {
+            ScanText = _scanText,
+            BroadSearch = _broadSearch,
+            SearchOpen = _searchOpen,
+            ScanHighlight = _scanHighlight,
+            SelectedLineIndex = _selectedLineIndex,
+            FocusedField = _focusedField,
+            LastScannedLineId = _lastScannedLineId,
+            DiscountRsText = _discountRsText,
+            DiscountPctText = _discountPctText,
+            CashGivenText = _cashGivenText,
+            Remarks = _remarks,
+            DraftInvoiceNo = _draftInvoiceNo,
+            SaleDate = _saleDate,
+            OnlineChannel = _onlineChannel,
+            OnlineTxnRef = _onlineTxnRef,
+            WhatsAppPhone = _whatsAppPhone,
+            WhatsAppReceipt = _whatsAppReceipt,
+            PrintOnPrinter = _printOnPrinter,
+            UseWalkInCustomer = _useWalkInCustomer,
+            SelectedCustomer = _selectedCustomer,
+            PaymentMode = (int)_paymentMode,
+            QtyText = new Dictionary<Guid, string>(_qtyText),
+            PriceText = new Dictionary<Guid, string>(_priceText),
+            TotalText = new Dictionary<Guid, string>(_totalText),
+            CodeText = new Dictionary<Guid, string>(_codeText)
+        });
+    }
+
+    private void RestorePosUiState()
+    {
+        PosUiSnapshot? snap = PosUiStateStore.Shared.Snapshot;
+        if (snap is null)
+        {
+            return;
+        }
+
+        _scanText = snap.ScanText ?? string.Empty;
+        _broadSearch = snap.BroadSearch;
+        _searchOpen = snap.SearchOpen || _scanText.Trim().Length > 0;
+        _scanHighlight = snap.ScanHighlight;
+        _showScanDropdown = _scanText.Trim().Length > 0;
+        _selectedLineIndex = snap.SelectedLineIndex;
+        _focusedField = snap.FocusedField;
+        _lastScannedLineId = snap.LastScannedLineId;
+        _discountRsText = snap.DiscountRsText ?? string.Empty;
+        _discountPctText = snap.DiscountPctText ?? string.Empty;
+        _cashGivenText = snap.CashGivenText ?? string.Empty;
+        _remarks = snap.Remarks ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(snap.DraftInvoiceNo))
+        {
+            _draftInvoiceNo = snap.DraftInvoiceNo;
+        }
+
+        if (snap.SaleDate != default)
+        {
+            _saleDate = snap.SaleDate;
+        }
+
+        if (!string.IsNullOrWhiteSpace(snap.OnlineChannel))
+        {
+            _onlineChannel = snap.OnlineChannel;
+        }
+
+        _onlineTxnRef = snap.OnlineTxnRef ?? string.Empty;
+        _whatsAppPhone = snap.WhatsAppPhone ?? string.Empty;
+        _whatsAppReceipt = snap.WhatsAppReceipt;
+        _printOnPrinter = snap.PrintOnPrinter;
+        _useWalkInCustomer = snap.UseWalkInCustomer;
+        _selectedCustomer = snap.SelectedCustomer;
+        _paymentMode = snap.PaymentMode switch
+        {
+            1 => PaymentUiMode.Online,
+            2 => PaymentUiMode.Credit,
+            _ => PaymentUiMode.Cash
+        };
+
+        CopyEditorText(_qtyText, snap.QtyText);
+        CopyEditorText(_priceText, snap.PriceText);
+        CopyEditorText(_totalText, snap.TotalText);
+        CopyEditorText(_codeText, snap.CodeText);
+
+        if (CartService.Lines.Count == 0)
+        {
+            _selectedLineIndex = -1;
+        }
+        else if (_selectedLineIndex >= CartService.Lines.Count)
+        {
+            _selectedLineIndex = CartService.Lines.Count - 1;
+        }
+
+        _restoreUiPending = true;
+    }
+
+    private static void CopyEditorText(Dictionary<Guid, string> target, Dictionary<Guid, string>? source)
+    {
+        target.Clear();
+        if (source is null)
+        {
+            return;
+        }
+
+        foreach (KeyValuePair<Guid, string> pair in source)
+        {
+            target[pair.Key] = pair.Value;
+        }
+    }
+
+    private async Task RestorePosUiFocusAsync()
+    {
+        string? fallbackId = null;
+        if (_focusedField == "search")
+        {
+            fallbackId = "scanInput";
+        }
+        else if (_focusedField is "discount" or "discountPct")
+        {
+            fallbackId = "pos-discount-pct";
+        }
+        else if (_focusedField == "discountRs")
+        {
+            fallbackId = "pos-discount-rs";
+        }
+        else if (_focusedField == "payment")
+        {
+            fallbackId = "pos-payment";
+        }
+        else if (!string.IsNullOrWhiteSpace(_focusedField)
+                 && TableFields.Contains(_focusedField)
+                 && _selectedLineIndex >= 0
+                 && _selectedLineIndex < CartService.Lines.Count)
+        {
+            fallbackId = CellId(CartService.Lines[_selectedLineIndex].LineId, _focusedField);
+        }
+
+        bool restored = false;
+        try
+        {
+            restored = await Js.InvokeAsync<bool>("webPosRestoreCaret", fallbackId);
+        }
+        catch
+        {
+            restored = false;
+        }
+
+        if (restored)
+        {
+            return;
+        }
+
+        if (fallbackId == "scanInput")
+        {
+            await FocusScanAsync();
+            return;
+        }
+
+        if (fallbackId is "pos-discount-pct")
+        {
+            await OnDiscountFocusAsync();
+            return;
+        }
+
+        if (fallbackId is "pos-discount-rs")
+        {
+            await OnDiscountRsFocusAsync();
+            return;
+        }
+
+        if (fallbackId is "pos-payment")
+        {
+            await OnPaymentFocusAsync();
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_focusedField)
+            && TableFields.Contains(_focusedField)
+            && _selectedLineIndex >= 0)
+        {
+            await FocusTableCellAsync(_selectedLineIndex, _focusedField);
+        }
+    }
+
     private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
 
     private static string FormatQty(decimal quantity) =>
@@ -3101,6 +3488,7 @@
     public void Dispose()
     {
         _isDisposed = true;
+        CapturePosUiState();
         CartService.Changed -= OnCartChanged;
         ShiftStatus.Changed -= OnShiftStatusChanged;
         _clockTimer?.Dispose();

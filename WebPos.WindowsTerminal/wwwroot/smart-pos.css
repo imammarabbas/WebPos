@@ -1,43 +1,108 @@
-/* Smart POS sales surface — visual system from the cashier UI mockup. */
+/* Smart POS sales surface — index_3 design tokens + animations. */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
 :root {
-    --sp-bg: #f4f7fb;
-    --sp-surface: #ffffff;
-    --sp-border: #dfe5ee;
+    --bg: #f4f7fb;
+    --surface: #ffffff;
+    --surface-raised: #ffffff;
+    --border: #dfe5ee;
+    --border-strong: #cfd8e6;
+    --text: #0f172a;
+    --text-soft: #334155;
+    --muted: #64748b;
+    --primary: #3157d5;
+    --primary-dark: #2443ac;
+    --primary-soft: #eef3ff;
+    --success: #12966b;
+    --danger: #cf3f4a;
+    --danger-bright: #db4752;
+    --danger-soft: #fff2f3;
+    --nav-bg: #10182c;
+    --nav-bg-2: #151f38;
+    --nav-text: #edf2ff;
+    --nav-muted: #aab5d1;
+
+    --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
+    --shadow-sm: 0 4px 12px rgba(15, 23, 42, 0.055), 0 1px 2px rgba(15, 23, 42, 0.04);
+    --shadow-md: 0 12px 28px rgba(15, 23, 42, 0.08), 0 3px 8px rgba(15, 23, 42, 0.045);
+    --shadow-primary: 0 10px 24px rgba(49, 87, 213, 0.20), 0 3px 8px rgba(49, 87, 213, 0.12);
+
+    --nav-min-h: 70px;
+    --nav-control-h: 38px;
+    --search-control-h: 46px;
+    --table-head-h: 37px;
+    --table-row-h: 34px;
+    --lower-row-height: 58px;
+    --toolbar-button-height: 58px;
+    --status-h: 26px;
+    --control-radius: 12px;
+    --shell-gap: 12px;
+    --shell-pad-x: 12px;
+
+    /* Legacy --sp-* aliases used across PaymentModal / existing rules */
+    --sp-bg: var(--bg);
+    --sp-surface: var(--surface);
+    --sp-border: var(--border);
     --sp-border-light: #e9eef5;
-    --sp-border-strong: #cfd8e6;
-    --sp-text: #0f172a;
-    --sp-text-soft: #334155;
-    --sp-muted: #64748b;
-    --sp-primary: #3157d5;
-    --sp-primary-dark: #2443ac;
-    --sp-primary-soft: #eef3ff;
-    --sp-danger: #cf3f4a;
-    --sp-danger-soft: #fff2f3;
-    --sp-nav-bg: #10182c;
-    --sp-nav-bg-2: #151f38;
-    --sp-nav-text: #edf2ff;
-    --sp-nav-muted: #aab5d1;
-    --sp-shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
-    --sp-shadow-sm: 0 4px 12px rgba(15, 23, 42, 0.055), 0 1px 2px rgba(15, 23, 42, 0.04);
-    --sp-shadow-md: 0 12px 28px rgba(15, 23, 42, 0.08), 0 3px 8px rgba(15, 23, 42, 0.045);
-    --sp-shadow-primary: 0 10px 24px rgba(49, 87, 213, 0.20), 0 3px 8px rgba(49, 87, 213, 0.12);
+    --sp-border-strong: var(--border-strong);
+    --sp-text: var(--text);
+    --sp-text-soft: var(--text-soft);
+    --sp-muted: var(--muted);
+    --sp-primary: var(--primary);
+    --sp-primary-dark: var(--primary-dark);
+    --sp-primary-soft: var(--primary-soft);
+    --sp-danger: var(--danger);
+    --sp-danger-soft: var(--danger-soft);
+    --sp-nav-bg: var(--nav-bg);
+    --sp-nav-bg-2: var(--nav-bg-2);
+    --sp-nav-text: var(--nav-text);
+    --sp-nav-muted: var(--nav-muted);
+    --sp-shadow-xs: var(--shadow-xs);
+    --sp-shadow-sm: var(--shadow-sm);
+    --sp-shadow-md: var(--shadow-md);
+    --sp-shadow-primary: var(--shadow-primary);
     --sp-radius-sm: 8px;
-    --sp-radius: 12px;
-    --sp-toolbar-h: 58px;
-    --sp-lower-h: 58px;
+    --sp-radius: var(--control-radius);
+    --sp-toolbar-h: var(--toolbar-button-height);
+    --sp-lower-h: var(--lower-row-height);
+}
+
+@keyframes menuIn {
+    from { opacity: 0; transform: translateY(-4px) scale(0.985); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes itemAdded {
+    0% { background: #dbe6ff; }
+    100% { background: transparent; }
 }
 
 html, body {
-    font-family: "Inter", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+    font-family: "Inter", sans-serif !important;
+    max-width: 100vw;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+.pos-shell.smart-pos,
+.smart-pos {
+    font-family: "Inter", sans-serif !important;
 }
 
 .pos-shell.smart-pos {
-    --bg: var(--sp-bg);
+    --bg: var(--bg);
     height: 100%;
+    height: 100dvh;
     max-height: 100%;
+    max-height: 100dvh;
     min-height: 0;
     min-width: 0;
-    max-width: 100%;
+    max-width: 100vw;
+    width: 100%;
     margin: 0;
     padding: 0;
     gap: 0;
@@ -46,9 +111,14 @@ html, body {
     grid-template-rows: auto auto minmax(0, 1fr) auto auto;
     background:
         radial-gradient(circle at 8% -5%, rgba(49, 87, 213, 0.06), transparent 30%),
-        linear-gradient(180deg, #f7f9fc 0%, var(--sp-bg) 42%, #eef3f8 100%);
-    color: var(--sp-text);
+        linear-gradient(180deg, #f7f9fc 0%, var(--bg) 42%, #eef3f8 100%);
+    color: var(--text);
     font-size: 13px;
+}
+
+/* Flyouts paint above the sales grid; shell stays clipped to avoid page scroll. */
+.pos-shell.smart-pos:has(.pos-menu-dd.open) {
+    overflow: hidden;
 }
 
 .smart-pos > .alert-red,
@@ -73,14 +143,14 @@ html, body {
 }
 
 .sp-search-section {
-    padding: 10px 18px 9px;
+    padding: var(--shell-gap) var(--shell-pad-x) 0;
     min-width: 0;
 }
 
 .sp-search-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 104px minmax(0, 215px);
-    gap: 9px;
+    grid-template-columns: minmax(160px, 1fr) 112px minmax(140px, 220px);
+    gap: var(--shell-gap);
     align-items: stretch;
     min-width: 0;
 }
@@ -231,14 +301,15 @@ html, body {
     min-height: 0;
     min-width: 0;
     max-width: 100%;
-    padding: 0 18px 8px;
+    padding: var(--shell-gap) var(--shell-pad-x);
     display: grid;
     grid-template-rows: minmax(0, 1fr) auto;
-    gap: 8px;
+    gap: var(--shell-gap);
     overflow: hidden;
 }
 
 .sp-table-card {
+    flex: 1 1 auto;
     min-height: 0;
     background: var(--sp-surface);
     border: 1px solid var(--sp-border);
@@ -260,28 +331,57 @@ html, body {
 }
 
 .sp-table-scroll {
-    flex: 1;
-    overflow: auto;
+    flex: 1 1 auto;
     min-height: 0;
+    overflow: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #c6d0df transparent;
+    scrollbar-gutter: stable;
+    contain: layout paint;
+}
+
+.sp-table-scroll::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.sp-table-scroll::-webkit-scrollbar-thumb {
+    background: #cad4e2;
+    border-radius: 10px;
+}
+
+.sp-table-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sp-items-table tbody tr.selected td,
+.sp-items-table tbody tr.row-selected td {
+    background: #eef3ff !important;
+    box-shadow: inset 3px 0 0 #3157d5;
+}
+
+.sp-items-table tbody tr.item-added td {
+    animation: itemAdded 0.85s ease-out;
 }
 
 .sp-items-table {
     width: 100%;
     border-collapse: separate;
     border-spacing: 0;
-    min-width: 0;
+    min-width: 760px;
 }
 
 .sp-items-table thead th {
     position: sticky;
     top: 0;
     z-index: 2;
-    height: 37px;
+    height: var(--table-head-h);
+    min-height: var(--table-head-h);
     background: linear-gradient(180deg, #fbfcfe 0%, #f5f7fb 100%);
     border-bottom: 1px solid var(--sp-border);
     padding: 0 12px;
     text-align: left;
-    font-size: 10px;
+    font-size: 10.5px;
     font-weight: 750;
     color: #526176;
     white-space: nowrap;
@@ -300,7 +400,8 @@ html, body {
 }
 
 .sp-items-table tbody td {
-    height: 35px;
+    height: var(--table-row-h);
+    min-height: var(--table-row-h);
     padding: 0 10px;
     border-bottom: 1px solid #edf1f6;
     color: var(--sp-text);
@@ -309,17 +410,38 @@ html, body {
     background: #fff;
 }
 
-.sp-items-table tbody tr.zebra td {
+.sp-items-table tbody tr.zebra td,
+.sp-items-table tbody tr:nth-child(even):not(.selected):not(.row-selected) td {
     background: #f8fafc;
+}
+
+.sp-items-table tbody tr:hover:not(.selected):not(.row-selected) td {
+    background: #f3f6ff;
 }
 
 .sp-items-table tbody tr.selected td,
 .sp-items-table tbody tr.row-selected td {
     background: #eef3ff !important;
+    box-shadow: inset 3px 0 0 #3157d5;
 }
 
 .sp-items-table tbody tr.sp-empty-row td {
     color: #94a3b8;
+}
+
+.sp-items-table .col-sr { width: 3.2rem; }
+.sp-items-table .col-code { width: 7.5rem; }
+.sp-items-table .col-pack { width: 6rem; }
+.sp-items-table .col-qty { width: 5rem; }
+.sp-items-table .col-price { width: 6rem; }
+.sp-items-table .col-total { width: 7rem; }
+
+.sp-item-code-placeholder {
+    color: #94a3b8;
+    font-size: 12px;
+    font-weight: 550;
+    user-select: none;
+    pointer-events: none;
 }
 
 .sp-items-table .sf-cell-input {
@@ -334,11 +456,23 @@ html, body {
     color: var(--sp-text);
 }
 
+.sp-items-table .sf-cell-input:hover {
+    border-color: #d5deed;
+    background: rgba(255, 255, 255, 0.9);
+}
+
 .sp-items-table .sf-cell-input:focus {
     border-color: #4b67cf;
     background: #fff;
-    box-shadow: 0 0 0 3px rgba(49, 87, 213, 0.08);
+    box-shadow: 0 0 0 3px rgba(49, 87, 213, 0.12);
     outline: none;
+}
+
+.sp-items-table .col-qty .sf-cell-input,
+.sp-items-table .col-price .sf-cell-input,
+.sp-items-table .col-total .sf-cell-input {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
 }
 
 .sp-row-del {
@@ -363,16 +497,18 @@ html, body {
 .sp-lower-panels {
     width: 100%;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
-    gap: 8px;
+    grid-template-columns: minmax(220px, 35%) minmax(0, 65%);
+    gap: 10px;
     align-items: stretch;
+    min-height: var(--lower-row-height);
+    height: auto;
 }
 
 .sp-customer-bar,
 .sp-finance-panel {
-    height: var(--sp-lower-h);
-    min-height: var(--sp-lower-h);
-    max-height: var(--sp-lower-h);
+    min-height: var(--lower-row-height);
+    height: auto;
+    max-height: none;
     background: var(--sp-surface);
     border: 1px solid var(--sp-border);
     border-radius: var(--sp-radius);
@@ -381,11 +517,11 @@ html, body {
 
 .sp-customer-bar {
     display: grid;
-    grid-template-columns: auto minmax(105px, 0.7fr) minmax(180px, 1.25fr) auto;
+    grid-template-columns: auto minmax(105px, 0.7fr) minmax(160px, 1.25fr) auto;
     align-items: center;
     column-gap: 8px;
     padding: 6px 10px;
-    overflow: hidden;
+    overflow: visible;
 }
 
 .sp-customer-icon {
@@ -411,7 +547,7 @@ html, body {
 
 .sp-customer-field label {
     color: #65738a;
-    font-size: 8px;
+    font-size: 9px;
     font-weight: 750;
     letter-spacing: 0.055em;
     text-transform: uppercase;
@@ -510,19 +646,21 @@ html, body {
 
 .sp-finance-panel {
     display: flex;
-    overflow: hidden;
+    overflow: visible;
 }
 
 .sp-invoice-summary {
     width: 100%;
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     align-items: stretch;
+    min-height: var(--lower-row-height);
+    height: auto;
 }
 
 .sp-summary-item {
     min-width: 0;
-    padding: 4px 10px;
+    padding: 6px 12px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -542,14 +680,14 @@ html, body {
 }
 
 .sp-summary-label {
-    font-size: 8.5px;
+    font-size: 9px;
     font-weight: 750;
     letter-spacing: 0.05em;
     text-transform: uppercase;
     color: #65738a;
-    margin: 0 0 3px;
-    line-height: 1;
-    white-space: nowrap;
+    margin: 0 0 4px;
+    line-height: 1.15;
+    white-space: normal;
 }
 
 .sp-summary-value {
@@ -557,7 +695,8 @@ html, body {
     font-weight: 760;
     color: #142355;
     font-variant-numeric: tabular-nums;
-    line-height: 1;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
 }
 
 .sp-discount-display {
@@ -597,6 +736,7 @@ html, body {
 .sp-summary-input {
     width: 100%;
     font-size: 18px;
+    text-align: center;
 }
 
 .sp-discount-display input:focus,
@@ -604,57 +744,162 @@ html, body {
     box-shadow: inset 0 -2px 0 var(--sp-primary);
 }
 
-.sp-pay-modes {
-    display: flex;
-    gap: 4px;
-    margin-top: 3px;
+/* Cash/Online/Credit live only in PaymentModal — keep finance cell clean. */
+.sp-pay-modes,
+.sp-pay-link {
+    display: none !important;
 }
 
-.sp-pay-link {
-    border: 0;
-    background: transparent;
-    color: #94a3b8;
+.sp-payment-preview {
+    overflow: hidden;
+}
+
+.sp-payment-preview .sp-summary-input {
+    line-height: 1.1;
+}
+
+.sp-shortcut-hint {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: #eef2ff;
+    color: var(--primary-dark);
     font-size: 8px;
     font-weight: 750;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    padding: 0;
+    letter-spacing: 0.02em;
+    vertical-align: middle;
+}
+
+.sp-summary-label .sp-shortcut-hint {
+    text-transform: none;
+    letter-spacing: 0.02em;
+}
+
+.sp-payment-preview-hint {
+    margin-top: 4px;
+    font-size: 0.68rem;
+    font-weight: 650;
+    color: var(--sp-muted);
+    letter-spacing: 0.02em;
+}
+
+.sp-action-bar {
+    padding: 0 var(--shell-pad-x) 8px;
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+    min-height: calc(var(--toolbar-button-height) + 8px);
+    height: auto;
+    min-width: 0;
+    max-width: 100%;
+    overflow: visible;
+}
+
+.sp-category-shortcuts {
+    display: flex;
+    flex: 1 1 auto;
+    gap: 6px;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    align-items: stretch;
+    height: var(--toolbar-button-height);
+    min-height: var(--toolbar-button-height);
+}
+
+.sp-category-shortcuts::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+}
+
+.sp-category-chip {
+    flex: 0 0 auto;
+    height: var(--toolbar-button-height);
+    min-height: var(--toolbar-button-height);
+    max-height: none;
+    min-width: 72px;
+    max-width: 110px;
+    padding: 4px 10px;
+    border-radius: 11px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.97);
+    box-shadow: var(--shadow-xs);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
     cursor: pointer;
+    color: #526176;
 }
 
-.sp-pay-link.active {
-    color: var(--sp-primary);
+.sp-category-chip i {
+    font-size: 14px;
+    color: #8a95a8;
 }
 
-.sp-pay-link:disabled {
-    opacity: 0.4;
+.sp-category-chip span {
+    font-size: 9px;
+    font-weight: 650;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+.sp-category-chip:hover:not(:disabled) {
+    border-color: #b8c7e8;
+    background: var(--primary-soft);
+    color: var(--primary-dark);
+}
+
+.sp-category-chip:hover:not(:disabled) i {
+    color: #6b778c;
+}
+
+.sp-category-chip.is-active {
+    background: #3157d5;
+    border-color: #3157d5;
+    color: #fff;
+    box-shadow: var(--shadow-primary);
+}
+
+.sp-category-chip.is-active i {
+    color: #fff;
+}
+
+.sp-category-chip:disabled {
+    opacity: 0.45;
     cursor: not-allowed;
 }
 
-.sp-online-row {
+.sp-action-bar-shortcuts {
     display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin-top: 3px;
-    width: 100%;
-    justify-content: center;
+    flex: 0 1 auto;
+    gap: 8px;
+    align-items: stretch;
+    min-height: var(--toolbar-button-height);
+    min-width: 0;
+    margin-left: auto;
 }
 
-.sp-online-row .channel-pill {
-    font-size: 8px;
-    min-height: 18px;
-    padding: 0 6px;
+.sp-action-bar-shortcuts .sp-action-btn {
+    width: clamp(72px, 8vw, 110px);
+    height: var(--toolbar-button-height);
+    min-height: var(--toolbar-button-height);
+    max-height: none;
 }
 
-.sp-online-row .txn-ref-input {
-    min-height: 18px;
-    font-size: 10px;
-    width: 88px;
-    padding: 0 6px;
+.sp-save.is-pressed {
+    transform: translateY(1px) scale(0.975);
 }
 
 .sp-balance-summary {
-    background: linear-gradient(180deg, #fff5f5 0%, var(--sp-danger-soft) 100%);
+    background: linear-gradient(180deg, #fff5f5 0%, var(--danger-soft) 100%);
 }
 
 .sp-balance-summary .sp-summary-label {
@@ -662,26 +907,15 @@ html, body {
 }
 
 .sp-balance-value {
-    color: #db4752;
+    color: var(--danger-bright);
     font-size: 21px;
-}
-
-.sp-action-bar {
-    padding: 0 18px 8px;
-    display: grid;
-    grid-template-columns: repeat(9, minmax(0, 1fr)) minmax(0, 1.45fr);
-    grid-auto-rows: var(--sp-toolbar-h);
-    gap: 8px;
-    min-height: 66px;
-    min-width: 0;
-    max-width: 100%;
 }
 
 .sp-action-btn,
 .sp-save {
     height: var(--sp-toolbar-h);
     min-height: var(--sp-toolbar-h);
-    max-height: var(--sp-toolbar-h);
+    max-height: none;
 }
 
 .sp-action-btn {
@@ -764,6 +998,11 @@ html, body {
 }
 
 .sp-save {
+    height: var(--toolbar-button-height);
+    min-height: var(--toolbar-button-height);
+    max-height: none;
+    flex: 0 0 auto;
+    min-width: clamp(180px, 18vw, 240px);
     background: linear-gradient(135deg, #3d62de 0%, #3157d5 55%, #294bb9 100%);
     color: #fff;
     border: none;
@@ -847,15 +1086,17 @@ html, body {
 }
 
 .sp-status-bar {
-    min-height: 25px;
-    padding: 0 18px;
+    height: var(--status-h);
+    min-height: var(--status-h);
+    padding: 0 var(--shell-pad-x);
     background: #111a2d;
     border-top: 1px solid rgba(255, 255, 255, 0.06);
-    color: #b8c3d7;
+    color: var(--nav-muted);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-size: 9px;
+    font-size: 11px;
+    font-weight: 550;
     white-space: nowrap;
     letter-spacing: 0.01em;
 }
@@ -864,19 +1105,96 @@ html, body {
     margin: 0 18px 4px;
 }
 
-@media (max-width: 1200px) {
-    .sp-action-bar {
-        grid-template-columns: repeat(6, 1fr);
+@media (max-width: 1400px) {
+    .sp-search-grid {
+        grid-template-columns: minmax(140px, 1fr) 100px minmax(130px, 200px);
     }
 
     .sp-save {
-        grid-column: span 6;
+        min-width: 200px;
+        padding: 0 12px;
+    }
+}
+
+@media (max-width: 1200px) {
+    .sp-action-bar {
+        flex-wrap: nowrap;
+        gap: 6px;
+    }
+
+    .sp-category-shortcuts {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    .sp-category-chip {
+        min-width: 64px;
+        max-width: 92px;
+        padding: 4px 6px;
+    }
+
+    .sp-action-bar-shortcuts .sp-action-btn {
+        width: 78px;
+    }
+
+    .sp-save {
+        min-width: 170px;
+        padding: 0 10px;
+        grid-template-columns: 32px 1fr;
+    }
+
+    .sp-save-shortcuts {
+        display: none;
+    }
+
+    .sp-lower-panels {
+        grid-template-columns: minmax(200px, 38%) minmax(0, 62%);
+    }
+}
+
+@media (max-width: 1024px) {
+    .sp-search-grid {
+        grid-template-columns: minmax(120px, 1fr) 96px minmax(120px, 180px);
+        gap: 8px;
     }
 
     .sp-lower-panels {
         grid-template-columns: 1fr;
-        grid-template-rows: auto auto;
+        gap: 8px;
+    }
+
+    .sp-invoice-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .sp-summary-item:nth-child(2)::after {
+        display: none;
+    }
+}
+
+@media (max-width: 900px) {
+    .sp-action-bar {
+        flex-wrap: wrap;
         height: auto;
+        min-height: calc(var(--toolbar-button-height) + 8px);
+    }
+
+    .sp-category-shortcuts {
+        flex: 1 1 100%;
+        order: 2;
+    }
+
+    .sp-action-bar-shortcuts {
+        order: 1;
+        flex: 1 1 auto;
+        margin-left: 0;
+        width: 100%;
+    }
+
+    .sp-save {
+        flex: 1 1 auto;
+        min-width: 0;
+        margin-left: auto;
     }
 
     .sp-customer-bar,
@@ -884,18 +1202,54 @@ html, body {
     .sp-invoice-summary,
     .sp-summary-item {
         height: auto;
-        min-height: 58px;
+        min-height: var(--lower-row-height);
         max-height: none;
+    }
+
+    .sp-search-grid {
+        grid-template-columns: 1fr 100px;
+    }
+
+    .sp-invoice {
+        grid-column: 1 / -1;
     }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 720px) {
     .sp-search-grid {
         grid-template-columns: 1fr;
     }
 
-    .sp-invoice-summary {
-        grid-template-columns: repeat(3, 1fr);
+    .sp-qty-chip,
+    .sp-invoice {
+        width: 100%;
+    }
+
+    .sp-action-bar-shortcuts {
+        flex-wrap: wrap;
+    }
+
+    .sp-action-bar-shortcuts .sp-action-btn {
+        flex: 1 1 calc(33.33% - 8px);
+        min-width: 72px;
+    }
+
+    .sp-save {
+        flex: 1 1 100%;
+        width: 100%;
+        grid-template-columns: 36px 1fr;
+    }
+
+    .sp-customer-bar {
+        grid-template-columns: auto 1fr;
+        row-gap: 6px;
+    }
+
+    .sp-customer-actions {
+        grid-column: 1 / -1;
+        border-left: 0;
+        padding-left: 0;
+        justify-content: flex-start;
     }
 }
 
@@ -915,6 +1269,6 @@ html, body {
 .pos-shell.smart-pos .sp-items-table .sf-cell-input:focus {
     border-color: #4b67cf;
     background: #fff;
-    box-shadow: 0 0 0 3px rgba(49, 87, 213, 0.08);
+    box-shadow: 0 0 0 3px rgba(49, 87, 213, 0.12);
     outline: none;
 }

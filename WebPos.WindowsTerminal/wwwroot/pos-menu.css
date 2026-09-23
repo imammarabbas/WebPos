@@ -26,19 +26,20 @@
     flex-wrap: nowrap;
     align-items: center;
     justify-content: space-between;
-    gap: 18px;
+    gap: 12px;
     width: 100%;
+    max-width: 100vw;
     min-height: var(--pos-bar-h);
     height: auto;
     max-height: none;
     box-sizing: border-box;
-    padding: 10px calc(var(--pos-bar-pad-x) + var(--pos-caption-w)) 10px var(--pos-bar-pad-x);
+    padding: 12px var(--pos-bar-pad-x);
     background: linear-gradient(135deg, var(--pos-nav-bg) 0%, var(--pos-nav-bg-2) 100%);
     border: none;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 0;
     margin: 0;
-    overflow: visible;
+    overflow: hidden;
     position: relative;
     z-index: 50;
     box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
@@ -54,7 +55,7 @@
 }
 
 .pos-top-smart {
-    gap: 18px;
+    gap: 12px;
 }
 
 .pos-brand-area {
@@ -62,9 +63,37 @@
     align-items: center;
     gap: 8px;
     min-width: 0;
+    flex: 0 1 auto;
     flex-wrap: nowrap;
+    overflow: visible;
+}
+
+.pos-nav-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 auto;
+    min-width: 0;
+    justify-content: center;
     overflow-x: auto;
     overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.pos-nav-actions::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+}
+
+/* Absolute flyouts hang below the link row; release clip while a dropdown is open. */
+.pos-top-menu:has(.pos-menu-dd.open) {
+    overflow: visible;
+}
+
+.pos-brand-area:has(.pos-menu-dd.open) {
+    overflow: visible;
 }
 
 .pos-brand,
@@ -136,7 +165,7 @@
     border: 1px solid rgba(255, 255, 255, 0.10);
     background: rgba(255, 255, 255, 0.065);
     color: #e8edfb;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 650;
     padding: 0 12px;
     border-radius: 9px;
@@ -145,6 +174,7 @@
     white-space: nowrap;
     line-height: 1;
     letter-spacing: -0.01em;
+    transition: background 0.18s ease, border-color 0.18s ease, transform 0.12s ease, opacity 0.18s ease;
 }
 
 .pos-menu-link i:first-child {
@@ -163,6 +193,10 @@
     color: #e8edfb;
 }
 
+.pos-menu-link:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
 .pos-menu-link.active {
     background: rgba(49, 87, 213, 0.38);
     border-color: rgba(164, 181, 241, 0.32);
@@ -174,8 +208,9 @@
 }
 
 .pos-menu-link:disabled {
-    opacity: 0.42;
+    opacity: 0.45;
     cursor: not-allowed;
+    pointer-events: none;
     background: rgba(255, 255, 255, 0.04);
     border-color: rgba(255, 255, 255, 0.06);
     color: #8e9ab8;
@@ -264,6 +299,9 @@
     align-items: center;
     gap: 9px;
     margin-left: auto;
+    flex: 0 0 auto;
+    flex-shrink: 0;
+    max-width: 100%;
 }
 
 .pos-profile-btn {
@@ -347,6 +385,68 @@
     border: 1px solid var(--pos-border);
     border-radius: 11px;
     box-shadow: 0 14px 32px rgba(15, 23, 42, 0.16);
+    animation: menuIn 0.14s ease-out;
+}
+
+.pos-flyout-item:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.pos-flyout-item.active {
+    background: var(--pos-soft);
+}
+
+.cfd-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: var(--pos-link-h, 38px);
+    padding: 0 12px;
+    border-radius: 9px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.1) 0%,
+        rgba(255, 255, 255, 0.05) 100%
+    );
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    color: #e8edfb;
+    font-size: 12px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    cursor: pointer;
+    font-family: inherit;
+    transition:
+        background 0.16s ease,
+        border-color 0.16s ease,
+        color 0.16s ease,
+        transform 0.12s ease,
+        box-shadow 0.16s ease;
+}
+
+.cfd-btn i {
+    font-size: 13px;
+    color: #aebcff;
+}
+
+.cfd-btn:hover {
+    background: rgba(49, 87, 213, 0.35);
+    border-color: rgba(126, 156, 245, 0.4);
+    color: #fff;
+    box-shadow: 0 4px 14px rgba(49, 87, 213, 0.22);
+}
+
+.cfd-btn:hover i {
+    color: #dbe6ff;
+}
+
+.cfd-btn:active,
+.pos-profile-btn:active,
+.pos-logout-btn:active {
+    transform: translateY(1px);
 }
 
 .pos-flyout-item {
@@ -583,4 +683,81 @@
 
 .party-table tbody tr:hover {
     background: #f8fafc;
+}
+
+/* Responsive nav — collapse labels before controls disappear */
+@media (max-width: 1400px) {
+    .pos-top-menu {
+        gap: 8px;
+        padding: 10px 12px;
+    }
+
+    .pos-brand-text span {
+        display: none;
+    }
+
+    .pos-menu-link,
+    .cfd-btn,
+    .pos-logout-btn {
+        padding: 0 10px;
+        gap: 6px;
+    }
+}
+
+@media (max-width: 1200px) {
+    .pos-brand-text {
+        display: none;
+    }
+
+    .pos-brand {
+        margin-right: 4px;
+        padding-right: 0;
+    }
+
+    .pos-nav-actions .pos-menu-link span,
+    .cfd-btn span {
+        display: none;
+    }
+
+    .pos-nav-actions .pos-menu-link,
+    .cfd-btn {
+        width: var(--pos-link-h);
+        padding: 0;
+        justify-content: center;
+        border-radius: 9px;
+    }
+
+    .pos-nav-actions .pos-menu-link .pos-caret {
+        display: none;
+    }
+}
+
+@media (max-width: 900px) {
+    .pos-logout-btn span {
+        display: none;
+    }
+
+    .pos-logout-btn {
+        width: var(--pos-link-h);
+        padding: 0;
+        border-radius: 50%;
+    }
+
+    .pos-top-menu {
+        flex-wrap: wrap;
+        height: auto;
+        max-height: none;
+    }
+
+    .pos-brand-area,
+    .pos-nav-right {
+        flex: 0 0 auto;
+    }
+
+    .pos-nav-actions {
+        order: 3;
+        flex: 1 1 100%;
+        justify-content: flex-start;
+        padding-top: 4px;
+    }
 }

@@ -41,6 +41,15 @@
     gap: 0;
     display: grid;
     overflow: hidden;
+    font-family: "Inter", sans-serif !important;
+    background:
+        radial-gradient(circle at 8% -5%, rgba(49, 87, 213, 0.06), transparent 30%),
+        linear-gradient(180deg, #f7f9fc 0%, #f4f7fb 42%, #eef3f8 100%);
+}
+
+.pos-shell.smart-pos:has(.pos-menu-dd.open),
+.sf-shell.smart-pos:has(.pos-menu-dd.open) {
+    overflow: hidden;
 }
 
 .pos-header {

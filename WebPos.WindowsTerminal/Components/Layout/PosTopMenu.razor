@@ -3,6 +3,7 @@
 @inject ISessionService SessionService
 @inject LoginApiClient Login
 @inject ShiftStatusApiClient ShiftStatus
+@inject CustomerDisplayWindowService CustomerDisplayWindow
 
 <nav class="pos-top-menu pos-top-smart" aria-label="POS modules" @onclick="CloseMenus">
     <div class="pos-brand-area">
@@ -77,13 +78,15 @@
                 </div>
             }
         </div>
+    </div>
 
+    <div class="pos-nav-actions" aria-label="Quick actions">
         <button type="button"
                 class="pos-menu-link @(IsActive("/customers") ? "active" : null)"
                 @onclick="GoCustomers"
                 @onclick:stopPropagation>
             <i class="fa-solid fa-user" aria-hidden="true"></i>
-            Customer
+            <span>Customer</span>
         </button>
 
         <button type="button"
@@ -91,7 +94,7 @@
                 @onclick="GoSuppliers"
                 @onclick:stopPropagation>
             <i class="fa-solid fa-truck" aria-hidden="true"></i>
-            Supplier
+            <span>Supplier</span>
         </button>
 
         <button type="button"
@@ -99,7 +102,7 @@
                 @onclick="GoPastSales"
                 @onclick:stopPropagation>
             <i class="fa-solid fa-receipt" aria-hidden="true"></i>
-            Past Sales
+            <span>Past Sales</span>
         </button>
 
         <button type="button"
@@ -108,7 +111,7 @@
                 @onclick="Hold"
                 @onclick:stopPropagation>
             <i class="fa-solid fa-pause" aria-hidden="true"></i>
-            Hold
+            <span>Hold</span>
         </button>
 
         <button type="button"
@@ -117,7 +120,7 @@
                 @onclick="Retrieve"
                 @onclick:stopPropagation>
             <i class="fa-solid fa-rotate-left" aria-hidden="true"></i>
-            Retrieve
+            <span>Retrieve</span>
         </button>
 
         <button type="button"
@@ -125,7 +128,7 @@
                 @onclick="GoReturns"
                 @onclick:stopPropagation>
             <i class="fa-solid fa-arrow-rotate-left" aria-hidden="true"></i>
-            Returns
+            <span>Returns</span>
         </button>
 
         <button type="button"
@@ -133,11 +136,19 @@
                 @onclick="GoCloseShift"
                 @onclick:stopPropagation>
             <i class="fa-solid fa-cash-register" aria-hidden="true"></i>
-            Cash / Close
+            <span>Cash / Close</span>
         </button>
     </div>
 
     <div class="pos-nav-right">
+        <button type="button"
+                class="cfd-btn"
+                title="Customer Display"
+                @onclick="OnCustomerDisplay"
+                @onclick:stopPropagation>
+            <i class="fa-solid fa-tv" aria-hidden="true"></i>
+            <span>Customer Display</span>
+        </button>
         <button type="button" class="pos-profile-btn" title="@CashierDisplayName">
             <i class="fa-solid fa-user" aria-hidden="true"></i>
         </button>
@@ -290,6 +301,11 @@
     {
         CloseMenus();
         Navigation.NavigateTo("/close-shift");
+    }
+
+    private void OnCustomerDisplay()
+    {
+        CustomerDisplayWindow.OpenOrFocus();
     }
 
     private async Task OnLock()
