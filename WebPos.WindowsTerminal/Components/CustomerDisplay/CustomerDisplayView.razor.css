@@ -60,8 +60,14 @@
     font-variant-numeric: tabular-nums;
 }
 
-.cfd-tot {
+.cfd-ledger {
     margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.cfd-tot {
     font-size: clamp(1.35rem, 2.8vw, 1.9rem);
     font-weight: 800;
     color: #fff;
@@ -69,33 +75,45 @@
     letter-spacing: -0.01em;
 }
 
-.cfd-thank {
-    display: none;
-    margin: auto;
-    text-align: center;
-    padding: 48px 24px;
+.cfd-due-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    font-size: clamp(1.05rem, 2vw, 1.35rem);
+    font-weight: 650;
+    color: #e2e8f0;
+    font-variant-numeric: tabular-nums;
 }
 
-.cfd-thank h2 {
-    margin: 0;
-    font-size: clamp(2.2rem, 6vw, 3.4rem);
-    font-weight: 800;
-    letter-spacing: -0.03em;
-}
-
-.cfd-thank p {
-    margin: 14px 0 0;
-    color: #94a3b8;
-    font-size: clamp(1rem, 2vw, 1.25rem);
+.cfd-status {
+    font-size: clamp(1.05rem, 2vw, 1.3rem);
     font-weight: 600;
+    color: #7dd3fc;
+    font-variant-numeric: tabular-nums;
 }
 
-.cfd-shell.is-thank .cfd-header,
-.cfd-shell.is-thank .cfd-lines,
-.cfd-shell.is-thank .cfd-tot {
-    display: none;
+.cfd-balance {
+    font-size: clamp(1.2rem, 2.4vw, 1.55rem);
+    font-weight: 800;
+    color: #fff;
+    font-variant-numeric: tabular-nums;
 }
 
-.cfd-shell.is-thank .cfd-thank {
-    display: block;
+.cfd-balance.is-credit {
+    color: #86efac;
+}
+
+.cfd-sep {
+    opacity: 0.55;
+    margin: 0 0.15em;
+}
+
+.cfd-change-out {
+    color: #fca5a5;
+    font-weight: 800;
+}
+
+.cfd-account-credit {
+    color: #86efac;
+    font-weight: 750;
 }

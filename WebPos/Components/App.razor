@@ -40,6 +40,35 @@
                 }
             });
         };
+
+        window.webPosLoginKeys = {
+            bind: function (dotNetRef) {
+                this.unbind();
+                this._ref = dotNetRef;
+                this._handler = function (e) {
+                    var el = document.activeElement;
+                    var tag = el && el.tagName;
+                    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+                        return;
+                    }
+                    if (e.ctrlKey || e.metaKey || e.altKey) {
+                        return;
+                    }
+                    if (e.key.length === 1 || e.key === 'Enter' || e.key === 'Tab') {
+                        e.preventDefault();
+                        dotNetRef.invokeMethodAsync('CaptureLoginKey', e.key);
+                    }
+                };
+                document.addEventListener('keydown', this._handler, true);
+            },
+            unbind: function () {
+                if (this._handler) {
+                    document.removeEventListener('keydown', this._handler, true);
+                    this._handler = null;
+                }
+                this._ref = null;
+            }
+        };
     </script>
 </body>
 

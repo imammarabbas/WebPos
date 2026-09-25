@@ -1,0 +1,248 @@
+@using System.Globalization
+@using Common.Models
+@using Microsoft.AspNetCore.Components.Web
+@using WebPos.WindowsTerminal.Services
+@inject CustomerApiClient CustomerApi
+@inject PurchaseIntakeApiClient Intake
+@inject CashAccountApiClient CashAccounts
+@inject ISessionService SessionService
+
+@if (Visible && Party is not null)
+{
+    <div class="modal-backdrop po-modal-backdrop" @onclick="Cancel" @onkeydown="OnKeyDown">
+        <div class="po-card" style="width:min(440px,94vw);margin:10vh auto;" role="dialog" aria-modal="true"
+             tabindex="0" @ref="_dialogRef" @onclick:stopPropagation="true">
+            <h2>@(IsSupplier ? "Pay Supplier" : "Receive Payment")</h2>
+            <p style="margin:0 0 0.75rem;color:#64748b;font-weight:600;">
+                @Party.Name · Bal Rs @FormatRs(Party.CurrentBalancePaisa)
+            </p>
+
+            <div class="po-field">
+                <label>Amount (Rs)</label>
+                <input class="form-control" type="number" step="0.01" min="0.01"
+                       @bind="_amountRs" @bind:event="oninput" disabled="@_busy" />
+            </div>
+            <div class="po-field">
+                <label>Payment method</label>
+                <select class="form-control" @bind="_method" disabled="@_busy">
+                    <option value="@CheckoutPaymentMethods.Cash">Cash</option>
+                    <option value="@CheckoutPaymentMethods.EasyPaisa">Easypaisa</option>
+                    <option value="@CheckoutPaymentMethods.JazzCash">JazzCash</option>
+                    <option value="@CheckoutPaymentMethods.BankTransfer">Bank Transfer</option>
+                </select>
+            </div>
+            @if (!IsCashMethod)
+            {
+                <div class="po-field">
+                    <label>Payment account</label>
+                    <select class="form-control" @bind="_accountIdText" disabled="@_busy">
+                        <option value="">— Select —</option>
+                        @foreach (PaymentAccountDto a in _accounts)
+                        {
+                            <option value="@a.Id.ToString("D")">@a.Name (@a.Type)</option>
+                        }
+                    </select>
+                </div>
+            }
+            <div class="po-field">
+                <label>Reference</label>
+                <input class="form-control" @bind="_reference" @bind:event="oninput" disabled="@_busy"
+                       placeholder="@(IsSupplier ? "SP-…" : "CR-…")" />
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <p class="field-error" role="alert">@_error</p>
+            }
+
+            <div class="pov-footer-actions">
+                <button type="button" class="po-btn" disabled="@_busy" @onclick="Cancel">Cancel</button>
+                <button type="button" class="po-btn po-btn-primary" disabled="@_busy" @onclick="SubmitAsync">
+                    @(_busy ? "Saving…" : "Record payment")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public PartyDto? Party { get; set; }
+    [Parameter] public bool IsSupplier { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+    [Parameter] public EventCallback<PartyDto> OnPaid { get; set; }
+
+    private ElementReference _dialogRef;
+    private IReadOnlyList<PaymentAccountDto> _accounts = [];
+    private string _amountRs = string.Empty;
+    private string _method = CheckoutPaymentMethods.Cash;
+    private string _accountIdText = string.Empty;
+    private string _reference = string.Empty;
+    private string? _error;
+    private bool _busy;
+    private bool _accountsLoaded;
+
+    private bool IsCashMethod =>
+        string.Equals(_method, CheckoutPaymentMethods.Cash, StringComparison.OrdinalIgnoreCase);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!Visible || Party is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_reference))
+        {
+            string prefix = IsSupplier ? "SP" : "CR";
+            _reference = $"{prefix}-{DateTime.Now:yyyyMMddHHmmss}";
+        }
+
+        if (!_accountsLoaded)
+        {
+            Result<IReadOnlyList<PaymentAccountDto>> result = await CashAccounts.ListPaymentAccountsAsync();
+            _accounts = result.Success && result.Data is not null ? result.Data : [];
+            _accountsLoaded = true;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Visible)
+        {
+            try { await _dialogRef.FocusAsync(); } catch { /* ignore */ }
+        }
+    }
+
+    private async Task Cancel()
+    {
+        ResetForm();
+        await OnCancel.InvokeAsync();
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape" && !_busy)
+        {
+            await Cancel();
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (Party is null || _busy)
+        {
+            return;
+        }
+
+        _error = null;
+        if (!decimal.TryParse(_amountRs, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal rs)
+            || rs <= 0)
+        {
+            _error = "Enter a valid amount greater than zero.";
+            return;
+        }
+
+        long amountPaisa = (long)Math.Round(rs * 100m, MidpointRounding.AwayFromZero);
+        Guid? cashAccountId = null;
+        if (!IsCashMethod)
+        {
+            if (!Guid.TryParse(_accountIdText, out Guid accountId) || accountId == Guid.Empty)
+            {
+                _error = "Select a payment account for online / bank payments.";
+                return;
+            }
+
+            cashAccountId = accountId;
+        }
+
+        string reference = string.IsNullOrWhiteSpace(_reference)
+            ? $"{(IsSupplier ? "SP" : "CR")}-{DateTime.UtcNow:yyyyMMddHHmmss}"
+            : _reference.Trim();
+
+        _busy = true;
+        try
+        {
+            Guid? shiftId = SessionService.ShiftId == Guid.Empty ? null : SessionService.ShiftId;
+            if (IsSupplier)
+            {
+                Result<RecordSupplierPaymentResult> result = await Intake.RecordPaymentAsync(
+                    Party.Id, amountPaisa, _method, reference, shiftId, cashAccountId);
+                if (!result.Success)
+                {
+                    _error = result.ErrorMessage ?? "Supplier payment failed.";
+                    return;
+                }
+            }
+            else
+            {
+                Result<RecordCustomerPaymentResult> result = await CustomerApi.RecordPaymentAsync(
+                    Party.Id, amountPaisa, _method, reference, shiftId, cashAccountId);
+                if (!result.Success)
+                {
+                    _error = result.ErrorMessage ?? "Customer payment failed.";
+                    return;
+                }
+            }
+
+            PartyDto updated = Party;
+            if (!IsSupplier)
+            {
+                Result<PartyDto> refreshed = await CustomerApi.GetCustomerAsync(Party.Id);
+                if (refreshed.Success && refreshed.Data is not null)
+                {
+                    updated = refreshed.Data;
+                }
+                else
+                {
+                    updated = CloneWithBalance(Party, Party.CurrentBalancePaisa - amountPaisa);
+                }
+            }
+            else
+            {
+                Result<IReadOnlyList<PartyDto>> list = await Intake.GetSuppliersAsync();
+                if (list.Success && list.Data is not null)
+                {
+                    updated = list.Data.FirstOrDefault(s => s.Id == Party.Id)
+                        ?? CloneWithBalance(Party, Party.CurrentBalancePaisa - amountPaisa);
+                }
+                else
+                {
+                    updated = CloneWithBalance(Party, Party.CurrentBalancePaisa - amountPaisa);
+                }
+            }
+
+            ResetForm();
+            await OnPaid.InvokeAsync(updated);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void ResetForm()
+    {
+        _amountRs = string.Empty;
+        _method = CheckoutPaymentMethods.Cash;
+        _accountIdText = string.Empty;
+        _reference = string.Empty;
+        _error = null;
+    }
+
+    private static PartyDto CloneWithBalance(PartyDto source, long balancePaisa) =>
+        new()
+        {
+            Id = source.Id,
+            Role = source.Role,
+            Name = source.Name,
+            PhoneNumber = source.PhoneNumber,
+            Email = source.Email,
+            Address = source.Address,
+            CreditLimitPaisa = source.CreditLimitPaisa,
+            CurrentBalancePaisa = balancePaisa
+        };
+
+    private static string FormatRs(long paisa) =>
+        (paisa / 100m).ToString("N2", CultureInfo.InvariantCulture);
+}

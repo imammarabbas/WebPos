@@ -48,27 +48,43 @@ public sealed class WhatsAppReceiptService
     }
 
     public string BuildLedgerMessage(
-        string customerName,
+        string partyName,
         DateOnly from,
         DateOnly to,
         long openingBalancePaisa,
         long closingBalancePaisa,
-        IReadOnlyList<PartyLedgerEntryDto> entries)
+        IReadOnlyList<PartyLedgerEntryDto> entries,
+        string partyRole = "CUSTOMER")
     {
         ArgumentNullException.ThrowIfNull(entries);
 
+        bool isSupplier = string.Equals(partyRole, "SUPPLIER", StringComparison.OrdinalIgnoreCase);
+        long totalDebit = entries.Sum(e => e.DebitPaisa);
+        long totalCredit = entries.Sum(e => e.CreditPaisa);
+
         StringBuilder body = new();
-        body.AppendLine("SMART POS - CUSTOMER LEDGER");
+        body.AppendLine($"{TerminalBranding.PosDisplayName} — {(isSupplier ? "Supplier" : "Customer")} Statement");
         body.AppendLine();
-        body.AppendLine($"Customer: {customerName}");
-        body.AppendLine($"Period: {from:dd/MM/yyyy} - {to:dd/MM/yyyy}");
+        body.AppendLine($"{(isSupplier ? "Supplier" : "Customer")}: {partyName}");
+        body.AppendLine($"Period: {from:dd/MM/yyyy} – {to:dd/MM/yyyy}");
         body.AppendLine();
         body.AppendLine($"Opening Balance: Rs {(openingBalancePaisa / 100m):N2}");
+        body.AppendLine($"Total Debit: Rs {(totalDebit / 100m):N2}");
+        body.AppendLine($"Total Credit: Rs {(totalCredit / 100m):N2}");
+        body.AppendLine($"Closing Balance: Rs {(closingBalancePaisa / 100m):N2}");
         body.AppendLine();
-        body.AppendLine("Date       Invoice       Debit       Credit      Balance");
+        body.AppendLine("Date       Ref           Debit       Credit      Balance");
 
+        const int maxLines = 40;
+        int shown = 0;
         foreach (PartyLedgerEntryDto entry in entries)
         {
+            if (shown >= maxLines)
+            {
+                body.AppendLine($"… and {entries.Count - maxLines} more entries (see PDF).");
+                break;
+            }
+
             string date = entry.CreatedAt.ToLocalTime().ToString("dd/MM/yy");
             string invoice = string.IsNullOrWhiteSpace(entry.InvoiceNo)
                 ? (string.IsNullOrWhiteSpace(entry.ReferenceDetails) ? entry.Type : entry.ReferenceDetails)
@@ -82,10 +98,11 @@ public sealed class WhatsAppReceiptService
             string credit = entry.CreditPaisa > 0 ? $"{entry.CreditPaisa / 100m:N2}" : string.Empty;
             body.AppendLine(
                 $"{date,-10} {invoice,-13} {debit,-11} {credit,-11} {(entry.NewBalancePaisa / 100m):N2}");
+            shown++;
         }
 
         body.AppendLine();
-        body.AppendLine($"Closing Balance: Rs {(closingBalancePaisa / 100m):N2}");
+        body.AppendLine($"Net Balance: Rs {(closingBalancePaisa / 100m):N2}");
         return body.ToString();
     }
 

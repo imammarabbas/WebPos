@@ -11,7 +11,15 @@ public sealed record CustomerDisplaySnapshot(
     IReadOnlyList<CustomerDisplayLine> Items,
     decimal NetAmount,
     decimal Payment,
-    string Phase);
+    string Phase,
+    bool IsWalkIn = true,
+    decimal CurrentSaleTotal = 0m,
+    decimal PreviousDue = 0m,
+    decimal PaymentReceived = 0m,
+    decimal ChangeReturn = 0m,
+    decimal OnAccount = 0m,
+    decimal AccountCredit = 0m,
+    decimal NewCustomerBalance = 0m);
 
 public sealed class CustomerDisplayState
 {
@@ -24,7 +32,8 @@ public sealed class CustomerDisplayState
         Items: Array.Empty<CustomerDisplayLine>(),
         NetAmount: 0m,
         Payment: 0m,
-        Phase: "selling");
+        Phase: "selling",
+        IsWalkIn: true);
 
     public event Action? Changed;
 

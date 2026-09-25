@@ -15,6 +15,8 @@ public sealed class SyncSupplierDto
 
     public required string PhoneNumber { get; init; }
 
+    public string? Email { get; init; }
+
     public string Address { get; init; } = string.Empty;
 
     public long CurrentBalancePaisa { get; init; }

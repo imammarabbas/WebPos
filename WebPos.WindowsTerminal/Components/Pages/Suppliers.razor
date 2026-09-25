@@ -1,9 +1,14 @@
 @page "/suppliers"
 @using System.Globalization
 @using Common.Models
+@using WebPos.WindowsTerminal.Services
 @inject PurchaseIntakeApiClient Intake
 @inject ISessionService SessionService
 @inject NavigationManager Navigation
+@inject ILedgerPdfService LedgerPdf
+@inject IEmailService EmailService
+@inject StatementFileService StatementFiles
+@inject WhatsAppReceiptService WhatsAppReceipt
 
 <PageTitle>Suppliers</PageTitle>
 
@@ -20,7 +25,7 @@
             </div>
             <div>
                 <h1>Suppliers</h1>
-                <p>View vendors and open purchase orders</p>
+                <p>Vendors · ledger · pay AP · purchase orders</p>
             </div>
         </div>
         <div class="po-actions">
@@ -35,19 +40,110 @@
     {
         <div class="po-alert">@_error</div>
     }
+    @if (!string.IsNullOrWhiteSpace(_success))
+    {
+        <div class="po-alert" style="background:#ecfdf5;border-color:#6ee7b7;color:#065f46;">@_success</div>
+    }
 
-    @if (_mode == PartyUiMode.View && _selected is not null)
+    @if (_mode == PartyUiMode.Ledger && _ledgerSupplier is not null)
+    {
+        <div class="po-card">
+            <div class="rb-ledger-head">
+                <div>
+                    <h2>Supplier Ledger</h2>
+                    <p class="rb-ledger-sub">@_ledgerSupplier.Name · @_fromDate.ToString("dd/MM/yyyy") → @_toDate.ToString("dd/MM/yyyy") · Bal Rs @FormatRs(_ledgerSupplier.CurrentBalancePaisa)</p>
+                </div>
+                <div class="po-actions">
+                    <button type="button" class="po-btn po-btn-primary" @onclick="() => OpenPay(_ledgerSupplier)">Pay Supplier</button>
+                    <button type="button" class="po-btn" @onclick="BackToList">Back</button>
+                </div>
+            </div>
+            <div class="po-filter-row" style="grid-template-columns:minmax(9rem,1fr) minmax(9rem,1fr) auto;margin-bottom:0.75rem;">
+                <div class="po-field">
+                    <label>From</label>
+                    <input class="form-control" type="date" @bind="_fromDate" disabled="@_ledgerLoading" />
+                </div>
+                <div class="po-field">
+                    <label>To</label>
+                    <input class="form-control" type="date" @bind="_toDate" disabled="@_ledgerLoading" />
+                </div>
+                <div class="po-filter-actions">
+                    <button type="button" class="po-btn po-btn-primary" disabled="@_ledgerLoading" @onclick="LoadLedgerAsync">Apply</button>
+                </div>
+            </div>
+            <div class="rb-kpi-row">
+                <div class="rb-kpi"><span>Opening</span><strong>Rs @FormatRs(_openingBalancePaisa)</strong></div>
+                <div class="rb-kpi"><span>Debit</span><strong>Rs @FormatRs(_totalDebitPaisa)</strong></div>
+                <div class="rb-kpi"><span>Credit</span><strong>Rs @FormatRs(_totalCreditPaisa)</strong></div>
+                <div class="rb-kpi"><span>Closing</span><strong>Rs @FormatRs(_closingBalancePaisa)</strong></div>
+            </div>
+            <div class="stmt-share-bar">
+                <button type="button" class="po-btn po-btn-outline" disabled="@(_ledgerLoading || _ledgerEntries.Count == 0 || _sharing)" @onclick="DownloadPdfAsync">Download PDF</button>
+                <button type="button" class="po-btn po-btn-outline" disabled="@(_ledgerLoading || _ledgerEntries.Count == 0 || _sharing || string.IsNullOrWhiteSpace(_ledgerSupplier.Email))" title="@(string.IsNullOrWhiteSpace(_ledgerSupplier.Email) ? "Add email on supplier to enable" : "Email PDF")" @onclick="EmailPdfAsync">Email PDF</button>
+                <button type="button" class="po-btn po-btn-primary" disabled="@(_ledgerLoading || _ledgerEntries.Count == 0 || _sharing)" @onclick="ShareWhatsAppAsync">WhatsApp</button>
+            </div>
+        </div>
+
+        @if (_ledgerLoading)
+        {
+            <p class="po-empty">Loading ledger…</p>
+        }
+        else if (_ledgerEntries.Count == 0)
+        {
+            <p class="po-empty">No ledger transactions in this date range.</p>
+        }
+        else
+        {
+            <div class="po-card" style="margin-top:1rem;">
+                <div class="po-table-wrap">
+                    <table class="po-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Reference</th>
+                                <th>Description</th>
+                                <th class="po-num">Debit</th>
+                                <th class="po-num">Credit</th>
+                                <th class="po-num">Balance</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (PartyLedgerEntryDto entry in _ledgerEntries)
+                            {
+                                <tr>
+                                    <td>@entry.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy")</td>
+                                    <td><strong>@ShortRef(entry)</strong></td>
+                                    <td>@DescribeEntry(entry)</td>
+                                    <td class="po-num">@(entry.DebitPaisa > 0 ? FormatRs(entry.DebitPaisa) : "—")</td>
+                                    <td class="po-num">@(entry.CreditPaisa > 0 ? FormatRs(entry.CreditPaisa) : "—")</td>
+                                    <td class="po-num">@FormatRs(entry.NewBalancePaisa)</td>
+                                    <td>
+                                        <button type="button" class="po-btn po-btn-sm po-btn-outline" @onclick="() => OpenDetail(entry)">Details</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+    }
+    else if (_mode == PartyUiMode.View && _selected is not null)
     {
         <div class="po-card">
             <h2>Supplier</h2>
             <div class="pov-info-grid">
                 <div class="pov-info-item"><label>Name</label><div class="pov-value">@_selected.Name</div></div>
                 <div class="pov-info-item"><label>Phone</label><div class="pov-value">@_selected.PhoneNumber</div></div>
+                <div class="pov-info-item"><label>Email</label><div class="pov-value">@(string.IsNullOrWhiteSpace(_selected.Email) ? "—" : _selected.Email)</div></div>
                 <div class="pov-info-item"><label>Balance</label><div class="pov-value">Rs @FormatRs(_selected.CurrentBalancePaisa)</div></div>
                 <div class="pov-info-item"><label>Address</label><div class="pov-value">@(string.IsNullOrWhiteSpace(_selected.Address) ? "—" : _selected.Address)</div></div>
             </div>
             <div class="pov-footer-actions">
-                <a class="po-btn po-btn-primary" href="sales?createpo=1">New Purchase Order</a>
+                <a class="po-btn po-btn-primary" href="@($"sales?createpo=1&supplierId={_selected.Id}")">New Purchase Order</a>
+                <button type="button" class="po-btn po-btn-primary" @onclick="() => OpenPay(_selected)">Pay Supplier</button>
+                <button type="button" class="po-btn po-btn-outline" @onclick="() => OpenLedger(_selected)">Ledger</button>
                 <a class="po-btn po-btn-outline" href="sales?orders=1">Purchase Orders</a>
                 <button type="button" class="po-btn po-btn-outline" @onclick="OpenEditSelected">Edit</button>
                 <button type="button" class="po-btn" @onclick="BackToList">Back</button>
@@ -70,6 +166,10 @@
                 <div class="po-field">
                     <label for="sup-addr">Address</label>
                     <input id="sup-addr" class="form-control" @bind="_editAddress" disabled="@_saving" />
+                </div>
+                <div class="po-field">
+                    <label for="sup-email">Email</label>
+                    <input id="sup-email" class="form-control" type="email" @bind="_editEmail" disabled="@_saving" />
                 </div>
             </div>
             <div class="pov-footer-actions">
@@ -131,8 +231,10 @@
                                     <td>
                                         <div class="po-actions">
                                             <button type="button" class="po-btn po-btn-sm po-btn-outline" @onclick="() => OpenView(s)">View</button>
+                                            <button type="button" class="po-btn po-btn-sm po-btn-outline" @onclick="() => OpenLedger(s)">Ledger</button>
+                                            <button type="button" class="po-btn po-btn-sm po-btn-outline" @onclick="() => OpenPay(s)">Pay</button>
                                             <button type="button" class="po-btn po-btn-sm po-btn-outline" @onclick="() => OpenEdit(s)">Edit</button>
-                                            <a class="po-btn po-btn-sm po-btn-primary" href="sales?createpo=1">New PO</a>
+                                            <a class="po-btn po-btn-sm po-btn-primary" href="@($"sales?createpo=1&supplierId={s.Id}")">New PO</a>
                                         </div>
                                     </td>
                                 </tr>
@@ -145,20 +247,96 @@
     }
 </div>
 
+<PartyPaymentModal Visible="_showPay"
+                   Party="_payParty"
+                   IsSupplier="true"
+                   OnCancel="ClosePay"
+                   OnPaid="OnPaidAsync" />
+
+<LedgerTransactionDetailModal Visible="_detailEntry is not null"
+                              Entry="_detailEntry"
+                              OnClose="CloseDetail" />
+
+@if (_showPhonePrompt)
+{
+    <div class="modal-backdrop po-modal-backdrop" @onclick="() => _showPhonePrompt = false">
+        <div class="po-card" style="width:min(420px,92vw);margin:10vh auto;" @onclick:stopPropagation="true">
+            <h2>WhatsApp phone</h2>
+            <div class="po-field">
+                <label>Phone</label>
+                <input class="form-control" type="tel" @bind="_waPhone" @bind:event="oninput" placeholder="03xxxxxxxxx" />
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_waError))
+            {
+                <p class="field-error">@_waError</p>
+            }
+            <div class="pov-footer-actions">
+                <button type="button" class="po-btn" @onclick="() => _showPhonePrompt = false">Cancel</button>
+                <button type="button" class="po-btn po-btn-primary" @onclick="ConfirmWhatsAppAsync">Send</button>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .rb-ledger-head {
+        display: flex; justify-content: space-between; align-items: flex-start;
+        gap: 1rem; margin-bottom: 0.85rem;
+    }
+    .rb-ledger-head h2 { margin: 0; }
+    .rb-ledger-sub { margin: 0.25rem 0 0; color: #64748b; font-weight: 600; }
+    .rb-kpi-row {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.65rem;
+        margin-bottom: 0.75rem;
+    }
+    .rb-kpi {
+        background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px;
+        padding: 0.65rem 0.75rem; display: flex; flex-direction: column; gap: 0.2rem;
+    }
+    .rb-kpi span { font-size: 0.72rem; font-weight: 700; color: #64748b; text-transform: uppercase; }
+    .rb-kpi strong { color: #1e3a5f; font-size: 1rem; }
+    .stmt-share-bar {
+        display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;
+    }
+    @@media (max-width: 1100px) {
+        .rb-kpi-row { grid-template-columns: 1fr 1fr; }
+    }
+</style>
+
 @code {
-    private enum PartyUiMode { List, View, Edit }
+    private enum PartyUiMode { List, View, Edit, Ledger }
 
     private IReadOnlyList<PartyDto> _suppliers = [];
+    private IReadOnlyList<PartyLedgerEntryDto> _ledgerEntries = [];
     private string _search = string.Empty;
     private string? _error;
+    private string? _success;
     private bool _loading = true;
     private bool _saving;
+    private bool _ledgerLoading;
+    private bool _sharing;
     private PartyUiMode _mode = PartyUiMode.List;
     private PartyDto? _selected;
+    private PartyDto? _ledgerSupplier;
+    private PartyDto? _payParty;
+    private PartyLedgerEntryDto? _detailEntry;
+    private bool _showPay;
     private Guid? _editingId;
     private string _editName = string.Empty;
     private string _editPhone = string.Empty;
     private string _editAddress = string.Empty;
+    private string _editEmail = string.Empty;
+    private DateOnly _fromDate = DateOnly.FromDateTime(DateTime.Today.AddDays(1 - DateTime.Today.Day));
+    private DateOnly _toDate = DateOnly.FromDateTime(DateTime.Today);
+    private long _openingBalancePaisa;
+    private long _closingBalancePaisa;
+    private long _totalDebitPaisa;
+    private long _totalCreditPaisa;
+    private bool _showPhonePrompt;
+    private string _waPhone = string.Empty;
+    private string? _waError;
 
     private IReadOnlyList<PartyDto> Filtered
     {
@@ -208,7 +386,50 @@
     {
         _selected = s;
         _mode = PartyUiMode.View;
+        _success = null;
     }
+
+    private async Task OpenLedger(PartyDto s)
+    {
+        _ledgerSupplier = s;
+        _mode = PartyUiMode.Ledger;
+        _success = null;
+        await LoadLedgerAsync();
+    }
+
+    private void OpenPay(PartyDto s)
+    {
+        _payParty = s;
+        _showPay = true;
+        _success = null;
+    }
+
+    private void ClosePay()
+    {
+        _showPay = false;
+        _payParty = null;
+    }
+
+    private async Task OnPaidAsync(PartyDto updated)
+    {
+        _showPay = false;
+        _payParty = null;
+        _success = $"Payment recorded · Bal Rs {FormatRs(updated.CurrentBalancePaisa)}";
+        await LoadAsync();
+        if (_mode == PartyUiMode.Ledger && _ledgerSupplier?.Id == updated.Id)
+        {
+            _ledgerSupplier = updated;
+            await LoadLedgerAsync();
+        }
+        else if (_mode == PartyUiMode.View && _selected?.Id == updated.Id)
+        {
+            _selected = updated;
+        }
+    }
+
+    private void OpenDetail(PartyLedgerEntryDto entry) => _detailEntry = entry;
+
+    private void CloseDetail() => _detailEntry = null;
 
     private void OpenEdit(PartyDto s)
     {
@@ -217,6 +438,7 @@
         _editName = s.Name;
         _editPhone = s.PhoneNumber;
         _editAddress = s.Address ?? string.Empty;
+        _editEmail = s.Email ?? string.Empty;
         _mode = PartyUiMode.Edit;
     }
 
@@ -235,6 +457,7 @@
         _editName = string.Empty;
         _editPhone = string.Empty;
         _editAddress = string.Empty;
+        _editEmail = string.Empty;
         _mode = PartyUiMode.Edit;
     }
 
@@ -242,8 +465,61 @@
     {
         _mode = PartyUiMode.List;
         _selected = null;
+        _ledgerSupplier = null;
+        _ledgerEntries = [];
         _editingId = null;
         _error = null;
+    }
+
+    private async Task LoadLedgerAsync()
+    {
+        if (_ledgerSupplier is null)
+        {
+            return;
+        }
+
+        if (_toDate < _fromDate)
+        {
+            _error = "To Date must be on or after From Date.";
+            return;
+        }
+
+        _ledgerLoading = true;
+        _error = null;
+        try
+        {
+            DateTimeOffset from = new(_fromDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+            DateTimeOffset to = new(_toDate.ToDateTime(new TimeOnly(23, 59, 59)), TimeSpan.Zero);
+            Result<IReadOnlyList<PartyLedgerEntryDto>> result =
+                await Intake.GetLedgerAsync(_ledgerSupplier.Id, from, to, 500);
+
+            if (!result.Success || result.Data is null)
+            {
+                _error = result.ErrorMessage ?? "Unable to load supplier ledger.";
+                _ledgerEntries = [];
+                return;
+            }
+
+            _ledgerEntries = result.Data;
+            if (_ledgerEntries.Count == 0)
+            {
+                _openingBalancePaisa = _ledgerSupplier.CurrentBalancePaisa;
+                _closingBalancePaisa = _ledgerSupplier.CurrentBalancePaisa;
+                _totalDebitPaisa = 0;
+                _totalCreditPaisa = 0;
+            }
+            else
+            {
+                _openingBalancePaisa = _ledgerEntries[0].OldBalancePaisa;
+                _closingBalancePaisa = _ledgerEntries[^1].NewBalancePaisa;
+                _totalDebitPaisa = _ledgerEntries.Sum(e => e.DebitPaisa);
+                _totalCreditPaisa = _ledgerEntries.Sum(e => e.CreditPaisa);
+            }
+        }
+        finally
+        {
+            _ledgerLoading = false;
+        }
     }
 
     private async Task SaveAsync()
@@ -261,11 +537,12 @@
                     _editName,
                     _editPhone,
                     _editAddress,
-                    creditLimit);
+                    creditLimit,
+                    _editEmail);
             }
             else
             {
-                result = await Intake.CreateSupplierAsync(_editName, _editPhone, _editAddress);
+                result = await Intake.CreateSupplierAsync(_editName, _editPhone, _editAddress, _editEmail);
             }
 
             if (!result.Success || result.Data is null)
@@ -281,6 +558,177 @@
         {
             _saving = false;
         }
+    }
+
+    private async Task DownloadPdfAsync()
+    {
+        if (_ledgerSupplier is null || _ledgerEntries.Count == 0)
+        {
+            return;
+        }
+
+        _sharing = true;
+        _error = null;
+        try
+        {
+            byte[] pdf = LedgerPdf.GenerateStatement(
+                _ledgerSupplier, _ledgerEntries, _fromDate, _toDate,
+                _openingBalancePaisa, _closingBalancePaisa);
+            string name = $"Supplier_{Sanitize(_ledgerSupplier.Name)}_{_fromDate:yyyyMMdd}_{_toDate:yyyyMMdd}.pdf";
+            string? path = await StatementFiles.SavePdfAsync(pdf, name);
+            _success = path is null ? "Save cancelled." : $"PDF saved: {path}";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _sharing = false;
+        }
+    }
+
+    private async Task EmailPdfAsync()
+    {
+        if (_ledgerSupplier is null || string.IsNullOrWhiteSpace(_ledgerSupplier.Email))
+        {
+            _error = "Supplier has no email on file.";
+            return;
+        }
+
+        if (!EmailService.IsConfigured)
+        {
+            _error = "Email is not configured. Set Smtp:Enabled and Host/From in appsettings.json.";
+            return;
+        }
+
+        _sharing = true;
+        _error = null;
+        try
+        {
+            byte[] pdf = LedgerPdf.GenerateStatement(
+                _ledgerSupplier, _ledgerEntries, _fromDate, _toDate,
+                _openingBalancePaisa, _closingBalancePaisa);
+            string name = $"Supplier_{Sanitize(_ledgerSupplier.Name)}_{_fromDate:yyyyMMdd}.pdf";
+            await EmailService.SendAsync(
+                _ledgerSupplier.Email!,
+                $"{TerminalBranding.PosDisplayName} — Supplier statement",
+                $"Please find attached the statement for {_ledgerSupplier.Name} ({_fromDate:dd/MM/yyyy} – {_toDate:dd/MM/yyyy}).",
+                pdf,
+                name);
+            _success = $"Statement emailed to {_ledgerSupplier.Email}";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _sharing = false;
+        }
+    }
+
+    private async Task ShareWhatsAppAsync()
+    {
+        if (_ledgerSupplier is null)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_ledgerSupplier.PhoneNumber))
+        {
+            await OpenWhatsAppAsync(_ledgerSupplier.PhoneNumber);
+            return;
+        }
+
+        _waPhone = string.Empty;
+        _waError = null;
+        _showPhonePrompt = true;
+    }
+
+    private async Task ConfirmWhatsAppAsync()
+    {
+        await OpenWhatsAppAsync(_waPhone);
+    }
+
+    private async Task OpenWhatsAppAsync(string phone)
+    {
+        if (_ledgerSupplier is null)
+        {
+            return;
+        }
+
+        string message = WhatsAppReceipt.BuildLedgerMessage(
+            _ledgerSupplier.Name,
+            _fromDate,
+            _toDate,
+            _openingBalancePaisa,
+            _closingBalancePaisa,
+            _ledgerEntries,
+            "SUPPLIER");
+        string? url = WhatsAppReceipt.BuildWhatsAppUrl(phone, message);
+        if (url is null)
+        {
+            _waError = "Enter a valid mobile number.";
+            if (!_showPhonePrompt)
+            {
+                _showPhonePrompt = true;
+                _waPhone = phone;
+            }
+
+            return;
+        }
+
+        _showPhonePrompt = false;
+        try
+        {
+            await Browser.Default.OpenAsync(url, BrowserLaunchMode.SystemPreferred);
+        }
+        catch
+        {
+            _error = "Could not open WhatsApp.";
+        }
+    }
+
+    private static string ShortRef(PartyLedgerEntryDto entry)
+    {
+        if (!string.IsNullOrWhiteSpace(entry.InvoiceNo))
+        {
+            return Truncate(entry.InvoiceNo!, 16);
+        }
+
+        if (entry.PurchaseOrderId is Guid id)
+        {
+            return id.ToString("N")[..8];
+        }
+
+        return Truncate(entry.ReferenceDetails, 16);
+    }
+
+    private static string DescribeEntry(PartyLedgerEntryDto entry)
+    {
+        if (!string.IsNullOrWhiteSpace(entry.ReferenceType))
+        {
+            return entry.ReferenceType;
+        }
+
+        return entry.Type;
+    }
+
+    private static string Truncate(string? value, int max)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "—";
+        }
+
+        return value.Length <= max ? value : value[..max];
+    }
+
+    private static string Sanitize(string name)
+    {
+        char[] invalid = Path.GetInvalidFileNameChars();
+        return new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray());
     }
 
     private static string FormatRs(long paisa) =>

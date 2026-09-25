@@ -1463,20 +1463,6 @@
     box-sizing: border-box;
 }
 
-.mm-rail-brand {
-    width: 2.4rem;
-    height: 2.4rem;
-    border-radius: 50%;
-    background: #fff;
-    color: #111827;
-    display: grid;
-    place-items: center;
-    font-weight: 800;
-    font-size: 0.72rem;
-    margin-bottom: 0.65rem;
-    flex-shrink: 0;
-}
-
 .mm-rail-item {
     width: 100%;
     display: flex;
@@ -1524,22 +1510,6 @@
     letter-spacing: 0.01em;
     line-height: 1.05;
     text-align: center;
-}
-
-.mm-rail-spacer { flex: 1; min-height: 0.5rem; }
-
-.mm-rail-foot {
-    width: 2rem;
-    height: 2rem;
-    border-radius: 50%;
-    background: #2a2a30;
-    color: #e5e7eb;
-    display: grid;
-    place-items: center;
-    font-size: 0.65rem;
-    font-weight: 700;
-    margin-top: 0.35rem;
-    flex-shrink: 0;
 }
 
 .mm-subnav {
@@ -1735,10 +1705,6 @@
         gap: 0.2rem;
         padding: 0.55rem 0.5rem;
     }
-
-    .mm-rail-brand,
-    .mm-rail-spacer,
-    .mm-rail-foot { display: none; }
 
     .mm-rail-item {
         min-width: 4.25rem;
@@ -2241,20 +2207,6 @@
     .mm-child-price-row {
         grid-template-columns: 1fr;
     }
-}
-
-.login-shell {
-    height: 100vh;
-    max-height: 100vh;
-    overflow: hidden;
-}
-
-.login-shell .mm-main {
-    overflow: hidden;
-}
-
-.login-card {
-    max-width: 28rem;
 }
 
 .login-card input.valid.modified:not([type=checkbox]),

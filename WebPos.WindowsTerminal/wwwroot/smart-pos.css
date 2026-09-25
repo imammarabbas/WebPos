@@ -357,11 +357,16 @@ html, body {
 .sp-items-table tbody tr.selected td,
 .sp-items-table tbody tr.row-selected td {
     background: #eef3ff !important;
+    box-shadow: none;
+}
+
+.sp-items-table tbody tr.selected td:first-child,
+.sp-items-table tbody tr.row-selected td:first-child {
     box-shadow: inset 3px 0 0 #3157d5;
 }
 
 .sp-items-table tbody tr.item-added td {
-    animation: itemAdded 0.85s ease-out;
+    animation: itemAdded 0.45s ease;
 }
 
 .sp-items-table {
@@ -412,21 +417,27 @@ html, body {
 
 .sp-items-table tbody tr.zebra td,
 .sp-items-table tbody tr:nth-child(even):not(.selected):not(.row-selected) td {
-    background: #f8fafc;
+    background: #fcfdff;
 }
 
 .sp-items-table tbody tr:hover:not(.selected):not(.row-selected) td {
-    background: #f3f6ff;
+    background: #f5f8ff;
 }
 
 .sp-items-table tbody tr.selected td,
 .sp-items-table tbody tr.row-selected td {
     background: #eef3ff !important;
+    box-shadow: none;
+    border-bottom-color: #dde5fb;
+}
+
+.sp-items-table tbody tr.selected td:first-child,
+.sp-items-table tbody tr.row-selected td:first-child {
     box-shadow: inset 3px 0 0 #3157d5;
 }
 
 .sp-items-table tbody tr.sp-empty-row td {
-    color: #94a3b8;
+    color: #d2dae7;
 }
 
 .sp-items-table .col-sr { width: 3.2rem; }
@@ -437,7 +448,7 @@ html, body {
 .sp-items-table .col-total { width: 7rem; }
 
 .sp-item-code-placeholder {
-    color: #94a3b8;
+    color: #d2dae7;
     font-size: 12px;
     font-weight: 550;
     user-select: none;
@@ -446,25 +457,29 @@ html, body {
 
 .sp-items-table .sf-cell-input {
     width: 100%;
-    min-height: 28px;
-    height: 28px;
+    min-height: 31px;
+    height: 31px;
     border: 1px solid transparent;
     background: transparent;
-    border-radius: 6px;
-    font-size: 12.5px;
-    padding: 0 6px;
-    color: var(--sp-text);
+    border-radius: 7px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 550;
+    padding: 0 7px;
+    color: #162033;
+    outline: none;
+    transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
 }
 
 .sp-items-table .sf-cell-input:hover {
-    border-color: #d5deed;
-    background: rgba(255, 255, 255, 0.9);
+    background: rgba(49, 87, 213, 0.035);
+    border-color: #dde5f0;
 }
 
 .sp-items-table .sf-cell-input:focus {
+    background: #ffffff;
     border-color: #4b67cf;
-    background: #fff;
-    box-shadow: 0 0 0 3px rgba(49, 87, 213, 0.12);
+    box-shadow: 0 0 0 3px rgba(49, 87, 213, 0.10);
     outline: none;
 }
 
@@ -473,6 +488,12 @@ html, body {
 .sp-items-table .col-total .sf-cell-input {
     text-align: right;
     font-variant-numeric: tabular-nums;
+}
+
+.sp-items-table .col-total .sf-cell-input {
+    font-weight: 730;
+    color: #132257;
+    padding-right: 14px;
 }
 
 .sp-row-del {
@@ -902,6 +923,18 @@ html, body {
     background: linear-gradient(180deg, #fff5f5 0%, var(--danger-soft) 100%);
 }
 
+.sp-balance-summary.is-credit {
+    background: linear-gradient(180deg, #f0fdf4 0%, #dcfce7 100%);
+}
+
+.sp-balance-summary.is-credit .sp-summary-label {
+    color: #15803d;
+}
+
+.sp-balance-summary.is-change {
+    background: linear-gradient(180deg, #fff5f5 0%, var(--danger-soft) 100%);
+}
+
 .sp-balance-summary .sp-summary-label {
     color: #ba4a56;
 }
@@ -909,6 +942,21 @@ html, body {
 .sp-balance-value {
     color: var(--danger-bright);
     font-size: 21px;
+}
+
+.sp-balance-value.sp-change-out {
+    color: #dc2626;
+    font-weight: 800;
+}
+
+.sp-account-credit {
+    color: #15803d;
+    font-weight: 800;
+    font-size: 1.05rem;
+}
+
+.sp-new-balance {
+    font-weight: 800;
 }
 
 .sp-action-btn,
@@ -1255,20 +1303,27 @@ html, body {
 
 .pos-shell.smart-pos .sp-items-table .sf-cell-input {
     width: 100%;
-    min-height: 28px;
-    height: 28px;
+    min-height: 31px;
+    height: 31px;
     border: 1px solid transparent;
     background: transparent;
-    border-radius: 6px;
-    font-size: 12.5px;
-    padding: 0 6px;
-    color: var(--sp-text);
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 550;
+    padding: 0 7px;
+    color: #162033;
     box-shadow: none;
 }
 
 .pos-shell.smart-pos .sp-items-table .sf-cell-input:focus {
     border-color: #4b67cf;
     background: #fff;
-    box-shadow: 0 0 0 3px rgba(49, 87, 213, 0.12);
+    box-shadow: 0 0 0 3px rgba(49, 87, 213, 0.10);
     outline: none;
+}
+
+.pos-shell.smart-pos .sp-items-table .col-total .sf-cell-input {
+    font-weight: 730;
+    color: #132257;
+    padding-right: 14px;
 }

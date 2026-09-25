@@ -557,6 +557,7 @@ public class WebPosDbContext : DbContext
         entity.Property(e => e.PartyType).HasColumnName("party_type").HasMaxLength(20).IsRequired();
         entity.Property(e => e.Name).HasColumnName("name").HasMaxLength(100).IsRequired();
         entity.Property(e => e.PhoneNumber).HasColumnName("phone_number").HasMaxLength(20).IsRequired();
+        entity.Property(e => e.Email).HasColumnName("email").HasMaxLength(256);
         entity.Property(e => e.Address).HasColumnName("address");
         MapPaisa(entity.Property(e => e.CreditLimitPaisa)).HasColumnName("credit_limit_paisa").IsRequired();
         MapPaisa(entity.Property(e => e.CurrentBalancePaisa)).HasColumnName("current_balance_paisa").IsRequired();

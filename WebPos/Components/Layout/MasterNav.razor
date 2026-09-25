@@ -11,10 +11,8 @@
 @inject ICircuitTenantContext CircuitTenantContext
 
 <aside class="mm-nav-duo" aria-label="Master navigation">
-    <nav class="mm-rail" aria-label="Primary">
-        <div class="mm-rail-brand" aria-hidden="true">TP</div>
-
-        @foreach (NavSection section in Sections)
+            <nav class="mm-rail" aria-label="Primary">
+                @foreach (NavSection section in Sections)
         {
             string sectionId = section.Id;
             bool active = string.Equals(_sectionId, sectionId, StringComparison.Ordinal);
@@ -25,9 +23,6 @@
                 <span class="mm-rail-label">@section.Title</span>
             </button>
         }
-
-        <div class="mm-rail-spacer"></div>
-        <div class="mm-rail-foot" aria-hidden="true">@_initials</div>
     </nav>
 
     <div class="mm-subnav">
@@ -140,7 +135,6 @@
         ])
     ];
 
-    private string _initials = "U";
     private MasterOverviewDto? _overview;
     private StoreStatusDto? _storeStatus;
     private PeriodicTimer? _statusTimer;
@@ -157,7 +151,6 @@
         Navigation.LocationChanged += OnLocationChanged;
 
         AuthenticationState state = await AuthStateProvider.GetAuthenticationStateAsync();
-        _initials = GetInitials(state.User.Identity?.Name ?? "User");
         BindCircuitTenant(state.User);
 
         try
@@ -369,24 +362,6 @@
         }
 
         _statusCts?.Dispose();
-    }
-
-    private static string GetInitials(string name)
-    {
-        string[] parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (parts.Length == 0)
-        {
-            return "U";
-        }
-
-        if (parts.Length == 1)
-        {
-            return parts[0].Length >= 2
-                ? parts[0][..2].ToUpperInvariant()
-                : parts[0].ToUpperInvariant();
-        }
-
-        return $"{char.ToUpperInvariant(parts[0][0])}{char.ToUpperInvariant(parts[^1][0])}";
     }
 
     private static string FormatRs(long paisa) =>

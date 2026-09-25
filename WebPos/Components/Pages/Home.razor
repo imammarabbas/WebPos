@@ -1,12 +1,24 @@
 @page "/"
+@layout EmptyLayout
 @using Microsoft.AspNetCore.Components.Authorization
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthStateProvider
 
-<PageTitle>Home</PageTitle>
+<PageTitle>Redirecting…</PageTitle>
 
-<AuthorizeView Roles="Owner,Manager">
-    <Authorized>
-        <p>
-            <a href="/master">Open Master Data</a> for Cone Mart catalog and purchasing.
-        </p>
-    </Authorized>
-</AuthorizeView>
+<p style="margin:2rem;font-family:Segoe UI,sans-serif;color:#6b7280;">Redirecting…</p>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        AuthenticationState state = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (state.User.Identity?.IsAuthenticated == true)
+        {
+            Navigation.NavigateTo("/master", replace: true);
+        }
+        else
+        {
+            Navigation.NavigateTo("/login", forceLoad: true, replace: true);
+        }
+    }
+}

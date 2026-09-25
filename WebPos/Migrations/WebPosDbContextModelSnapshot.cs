@@ -428,6 +428,11 @@ namespace WebPos.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("current_balance_paisa");
 
+                    b.Property<string>("Email")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("email");
+
                     b.Property<bool>("IsDeleted")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")

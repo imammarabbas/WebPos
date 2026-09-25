@@ -1,53 +1,61 @@
 @using Common.Models
 @using System.Globalization
+@using WebPos.WindowsTerminal.Services
+@inject IJSRuntime Js
 
 @if (Master is not null)
 {
-    <div class="modal-backdrop" @onclick="Close">
-        <div class="sf-modal sf-variant-modal" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
-            <div class="sf-modal-head">
-                <h2>Select Variant — @(Master.Name ?? "Item")</h2>
-                <button type="button" class="link-btn" @onclick="Close">Close</button>
-            </div>
+    <div class="modal-backdrop" @onclick="CloseAsync">
+        <div @ref="_panel"
+             class="sf-modal sf-variant-modal"
+             role="dialog"
+             aria-modal="true"
+             aria-label="@($"Select variant — {Master.Name ?? "Item"}")"
+             tabindex="0"
+             @onclick:stopPropagation="true"
+             @onkeydown="OnKeyDown"
+             @onkeydown:preventDefault="true"
+             @onkeydown:stopPropagation="true">
             @if (SafeChildren.Count == 0)
             {
                 <p class="muted">No sellable packings in stock for this master.</p>
             }
             else
             {
-                <table class="sf-variant-table">
-                    <thead>
-                        <tr>
-                            <th>Packing</th>
-                            <th>Code</th>
-                            <th>Barcode</th>
-                            <th>Price</th>
-                            <th>Stock</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (SaleVariantChildDto child in SafeChildren)
-                        {
-                            <tr @onclick="() => SelectAsync(child)">
-                                <td><strong>@(string.IsNullOrWhiteSpace(child.PackingSize) ? "—" : child.PackingSize)</strong></td>
-                                <td>@DisplayCode(child)</td>
-                                <td class="mono">@(string.IsNullOrWhiteSpace(child.Barcode) ? "—" : child.Barcode)</td>
-                                <td>Rs @FormatRs(child.UnitPricePaisa)</td>
-                                <td>@child.AvailableStock.ToString("0.##", CultureInfo.InvariantCulture)</td>
-                                <td>
-                                    <button type="button"
-                                            class="sf-mini-btn"
-                                            disabled="@_busy"
-                                            @onclick:stopPropagation="true"
-                                            @onclick="() => SelectAsync(child)">
-                                        Add
-                                    </button>
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
+                <div class="sf-variant-query" aria-live="polite">
+                    @if (string.IsNullOrEmpty(_query))
+                    {
+                        <span class="sf-variant-query-hint">Type to search</span>
+                    }
+                    else
+                    {
+                        <span class="sf-variant-query-text">@_query</span>
+                    }
+                </div>
+                @if (FilteredChildren.Count == 0)
+                {
+                    <p class="muted sf-variant-nomatch">No matching variants</p>
+                }
+                else
+                {
+                    <table class="sf-variant-table">
+                        <tbody>
+                            @for (int i = 0; i < FilteredChildren.Count; i++)
+                            {
+                                int index = i;
+                                SaleVariantChildDto child = FilteredChildren[index];
+                                <tr class="@(index == _selectedIndex ? "is-selected" : null)"
+                                    @onclick="() => HighlightRow(index)">
+                                    <td><strong>@(string.IsNullOrWhiteSpace(child.PackingSize) ? "—" : child.PackingSize)</strong></td>
+                                    <td>@DisplayCode(child)</td>
+                                    <td class="mono">@(string.IsNullOrWhiteSpace(child.Barcode) ? "—" : child.Barcode)</td>
+                                    <td class="sf-variant-price">Rs @FormatRs(child.UnitPricePaisa)</td>
+                                    <td>@child.AvailableStock.ToString("0.##", CultureInfo.InvariantCulture)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
             }
         </div>
     </div>
@@ -58,14 +66,174 @@
     [Parameter] public EventCallback OnClose { get; set; }
     [Parameter] public EventCallback<SalesProductDto> OnSelected { get; set; }
 
+    private ElementReference _panel;
     private bool _busy;
+    private bool _wasOpen;
+    private bool _focusPanelPending;
+    private int _selectedIndex;
+    private string _query = string.Empty;
 
     private IReadOnlyList<SaleVariantChildDto> SafeChildren =>
         (Master?.Children ?? Array.Empty<SaleVariantChildDto>())
             .Where(c => c is not null)
             .ToList();
 
-    private async Task Close()
+    private IReadOnlyList<SaleVariantChildDto> FilteredChildren =>
+        VariantFilter.Filter(SafeChildren, _query);
+
+    protected override void OnParametersSet()
+    {
+        bool isOpen = Master is not null;
+        if (isOpen && !_wasOpen)
+        {
+            _query = string.Empty;
+            _selectedIndex = SafeChildren.Count > 0 ? 0 : -1;
+            _focusPanelPending = true;
+        }
+
+        _wasOpen = isOpen;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_focusPanelPending || Master is null)
+        {
+            return;
+        }
+
+        _focusPanelPending = false;
+        try
+        {
+            await _panel.FocusAsync();
+        }
+        catch
+        {
+            /* ignore until element is ready */
+        }
+    }
+
+    private void HighlightRow(int index)
+    {
+        if (FilteredChildren.Count == 0)
+        {
+            _selectedIndex = -1;
+            return;
+        }
+
+        _selectedIndex = Math.Clamp(index, 0, FilteredChildren.Count - 1);
+    }
+
+    private void ApplyQueryChange()
+    {
+        IReadOnlyList<SaleVariantChildDto> filtered = FilteredChildren;
+        _selectedIndex = filtered.Count > 0 ? 0 : -1;
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (_busy || Master is null)
+        {
+            return;
+        }
+
+        if (e.Key == "Escape")
+        {
+            await CloseAsync();
+            return;
+        }
+
+        if (SafeChildren.Count == 0)
+        {
+            return;
+        }
+
+        if (e.Key == "ArrowDown")
+        {
+            if (FilteredChildren.Count == 0)
+            {
+                return;
+            }
+
+            _selectedIndex = Math.Min(Math.Max(_selectedIndex, 0) + 1, FilteredChildren.Count - 1);
+            return;
+        }
+
+        if (e.Key == "ArrowUp")
+        {
+            if (FilteredChildren.Count == 0)
+            {
+                return;
+            }
+
+            _selectedIndex = Math.Max(_selectedIndex - 1, 0);
+            return;
+        }
+
+        if (e.Key == "Home")
+        {
+            if (FilteredChildren.Count > 0)
+            {
+                _selectedIndex = 0;
+            }
+
+            return;
+        }
+
+        if (e.Key == "End")
+        {
+            if (FilteredChildren.Count > 0)
+            {
+                _selectedIndex = FilteredChildren.Count - 1;
+            }
+
+            return;
+        }
+
+        if (e.Key == "Enter")
+        {
+            if (_selectedIndex < 0 || _selectedIndex >= FilteredChildren.Count)
+            {
+                return;
+            }
+
+            await SelectAsync(FilteredChildren[_selectedIndex]);
+            return;
+        }
+
+        if (e.Key == "Backspace")
+        {
+            if (_query.Length > 0)
+            {
+                _query = _query[..^1];
+                ApplyQueryChange();
+            }
+
+            return;
+        }
+
+        if (e.CtrlKey || e.AltKey || e.MetaKey)
+        {
+            return;
+        }
+
+        if (IsQueryChar(e))
+        {
+            _query += e.Key;
+            ApplyQueryChange();
+        }
+    }
+
+    private static bool IsQueryChar(KeyboardEventArgs e)
+    {
+        if (string.IsNullOrEmpty(e.Key) || e.Key.Length != 1)
+        {
+            return false;
+        }
+
+        return !char.IsControl(e.Key[0]);
+    }
+
+    private async Task CloseAsync()
     {
         if (_busy)
         {
@@ -73,6 +241,7 @@
         }
 
         await OnClose.InvokeAsync();
+        await RestoreScannerFocusAsync();
     }
 
     private async Task SelectAsync(SaleVariantChildDto? child)
@@ -104,10 +273,23 @@
             };
 
             await OnSelected.InvokeAsync(product);
+            await RestoreScannerFocusAsync();
         }
         finally
         {
             _busy = false;
+        }
+    }
+
+    private async Task RestoreScannerFocusAsync()
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("webPosFocusById", "scanInput");
+        }
+        catch
+        {
+            /* parent FocusScanAsync may also run */
         }
     }
 

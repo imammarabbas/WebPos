@@ -86,6 +86,12 @@
             }
 
             function toggleFullscreen() {
+                if (window.__webPosNativeFs) {
+                    try {
+                        window.__webPosNativeFs.invokeMethodAsync('ToggleFullscreen');
+                        return;
+                    } catch (err) { /* fall through */ }
+                }
                 if (fullscreenElement()) {
                     exitFullscreen();
                 } else {
@@ -117,9 +123,31 @@
             }
 
             function focusPrimary() {
-                if (document.querySelector('.modal-backdrop')) {
+                // Modal open: restore the dialog keyboard target, never steal to scanInput.
+                var backdrop = document.querySelector('.modal-backdrop');
+                if (backdrop) {
+                    var dialog = backdrop.querySelector('[role="dialog"][tabindex], [role="dialog"]');
+                    if (dialog instanceof HTMLElement) {
+                        var activeInDialog = dialog === document.activeElement
+                            || dialog.contains(document.activeElement);
+                        if (!activeInDialog) {
+                            try {
+                                dialog.focus({ preventScroll: true });
+                            } catch (err) { /* ignore */ }
+                        }
+                    }
                     return;
                 }
+
+                var active = document.activeElement;
+                // Preserve intentional editing of qty/price/discount/etc.
+                if (active instanceof Element
+                    && active.id !== 'scanInput'
+                    && active.id !== 'searchInput'
+                    && isProtectedTypingTarget(active)) {
+                    return;
+                }
+
                 var el = primaryField();
                 if (!el) {
                     return;
@@ -421,6 +449,14 @@
                 el.select();
             }
             return document.activeElement === el;
+        };
+
+        window.webPosBindNativeFullscreen = function (netRef) {
+            window.__webPosNativeFs = netRef || null;
+        };
+
+        window.webPosUnbindNativeFullscreen = function () {
+            window.__webPosNativeFs = null;
         };
 
         window.webPosBindCtrlK = function () {

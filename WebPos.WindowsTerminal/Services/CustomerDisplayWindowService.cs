@@ -6,7 +6,13 @@ namespace WebPos.WindowsTerminal.Services;
 public sealed class CustomerDisplayWindowService
 {
     private readonly object _gate = new();
+    private readonly WindowChromeService _windowChrome;
     private Window? _window;
+
+    public CustomerDisplayWindowService(WindowChromeService windowChrome)
+    {
+        _windowChrome = windowChrome ?? throw new ArgumentNullException(nameof(windowChrome));
+    }
 
     public void OpenOrFocus()
     {
@@ -72,6 +78,10 @@ public sealed class CustomerDisplayWindowService
                 }
             }
         }
+
+#if WINDOWS
+        _windowChrome.DetachCustomer();
+#endif
     }
 
     private static void ActivateWindow(Window window)

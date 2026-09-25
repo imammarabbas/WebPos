@@ -19,9 +19,16 @@
                    @onkeydown="OnKeyDown"
                    autocomplete="off" />
             <ul class="sf-search-list" role="listbox">
+                <li class="@(_highlight == 0 ? "active" : null) sf-walkin-option"
+                    role="option"
+                    @onclick="ChooseWalkInAsync">
+                    <strong>Walk-In Customer</strong>
+                    <span>No account · cash / online only</span>
+                </li>
                 @foreach ((PartyDto customer, int i) in Hits.Select((c, i) => (c, i)))
                 {
-                    <li class="@(i == _highlight ? "active" : null)"
+                    int row = i + 1;
+                    <li class="@(row == _highlight ? "active" : null)"
                         role="option"
                         @onclick="() => ChooseAsync(customer)">
                         <strong>@customer.Name</strong>
@@ -29,9 +36,9 @@
                     </li>
                 }
             </ul>
-            @if (Hits.Count == 0)
+            @if (Hits.Count == 0 && _query.Trim().Length > 0)
             {
-                <p class="muted">@(_query.Trim().Length == 0 ? "Type to filter customers." : "No customers match.")</p>
+                <p class="muted">No customers match. Walk-In stays available above.</p>
             }
         </div>
     </div>
@@ -42,6 +49,7 @@
     [Parameter] public IReadOnlyList<PartyDto> Customers { get; set; } = [];
     [Parameter] public EventCallback OnClose { get; set; }
     [Parameter] public EventCallback<PartyDto> OnSelected { get; set; }
+    [Parameter] public EventCallback OnWalkInSelected { get; set; }
 
     private ElementReference _input;
     private string _query = string.Empty;
@@ -50,6 +58,8 @@
 
     private IReadOnlyList<PartyDto> Hits =>
         CustomerApiClient.FilterCustomers(Customers, _query).Take(40).ToList();
+
+    private int TotalRows => Hits.Count + 1; // Walk-In + hits
 
     protected override async Task OnParametersSetAsync()
     {
@@ -81,7 +91,7 @@
 
         if (e.Key == "ArrowDown")
         {
-            _highlight = Math.Min(_highlight + 1, Math.Max(Hits.Count - 1, 0));
+            _highlight = Math.Min(_highlight + 1, Math.Max(TotalRows - 1, 0));
             return;
         }
 
@@ -91,12 +101,21 @@
             return;
         }
 
-        if (e.Key == "Enter" && Hits.Count > 0)
+        if (e.Key == "Enter" && TotalRows > 0)
         {
-            int idx = Math.Clamp(_highlight, 0, Hits.Count - 1);
-            await ChooseAsync(Hits[idx]);
+            int idx = Math.Clamp(_highlight, 0, TotalRows - 1);
+            if (idx == 0)
+            {
+                await ChooseWalkInAsync();
+                return;
+            }
+
+            await ChooseAsync(Hits[idx - 1]);
         }
     }
+
+    private async Task ChooseWalkInAsync() =>
+        await OnWalkInSelected.InvokeAsync();
 
     private async Task ChooseAsync(PartyDto customer) =>
         await OnSelected.InvokeAsync(customer);

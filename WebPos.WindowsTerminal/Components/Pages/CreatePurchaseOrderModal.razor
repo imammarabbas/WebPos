@@ -53,6 +53,14 @@
                             }
                         </select>
                     </label>
+                    @if (SelectedSupplier is { } supplier)
+                    {
+                        <div class="cpo-payable-strip" aria-label="Supplier payable">
+                            <span>Previous Payable: <strong>Rs @FormatMoney(SupplierPreviousPayablePaisa)</strong></span>
+                            <span>This PO: <strong>Rs @FormatMoney(NewPoTotalPaisa)</strong></span>
+                            <span>Total Payable: <strong>Rs @FormatMoney(TotalPayablePaisa)</strong></span>
+                        </div>
+                    }
                     <label class="cpo-field">
                         <span>Purchase Order Nr</span>
                         <div class="cpo-invoice-row">
@@ -303,6 +311,7 @@
 
     [Parameter] public bool Visible { get; set; }
     [Parameter] public Guid? EditingPurchaseOrderId { get; set; }
+    [Parameter] public Guid? InitialSupplierId { get; set; }
     [Parameter] public PurchaseIntakeApiClient IntakeService { get; set; } = default!;
     [Parameter] public Guid ReceiverId { get; set; }
     [Parameter] public EventCallback OnClose { get; set; }
@@ -384,6 +393,19 @@
 
     private decimal GrandTotalRs => Math.Max(0, SubTotalRs - _discountRs);
 
+    private long NewPoTotalPaisa => (long)Math.Round(GrandTotalRs * 100m, MidpointRounding.AwayFromZero);
+
+    private PartyDto? SelectedSupplier =>
+        Guid.TryParse(_supplierIdText, out Guid id)
+            ? _suppliers.FirstOrDefault(s => s.Id == id)
+            : null;
+
+    private long SupplierPreviousPayablePaisa => SelectedSupplier?.CurrentBalancePaisa ?? 0;
+
+    private long TotalPayablePaisa => SupplierPreviousPayablePaisa + NewPoTotalPaisa;
+
+    private static string FormatMoney(long paisa) => (paisa / 100m).ToString("N2", CultureInfo.InvariantCulture);
+
     protected override async Task OnParametersSetAsync()
     {
         if (Visible && !_wasVisible)
@@ -407,6 +429,11 @@
                 }
 
                 _loadedEditingId = null;
+                if (InitialSupplierId is Guid supplierId && supplierId != Guid.Empty)
+                {
+                    _supplierIdText = supplierId.ToString();
+                }
+
                 if (string.IsNullOrWhiteSpace(_invoiceNo))
                 {
                     await GenerateInvoiceNoAsync();
@@ -1260,6 +1287,11 @@
         _totalText.Clear();
         _selectedLineIndex = -1;
         _supplierIdText = string.Empty;
+        if (InitialSupplierId is Guid supplierId && supplierId != Guid.Empty)
+        {
+            _supplierIdText = supplierId.ToString();
+        }
+
         _invoiceNo = string.Empty;
         _purchaseDate = DateTime.Today;
         _discountRs = 0;

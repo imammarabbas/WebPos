@@ -1,0 +1,56 @@
+@inject WindowChromeService WindowChrome
+@inject IJSRuntime Js
+@implements IAsyncDisposable
+@using Microsoft.JSInterop
+@using WebPos.WindowsTerminal.Services
+
+@code {
+    private DotNetObjectReference<CustomerDisplayChromeBridge>? _self;
+    private bool _bound;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _bound)
+        {
+            return;
+        }
+
+        try
+        {
+            _self = DotNetObjectReference.Create(this);
+            await Js.InvokeVoidAsync("webPosBindCustomerNativeFullscreen", _self);
+            _bound = true;
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+        catch (JSException)
+        {
+        }
+    }
+
+    [JSInvokable]
+    public bool ToggleFullscreen() => WindowChrome.ToggleCustomerFullscreen();
+
+    [JSInvokable]
+    public bool GetIsFullscreen() => WindowChrome.IsCustomerFullscreen;
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_bound)
+        {
+            try
+            {
+                await Js.InvokeVoidAsync("webPosUnbindCustomerNativeFullscreen");
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            catch (JSException)
+            {
+            }
+        }
+
+        _self?.Dispose();
+    }
+}

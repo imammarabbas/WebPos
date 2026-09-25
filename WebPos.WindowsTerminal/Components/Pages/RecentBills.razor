@@ -6,6 +6,9 @@
 @inject CustomerApiClient CustomerApi
 @inject NavigationManager Navigation
 @inject WhatsAppReceiptService WhatsAppReceipt
+@inject ILedgerPdfService LedgerPdf
+@inject IEmailService EmailService
+@inject StatementFileService StatementFiles
 @inject IJSRuntime Js
 
 <PageTitle>Previous Sales</PageTitle>
@@ -151,17 +154,22 @@
                 <div class="rb-ledger-head">
                     <div>
                         <h2>Customer Ledger</h2>
-                        <p class="rb-ledger-sub">@_ledgerCustomer.Name · @_fromDate.ToString("dd/MM/yyyy") → @_toDate.ToString("dd/MM/yyyy")</p>
+                        <p class="rb-ledger-sub">@_ledgerCustomer.Name · @_fromDate.ToString("dd/MM/yyyy") → @_toDate.ToString("dd/MM/yyyy") · Bal Rs @FormatRs(_ledgerCustomer.CurrentBalancePaisa)</p>
                     </div>
-                    <button type="button" class="po-btn po-btn-primary" disabled="@(_isLoading || _ledgerEntries.Count == 0)" @onclick="SendWhatsAppLedgerAsync">
-                        WhatsApp Ledger
-                    </button>
+                    <div class="po-actions">
+                        <button type="button" class="po-btn po-btn-primary" disabled="@_isLoading" @onclick="() => OpenPay(_ledgerCustomer)">Pay</button>
+                    </div>
                 </div>
                 <div class="rb-kpi-row">
                     <div class="rb-kpi"><span>Opening Balance</span><strong>Rs @FormatRs(_openingBalancePaisa)</strong></div>
                     <div class="rb-kpi"><span>Total Debit</span><strong>Rs @FormatRs(_totalDebitPaisa)</strong></div>
                     <div class="rb-kpi"><span>Total Credit</span><strong>Rs @FormatRs(_totalCreditPaisa)</strong></div>
                     <div class="rb-kpi"><span>Closing Balance</span><strong>Rs @FormatRs(_closingBalancePaisa)</strong></div>
+                </div>
+                <div class="stmt-share-bar">
+                    <button type="button" class="po-btn po-btn-outline" disabled="@(_isLoading || _ledgerEntries.Count == 0 || _sharing)" @onclick="DownloadPdfAsync">Download PDF</button>
+                    <button type="button" class="po-btn po-btn-outline" disabled="@(_isLoading || _ledgerEntries.Count == 0 || _sharing || string.IsNullOrWhiteSpace(_ledgerCustomer.Email))" title="@(string.IsNullOrWhiteSpace(_ledgerCustomer.Email) ? "Add email on customer to enable" : "Email PDF")" @onclick="EmailPdfAsync">Email PDF</button>
+                    <button type="button" class="po-btn po-btn-primary" disabled="@(_isLoading || _ledgerEntries.Count == 0 || _sharing)" @onclick="SendWhatsAppLedgerAsync">WhatsApp</button>
                 </div>
             </div>
         }
@@ -189,6 +197,7 @@
                                     <th class="po-num">Debit</th>
                                     <th class="po-num">Credit</th>
                                     <th class="po-num">Balance</th>
+                                    <th></th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -201,6 +210,9 @@
                                         <td class="po-num">@(entry.DebitPaisa > 0 ? FormatRs(entry.DebitPaisa) : "—")</td>
                                         <td class="po-num">@(entry.CreditPaisa > 0 ? FormatRs(entry.CreditPaisa) : "—")</td>
                                         <td class="po-num">@FormatRs(entry.NewBalancePaisa)</td>
+                                        <td>
+                                            <button type="button" class="po-btn po-btn-sm po-btn-outline" @onclick="() => OpenDetail(entry)">Details</button>
+                                        </td>
                                     </tr>
                                 }
                             </tbody>
@@ -275,6 +287,16 @@
             </div>
         </div>
     }
+
+    <PartyPaymentModal Visible="_showPay"
+                       Party="_payParty"
+                       IsSupplier="false"
+                       OnCancel="ClosePay"
+                       OnPaid="OnPaidAsync" />
+
+    <LedgerTransactionDetailModal Visible="_detailEntry is not null"
+                                  Entry="_detailEntry"
+                                  OnClose="CloseDetail" />
 </div>
 
 <style>
@@ -325,6 +347,9 @@
     }
     .rb-kpi span { font-size: 0.72rem; font-weight: 700; color: #64748b; text-transform: uppercase; }
     .rb-kpi strong { color: #1e3a5f; font-size: 1rem; }
+    .stmt-share-bar {
+        display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem;
+    }
     @@media (max-width: 1100px) {
         .rb-filter-row { grid-template-columns: 1fr 1fr; }
         .rb-kpi-row { grid-template-columns: 1fr 1fr; }
@@ -340,6 +365,10 @@
     private IReadOnlyList<PartyDto> _customerHits = [];
     private IReadOnlyList<PartyLedgerEntryDto> _ledgerEntries = [];
     private PartyDto? _ledgerCustomer;
+    private PartyDto? _payParty;
+    private PartyLedgerEntryDto? _detailEntry;
+    private bool _showPay;
+    private bool _sharing;
     private SalesInvoiceDetailDto? _detail;
     private string _filter = string.Empty;
     private DateOnly _fromDate;
@@ -623,6 +652,111 @@
         _showPhonePrompt = true;
     }
 
+    private void OpenPay(PartyDto customer)
+    {
+        _payParty = customer;
+        _showPay = true;
+    }
+
+    private void ClosePay()
+    {
+        _showPay = false;
+        _payParty = null;
+    }
+
+    private async Task OnPaidAsync(PartyDto updated)
+    {
+        _showPay = false;
+        _payParty = null;
+        _ledgerCustomer = updated;
+        await LoadLedgerAsync();
+        Result<IReadOnlyList<PartyDto>> customers = await CustomerApi.GetCustomersAsync();
+        if (customers.Success && customers.Data is not null)
+        {
+            _customers = customers.Data;
+        }
+    }
+
+    private void OpenDetail(PartyLedgerEntryDto entry) => _detailEntry = entry;
+
+    private void CloseDetail() => _detailEntry = null;
+
+    private async Task DownloadPdfAsync()
+    {
+        if (_ledgerCustomer is null || _ledgerEntries.Count == 0)
+        {
+            return;
+        }
+
+        _sharing = true;
+        _error = null;
+        try
+        {
+            byte[] pdf = LedgerPdf.GenerateStatement(
+                _ledgerCustomer, _ledgerEntries, _fromDate, _toDate,
+                _openingBalancePaisa, _closingBalancePaisa);
+            string name = $"Customer_{Sanitize(_ledgerCustomer.Name)}_{_fromDate:yyyyMMdd}_{_toDate:yyyyMMdd}.pdf";
+            string? path = await StatementFiles.SavePdfAsync(pdf, name);
+            if (path is not null)
+            {
+                _error = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _sharing = false;
+        }
+    }
+
+    private async Task EmailPdfAsync()
+    {
+        if (_ledgerCustomer is null || string.IsNullOrWhiteSpace(_ledgerCustomer.Email))
+        {
+            _error = "Customer has no email on file.";
+            return;
+        }
+
+        if (!EmailService.IsConfigured)
+        {
+            _error = "Email is not configured. Set Smtp:Enabled and Host/From in appsettings.json.";
+            return;
+        }
+
+        _sharing = true;
+        _error = null;
+        try
+        {
+            byte[] pdf = LedgerPdf.GenerateStatement(
+                _ledgerCustomer, _ledgerEntries, _fromDate, _toDate,
+                _openingBalancePaisa, _closingBalancePaisa);
+            string name = $"Customer_{Sanitize(_ledgerCustomer.Name)}_{_fromDate:yyyyMMdd}.pdf";
+            await EmailService.SendAsync(
+                _ledgerCustomer.Email!,
+                $"{TerminalBranding.PosDisplayName} — Customer statement",
+                $"Please find attached the statement for {_ledgerCustomer.Name} ({_fromDate:dd/MM/yyyy} – {_toDate:dd/MM/yyyy}).",
+                pdf,
+                name);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _sharing = false;
+        }
+    }
+
+    private static string Sanitize(string name)
+    {
+        char[] invalid = Path.GetInvalidFileNameChars();
+        return new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray());
+    }
+
     private async Task ConfirmWhatsAppAsync()
     {
         if (_waMode == WaMode.Ledger)
@@ -687,7 +821,8 @@
             _toDate,
             _openingBalancePaisa,
             _closingBalancePaisa,
-            _ledgerEntries);
+            _ledgerEntries,
+            "CUSTOMER");
 
         string? url = WhatsAppReceipt.BuildWhatsAppUrl(phone, message);
         if (url is null)

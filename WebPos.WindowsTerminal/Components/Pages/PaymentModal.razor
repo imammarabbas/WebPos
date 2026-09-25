@@ -15,7 +15,7 @@
                 </button>
             </div>
 
-            <div class="payment-mode-tabs" role="tablist">
+            <div class="payment-mode-tabs" role="tablist" aria-label="Payment method">
                 <button type="button"
                         class="payment-mode-tab @(_mode == PaymentUiMode.Cash ? "is-active" : null)"
                         role="tab"
@@ -25,13 +25,14 @@
                         class="payment-mode-tab @(_mode == PaymentUiMode.Online ? "is-active" : null)"
                         role="tab"
                         aria-selected="@(_mode == PaymentUiMode.Online)"
-                        @onclick="() => SelectMode(PaymentUiMode.Online)">ONLINE</button>
+                        @onclick="() => SelectMode(PaymentUiMode.Online)">ONLINE / BANK</button>
                 <button type="button"
                         class="payment-mode-tab @(_mode == PaymentUiMode.Credit ? "is-active" : null)"
                         role="tab"
                         aria-selected="@(_mode == PaymentUiMode.Credit)"
                         disabled="@(!HasRegisteredCustomer)"
-                        @onclick="() => SelectMode(PaymentUiMode.Credit)">CREDIT</button>
+                        title="@(HasRegisteredCustomer ? "Charge to customer account" : "Select a registered customer first")"
+                        @onclick="() => SelectMode(PaymentUiMode.Credit)">CREDIT / ON ACCOUNT</button>
             </div>
 
             @if (!string.IsNullOrWhiteSpace(_error))
@@ -47,11 +48,18 @@
                 <div class="label">Discount</div>
                 <div class="value">@FormatRs(DiscountPaisa)</div>
                 <div class="label">Previous Due</div>
-                <div class="value">@FormatRs(PreviousDuePaisa)</div>
+                <div class="value">@FormatRs(Breakdown.PreviousDuePaisa)</div>
                 <div class="label due">Amount Due</div>
-                <div class="value due">@FormatRs(AmountDuePaisa)</div>
-                <div class="label">@_changeLabel</div>
-                <div class="value">@FormatRs(_changeOrCreditPaisa)</div>
+                <div class="value due">@FormatRs(Breakdown.AmountDuePaisa)</div>
+                @if (Breakdown.AccountCreditPaisa > 0)
+                {
+                    <div class="label">@PaymentBreakdownCalculator.AccountCreditLabel</div>
+                    <div class="value payment-account-credit">@FormatRs(Breakdown.AccountCreditPaisa)</div>
+                }
+                <div class="label">@ModalBalanceLabel</div>
+                <div class="value @(Breakdown.ChangeReturnPaisa > 0 ? "payment-change-out" : null) @(Breakdown.AccountCreditPaisa > 0 || Breakdown.NewCustomerBalancePaisa < 0 ? "payment-account-credit" : null)">
+                    @ModalBalanceDisplay
+                </div>
             </div>
 
             @if (_mode != PaymentUiMode.Credit)
@@ -59,13 +67,16 @@
                 <div class="payment-field" id="pmTenderField">
                     <label for="pm-tender">Payment Received</label>
                     <input id="pm-tender"
+                           name="pmCashTender"
                            @ref="_tenderInputRef"
                            type="text"
                            inputmode="decimal"
                            value="@_tenderText"
                            @oninput="OnTenderInput"
                            @onfocus="OnTenderFocusAsync"
-                           autocomplete="off" />
+                           autocomplete="off"
+                           autocapitalize="off"
+                           spellcheck="false" />
                 </div>
             }
 
@@ -131,36 +142,13 @@
                 </div>
             }
 
-            @if (_mode == PaymentUiMode.Cash
-                 && HasRegisteredCustomer
-                 && _tenderPaisa > AmountDuePaisa)
-            {
-                <div class="payment-overpay-choice is-visible">
-                    <div class="payment-field">
-                        <label>Overpayment handling</label>
-                        <div class="overpay-toggle">
-                            <button type="button"
-                                    class="overpay-btn @(!_applyExcessCredit ? "is-active" : null)"
-                                    @onclick="() => SetOverpay(false)">
-                                Return Cash Change
-                            </button>
-                            <button type="button"
-                                    class="overpay-btn @(_applyExcessCredit ? "is-active" : null)"
-                                    @onclick="() => SetOverpay(true)">
-                                Credit to Customer Balance
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            }
-
             <div class="payment-modal-actions">
                 <button type="button" class="payment-btn-cancel" @onclick="CancelAsync">Cancel</button>
                 <button type="button" class="payment-btn-confirm" disabled="@_confirming" @onclick="ConfirmAsync">
                     Confirm · Enter
                 </button>
             </div>
-            <div class="payment-modal-hint">Alt+C focus payment · Save/F12 open · Enter confirm · Escape cancel</div>
+            <div class="payment-modal-hint">Alt+C focus payment · Enter confirm · Escape cancel · F12 quick-saves from main screen</div>
         </div>
     </div>
 }
@@ -199,10 +187,22 @@
     [Parameter] public IReadOnlyList<PaymentAccountDto> PaymentAccounts { get; set; } = [];
     [Parameter] public EventCallback OnCancel { get; set; }
     [Parameter] public EventCallback<PaymentCheckoutResult> OnConfirm { get; set; }
+    /// <summary>Fired when tender/mode/overpay changes so the CFD can live-update.</summary>
+    [Parameter] public EventCallback<PaymentLivePreview> OnLivePreviewChanged { get; set; }
+
+    public sealed class PaymentLivePreview
+    {
+        public required PaymentUiMode Mode { get; init; }
+        public long TenderPaisa { get; init; }
+        public bool ApplyExcessAsCustomerCredit { get; init; }
+    }
 
     private ElementReference _dialogRef;
     private ElementReference _tenderInputRef;
     private bool _wasVisible;
+    private bool _pendingOpenWork;
+    private Guid? _lastCustomerId;
+    private PaymentLivePreview? _lastNotifiedPreview;
     private bool _confirming;
     private string? _error;
     private PaymentUiMode _mode = PaymentUiMode.Cash;
@@ -218,29 +218,117 @@
 
     private bool HasRegisteredCustomer => Customer is not null;
 
+    private bool IsWalkIn => !HasRegisteredCustomer;
+
+    private PaymentBreakdown Breakdown =>
+        PaymentBreakdownCalculator.Compute(
+            isWalkIn: IsWalkIn,
+            previousDuePaisa: PreviousDuePaisa,
+            currentSaleTotalPaisa: AmountDuePaisa,
+            paymentReceivedPaisa: _mode == PaymentUiMode.Credit ? 0L : _tenderPaisa,
+            mode: ToBreakdownMode(_mode),
+            applyExcessAsCustomerCredit: _applyExcessCredit);
+
+    private long ChangeOrCreditDisplayPaisa =>
+        _mode == PaymentUiMode.Credit
+            ? Breakdown.OnAccountPaisa
+            : Breakdown.IsWalkIn
+                ? Breakdown.ChangeReturnPaisa
+                : Breakdown.NewCustomerBalancePaisa;
+
+    private string ModalBalanceLabel
+    {
+        get
+        {
+            if (Breakdown.ChangeReturnPaisa > 0)
+            {
+                return PaymentBreakdownCalculator.ChangeToReturnLabel;
+            }
+
+            if (_mode == PaymentUiMode.Credit)
+            {
+                return "On Account";
+            }
+
+            if (Breakdown.AccountCreditPaisa > 0)
+            {
+                return PaymentBreakdownCalculator.NewBalanceLabel;
+            }
+
+            return Breakdown.ChangeLabel;
+        }
+    }
+
+    private string ModalBalanceDisplay
+    {
+        get
+        {
+            if (Breakdown.ChangeReturnPaisa > 0)
+            {
+                return FormatChangeOut(Breakdown.ChangeReturnPaisa);
+            }
+
+            if (_mode == PaymentUiMode.Credit)
+            {
+                return FormatRs(Breakdown.OnAccountPaisa);
+            }
+
+            if (!Breakdown.IsWalkIn)
+            {
+                return FormatSignedRs(Breakdown.NewCustomerBalancePaisa);
+            }
+
+            return FormatRs(ChangeOrCreditDisplayPaisa);
+        }
+    }
+
     private string QtyDisplay => QuantityTotal.ToString("0.###", CultureInfo.InvariantCulture);
 
-    private string _changeLabel =>
-        _mode == PaymentUiMode.Credit
-            ? "On Account"
-            : _applyExcessCredit && _tenderPaisa > AmountDuePaisa
-                ? "Credit to Balance"
-                : "Change Due";
-
-    private long _changeOrCreditPaisa =>
-        _mode == PaymentUiMode.Credit
-            ? AmountDuePaisa
-            : Math.Max(0L, _tenderPaisa - AmountDuePaisa);
-
-    protected override async Task OnParametersSetAsync()
+    protected override void OnParametersSet()
     {
-        if (Visible && !_wasVisible)
+        Guid? customerId = Customer?.Id;
+        bool customerChanged = customerId != _lastCustomerId;
+        if (customerChanged)
         {
-            ResetFromParent();
-            await FocusTenderAsync();
+            _lastCustomerId = customerId;
         }
 
-        _wasVisible = Visible;
+        if (Visible && !_wasVisible)
+        {
+            // Mark open BEFORE any parent EventCallback/JS so re-entrant parameter
+            // sets cannot ResetFromParent + notify in a loop.
+            _wasVisible = true;
+            ResetFromParent();
+            _pendingOpenWork = true;
+            return;
+        }
+
+        if (!Visible && _wasVisible)
+        {
+            _wasVisible = false;
+            _pendingOpenWork = false;
+            _lastNotifiedPreview = null;
+            return;
+        }
+
+        // Customer changed while modal already open: refresh tender defaults once.
+        if (Visible && _wasVisible && customerChanged)
+        {
+            ResetFromParent();
+            _pendingOpenWork = true;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_pendingOpenWork || !Visible)
+        {
+            return;
+        }
+
+        _pendingOpenWork = false;
+        await NotifyLivePreviewAsync();
+        await FocusTenderAsync();
     }
 
     private void ResetFromParent()
@@ -260,6 +348,14 @@
             _mode = PaymentUiMode.Cash;
         }
 
+        long due = PaymentBreakdownCalculator.Compute(
+            IsWalkIn,
+            PreviousDuePaisa,
+            AmountDuePaisa,
+            paymentReceivedPaisa: 0,
+            ToBreakdownMode(_mode),
+            applyExcessAsCustomerCredit: false).AmountDuePaisa;
+
         if (_mode == PaymentUiMode.Cash)
         {
             if (!string.IsNullOrWhiteSpace(InitialTenderText) && TryParseRs(InitialTenderText, out long given))
@@ -269,14 +365,14 @@
             }
             else
             {
-                _tenderPaisa = AmountDuePaisa;
-                _tenderText = FormatRs(AmountDuePaisa);
+                _tenderPaisa = due;
+                _tenderText = FormatRs(due);
             }
         }
         else if (_mode == PaymentUiMode.Online)
         {
-            _tenderPaisa = AmountDuePaisa;
-            _tenderText = FormatRs(AmountDuePaisa);
+            _tenderPaisa = due;
+            _tenderText = FormatRs(due);
             SelectDefaultOnline();
         }
         else
@@ -395,19 +491,23 @@
         {
             _tenderPaisa = 0;
             _tenderText = string.Empty;
+            _ = NotifyLivePreviewAsync();
             return;
         }
 
+        long due = Breakdown.AmountDuePaisa;
         if (_tenderPaisa <= 0)
         {
-            _tenderPaisa = AmountDuePaisa;
-            _tenderText = FormatRs(AmountDuePaisa);
+            _tenderPaisa = due;
+            _tenderText = FormatRs(due);
         }
 
         if (mode == PaymentUiMode.Online && _selectedAccountId is null && _fallbackMethod is null)
         {
             SelectDefaultOnline();
         }
+
+        _ = NotifyLivePreviewAsync();
     }
 
     private void SelectAccount(PaymentAccountDto account)
@@ -436,11 +536,6 @@
         }
     }
 
-    private void SetOverpay(bool credit)
-    {
-        _applyExcessCredit = credit;
-    }
-
     private void OnTenderInput(ChangeEventArgs e)
     {
         _tenderText = e.Value?.ToString() ?? string.Empty;
@@ -453,10 +548,7 @@
             _tenderPaisa = 0;
         }
 
-        if (_tenderPaisa <= AmountDuePaisa)
-        {
-            _applyExcessCredit = false;
-        }
+        _ = NotifyLivePreviewAsync();
     }
 
     private void OnTxnRefInput(ChangeEventArgs e) =>
@@ -558,9 +650,21 @@
             return;
         }
 
-        if (!TryParseRs(_tenderText, out long paid) || paid < AmountDuePaisa)
+        if (!TryParseRs(_tenderText, out long paid))
         {
-            _error = "Payment received must cover the amount due.";
+            _error = "Enter a valid payment amount.";
+            return;
+        }
+
+        if (IsWalkIn && paid < AmountDuePaisa)
+        {
+            _error = "Walk-In payment must cover total amount due.";
+            return;
+        }
+
+        if (!IsWalkIn && paid < 0)
+        {
+            _error = "Enter a valid payment amount.";
             return;
         }
 
@@ -571,7 +675,7 @@
         if (_mode == PaymentUiMode.Cash)
         {
             paymentMethod = CheckoutPaymentMethods.Cash;
-            if (_applyExcessCredit && paid > AmountDuePaisa && !HasRegisteredCustomer)
+            if (Breakdown.ApplyExcessAsCustomerCredit && !HasRegisteredCustomer)
             {
                 _error = "A registered customer is required to credit excess payment.";
                 return;
@@ -610,8 +714,10 @@
             }
         }
 
-        long excess = paid - AmountDuePaisa;
-        bool applyCredit = _mode == PaymentUiMode.Cash && _applyExcessCredit && excess > 0;
+        PaymentBreakdown breakdown = Breakdown;
+        bool applyCredit = breakdown.ApplyExcessAsCustomerCredit
+            && (_mode == PaymentUiMode.Cash || _mode == PaymentUiMode.Online)
+            && HasRegisteredCustomer;
 
         _confirming = true;
         try
@@ -624,7 +730,7 @@
                 ApplyExcessAsCustomerCredit = applyCredit,
                 OnlineTxnRef = txnRef,
                 Mode = _mode,
-                ChangePaisa = applyCredit ? 0 : excess
+                ChangePaisa = breakdown.ChangeReturnPaisa
             });
         }
         finally
@@ -632,6 +738,49 @@
             _confirming = false;
         }
     }
+
+    private async Task NotifyLivePreviewAsync()
+    {
+        if (!Visible || !OnLivePreviewChanged.HasDelegate)
+        {
+            return;
+        }
+
+        PaymentBreakdown breakdown = Breakdown;
+        var preview = new PaymentLivePreview
+        {
+            Mode = _mode,
+            TenderPaisa = _mode == PaymentUiMode.Credit ? 0L : _tenderPaisa,
+            ApplyExcessAsCustomerCredit = breakdown.ApplyExcessAsCustomerCredit
+        };
+
+        if (_lastNotifiedPreview is { } last
+            && last.Mode == preview.Mode
+            && last.TenderPaisa == preview.TenderPaisa
+            && last.ApplyExcessAsCustomerCredit == preview.ApplyExcessAsCustomerCredit)
+        {
+            return;
+        }
+
+        _lastNotifiedPreview = preview;
+
+        try
+        {
+            await OnLivePreviewChanged.InvokeAsync(preview);
+        }
+        catch
+        {
+            /* ignore CFD publish failures */
+        }
+    }
+
+    private static PaymentBreakdownMode ToBreakdownMode(PaymentUiMode mode) =>
+        mode switch
+        {
+            PaymentUiMode.Online => PaymentBreakdownMode.Online,
+            PaymentUiMode.Credit => PaymentBreakdownMode.Credit,
+            _ => PaymentBreakdownMode.Cash
+        };
 
     private static string ResolveMethodForAccount(PaymentAccountDto account)
     {
@@ -687,4 +836,9 @@
     }
 
     private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+
+    private static string FormatSignedRs(long paisa) => (paisa / 100m).ToString("N2");
+
+    private static string FormatChangeOut(long changePaisa) =>
+        (-(changePaisa / 100m)).ToString("N2");
 }

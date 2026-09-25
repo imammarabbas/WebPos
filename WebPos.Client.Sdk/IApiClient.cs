@@ -121,6 +121,14 @@ public interface IApiClient
         int limit = 500,
         CancellationToken cancellationToken = default);
 
+    Task<RecordCustomerPaymentResult> RecordCustomerPaymentAsync(
+        RecordCustomerPaymentRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<RecordSupplierPaymentResult> RecordSupplierPaymentAsync(
+        RecordSupplierPaymentRequest request,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<SalesInvoiceSummaryDto>> GetInvoicesAsync(
         Guid? shiftId = null,
         int limit = 50,

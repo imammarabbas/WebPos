@@ -26,6 +26,8 @@
     <Compile Include="..\WebPos.WindowsTerminal\Services\SalesScanFocusCoordinator.cs" Link="SalesScanFocusCoordinator.cs" />
     <Compile Include="..\WebPos.WindowsTerminal\Services\CartService.cs" Link="CartService.cs" />
     <Compile Include="..\WebPos.WindowsTerminal\Services\CartLine.cs" Link="CartLine.cs" />
+    <Compile Include="..\WebPos.WindowsTerminal\Services\VariantFilter.cs" Link="VariantFilter.cs" />
+    <Compile Include="..\WebPos.WindowsTerminal\Services\PaymentBreakdownCalculator.cs" Link="PaymentBreakdownCalculator.cs" />
   </ItemGroup>
 
 </Project>

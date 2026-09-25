@@ -9,6 +9,8 @@ public sealed class CreatePartyRequest
 
     public required string PhoneNumber { get; init; }
 
+    public string? Email { get; init; }
+
     public string Address { get; init; } = string.Empty;
 
     public long CreditLimitPaisa { get; init; }
@@ -19,6 +21,8 @@ public sealed class UpdatePartyRequest
     public required string Name { get; init; }
 
     public required string PhoneNumber { get; init; }
+
+    public string? Email { get; init; }
 
     public string Address { get; init; } = string.Empty;
 
@@ -34,6 +38,8 @@ public sealed class PartyDto
     public required string Name { get; init; }
 
     public required string PhoneNumber { get; init; }
+
+    public string? Email { get; init; }
 
     public string Address { get; init; } = string.Empty;
 

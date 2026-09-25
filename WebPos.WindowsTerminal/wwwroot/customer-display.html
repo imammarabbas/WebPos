@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>🛒 Customer Display — Smart POS</title>
+    <title>Customer Display — Smart POS</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
@@ -77,33 +77,6 @@
             font-weight: 650;
             margin: 0 0.35em;
         }
-        #thank {
-            display: none;
-            margin: auto;
-            text-align: center;
-            padding: 48px 24px;
-        }
-        #thank h2 {
-            margin: 0;
-            font-size: clamp(2.2rem, 6vw, 3.4rem);
-            font-weight: 800;
-            letter-spacing: -0.03em;
-        }
-        #thank p {
-            margin: 14px 0 0;
-            color: #94a3b8;
-            font-size: clamp(1rem, 2vw, 1.25rem);
-            font-weight: 600;
-        }
-        body.is-thank #brand,
-        body.is-thank #cust,
-        body.is-thank #lines,
-        body.is-thank #tot {
-            display: none;
-        }
-        body.is-thank #thank {
-            display: block;
-        }
     </style>
 </head>
 <body>
@@ -113,10 +86,6 @@
     <div id="cust">WALK IN CUSTOMER · Invoice #—</div>
     <div id="lines" aria-live="polite"></div>
     <div id="tot">Due 0.00 · Paid 0.00</div>
-    <div id="thank">
-        <h2>Thank You! 🎉</h2>
-        <p>Have a wonderful day ahead.</p>
-    </div>
     <script>
         (function () {
             var CFD_CHANNEL = 'smart-pos-customer';
@@ -142,12 +111,6 @@
                 var invoice = s.invoiceNo || '—';
                 cust.textContent = name + ' · Invoice #' + invoice;
 
-                if (s.phase === 'thankYou') {
-                    document.body.classList.add('is-thank');
-                    return;
-                }
-
-                document.body.classList.remove('is-thank');
                 var items = s.items || [];
                 lines.innerHTML = items.map(function (i) {
                     return '<div class="row"><span>' +
@@ -173,6 +136,58 @@
             try {
                 render(JSON.parse(localStorage.getItem(CFD_STORAGE_KEY) || 'null'));
             } catch (e) { /* ignore */ }
+
+            // Standalone F11 — this document only; no DotNet / BroadcastChannel.
+            function fullscreenElement() {
+                return document.fullscreenElement
+                    || document.webkitFullscreenElement
+                    || document.msFullscreenElement
+                    || null;
+            }
+
+            function requestFullscreen() {
+                var el = document.documentElement;
+                var req = el.requestFullscreen
+                    || el.webkitRequestFullscreen
+                    || el.webkitRequestFullScreen
+                    || el.msRequestFullscreen;
+                if (!req) {
+                    return;
+                }
+                var result = req.call(el);
+                if (result && typeof result.catch === 'function') {
+                    result.catch(function () { /* ignore */ });
+                }
+            }
+
+            function exitFullscreen() {
+                var exit = document.exitFullscreen
+                    || document.webkitExitFullscreen
+                    || document.webkitCancelFullScreen
+                    || document.msExitFullscreen;
+                if (!exit) {
+                    return;
+                }
+                var result = exit.call(document);
+                if (result && typeof result.catch === 'function') {
+                    result.catch(function () { /* ignore */ });
+                }
+            }
+
+            window.addEventListener('keydown', function (e) {
+                if (e.key !== 'F11' && e.code !== 'F11') {
+                    return;
+                }
+                e.preventDefault();
+                if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) {
+                    return;
+                }
+                if (fullscreenElement()) {
+                    exitFullscreen();
+                } else {
+                    requestFullscreen();
+                }
+            }, true);
         })();
     </script>
 </body>

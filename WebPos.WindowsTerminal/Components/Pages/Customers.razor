@@ -33,6 +33,10 @@
     {
         <div class="po-alert">@_error</div>
     }
+    @if (!string.IsNullOrWhiteSpace(_success))
+    {
+        <div class="po-alert" style="background:#ecfdf5;border-color:#6ee7b7;color:#065f46;">@_success</div>
+    }
 
     @if (_mode == PartyUiMode.View && _selected is not null)
     {
@@ -41,11 +45,14 @@
             <div class="pov-info-grid">
                 <div class="pov-info-item"><label>Name</label><div class="pov-value">@_selected.Name</div></div>
                 <div class="pov-info-item"><label>Phone</label><div class="pov-value">@_selected.PhoneNumber</div></div>
+                <div class="pov-info-item"><label>Email</label><div class="pov-value">@(string.IsNullOrWhiteSpace(_selected.Email) ? "—" : _selected.Email)</div></div>
                 <div class="pov-info-item"><label>Balance</label><div class="pov-value">Rs @FormatRs(_selected.CurrentBalancePaisa)</div></div>
                 <div class="pov-info-item"><label>Address</label><div class="pov-value">@(string.IsNullOrWhiteSpace(_selected.Address) ? "—" : _selected.Address)</div></div>
             </div>
             <div class="pov-footer-actions">
                 <a class="po-btn po-btn-primary" href="@($"sales?customer={_selected.Id:D}")">Sell</a>
+                <button type="button" class="po-btn po-btn-primary" @onclick="() => OpenPay(_selected)">Pay</button>
+                <a class="po-btn po-btn-outline" href="recent-bills">Ledger</a>
                 <button type="button" class="po-btn po-btn-outline" @onclick="OpenEditSelected">Edit</button>
                 <button type="button" class="po-btn" @onclick="BackToList">Back</button>
             </div>
@@ -67,6 +74,10 @@
                 <div class="po-field">
                     <label for="cust-addr">Address</label>
                     <input id="cust-addr" class="form-control" @bind="_editAddress" disabled="@_saving" />
+                </div>
+                <div class="po-field">
+                    <label for="cust-email">Email</label>
+                    <input id="cust-email" class="form-control" type="email" @bind="_editEmail" disabled="@_saving" />
                 </div>
             </div>
             <div class="pov-footer-actions">
@@ -128,6 +139,7 @@
                                     <td>
                                         <div class="po-actions">
                                             <button type="button" class="po-btn po-btn-sm po-btn-outline" @onclick="() => OpenView(c)">View</button>
+                                            <button type="button" class="po-btn po-btn-sm po-btn-outline" @onclick="() => OpenPay(c)">Pay</button>
                                             <button type="button" class="po-btn po-btn-sm po-btn-outline" @onclick="() => OpenEdit(c)">Edit</button>
                                             <a class="po-btn po-btn-sm po-btn-primary" href="@($"sales?customer={c.Id:D}")">Sell</a>
                                         </div>
@@ -142,20 +154,30 @@
     }
 </div>
 
+<PartyPaymentModal Visible="_showPay"
+                   Party="_payParty"
+                   IsSupplier="false"
+                   OnCancel="ClosePay"
+                   OnPaid="OnPaidAsync" />
+
 @code {
     private enum PartyUiMode { List, View, Edit }
 
     private IReadOnlyList<PartyDto> _customers = [];
     private string _search = string.Empty;
     private string? _error;
+    private string? _success;
     private bool _loading = true;
     private bool _saving;
     private PartyUiMode _mode = PartyUiMode.List;
     private PartyDto? _selected;
+    private PartyDto? _payParty;
+    private bool _showPay;
     private Guid? _editingId;
     private string _editName = string.Empty;
     private string _editPhone = string.Empty;
     private string _editAddress = string.Empty;
+    private string _editEmail = string.Empty;
 
     private IReadOnlyList<PartyDto> Filtered =>
         CustomerApiClient.FilterCustomers(_customers, _search).ToList();
@@ -191,6 +213,32 @@
     {
         _selected = c;
         _mode = PartyUiMode.View;
+        _success = null;
+    }
+
+    private void OpenPay(PartyDto c)
+    {
+        _payParty = c;
+        _showPay = true;
+        _success = null;
+    }
+
+    private void ClosePay()
+    {
+        _showPay = false;
+        _payParty = null;
+    }
+
+    private async Task OnPaidAsync(PartyDto updated)
+    {
+        _showPay = false;
+        _payParty = null;
+        _success = $"Payment received · Bal Rs {FormatRs(updated.CurrentBalancePaisa)}";
+        await LoadAsync();
+        if (_mode == PartyUiMode.View && _selected?.Id == updated.Id)
+        {
+            _selected = updated;
+        }
     }
 
     private void OpenEdit(PartyDto c)
@@ -200,6 +248,7 @@
         _editName = c.Name;
         _editPhone = c.PhoneNumber;
         _editAddress = c.Address ?? string.Empty;
+        _editEmail = c.Email ?? string.Empty;
         _mode = PartyUiMode.Edit;
     }
 
@@ -218,6 +267,7 @@
         _editName = string.Empty;
         _editPhone = string.Empty;
         _editAddress = string.Empty;
+        _editEmail = string.Empty;
         _mode = PartyUiMode.Edit;
     }
 
@@ -244,11 +294,12 @@
                     _editName,
                     _editPhone,
                     _editAddress,
-                    creditLimit);
+                    creditLimit,
+                    _editEmail);
             }
             else
             {
-                result = await CustomerApi.CreateCustomerAsync(_editName, _editPhone, _editAddress);
+                result = await CustomerApi.CreateCustomerAsync(_editName, _editPhone, _editAddress, _editEmail);
             }
 
             if (!result.Success || result.Data is null)

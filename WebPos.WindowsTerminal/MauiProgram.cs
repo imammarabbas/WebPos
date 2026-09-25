@@ -24,18 +24,110 @@ public static class MauiProgram
                 fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
             });
 
+        var windowChrome = new WindowChromeService();
+        builder.Services.AddSingleton(windowChrome);
+
 #if WINDOWS
         builder.ConfigureLifecycleEvents(events =>
         {
             events.AddWindows(windows => windows.OnWindowCreated(window =>
             {
-                window.ExtendsContentIntoTitleBar = true;
-
                 nint handle = WindowNative.GetWindowHandle(window);
                 WindowId windowId = Win32Interop.GetWindowIdFromWindow(handle);
                 AppWindow appWindow = AppWindow.GetFromWindowId(windowId);
+                if (appWindow is null)
+                {
+                    return;
+                }
 
-                if (appWindow is not null && AppWindowTitleBar.IsCustomizationSupported())
+                // Only the first window is the POS shell. Customer display is attached
+                // separately so fullscreen / title-bar chrome never cross-wire.
+                if (!windowChrome.TryAttachMain(appWindow))
+                {
+                    windowChrome.AttachCustomer(appWindow);
+
+                    // Customer-only F11 — never ToggleMainFullscreen.
+                    void AttachCustomerNativeF11()
+                    {
+                        if (window.Content is not Microsoft.UI.Xaml.UIElement root)
+                        {
+                            return;
+                        }
+
+                        root.AddHandler(
+                            Microsoft.UI.Xaml.UIElement.KeyDownEvent,
+                            new Microsoft.UI.Xaml.Input.KeyEventHandler((_, args) =>
+                            {
+                                if (args.Key != Windows.System.VirtualKey.F11)
+                                {
+                                    return;
+                                }
+
+                                windowChrome.ToggleCustomerFullscreen();
+                                args.Handled = true;
+                            }),
+                            handledEventsToo: true);
+                    }
+
+                    if (window.Content is not null)
+                    {
+                        AttachCustomerNativeF11();
+                    }
+                    else
+                    {
+                        void OnCustomerActivated(object sender, Microsoft.UI.Xaml.WindowActivatedEventArgs args)
+                        {
+                            window.Activated -= OnCustomerActivated;
+                            AttachCustomerNativeF11();
+                        }
+
+                        window.Activated += OnCustomerActivated;
+                    }
+
+                    return;
+                }
+
+                window.ExtendsContentIntoTitleBar = true;
+
+                // Native F11 when WinUI content has focus (WebView2 still uses the JS bridge).
+                void AttachNativeF11()
+                {
+                    if (window.Content is not Microsoft.UI.Xaml.UIElement root)
+                    {
+                        return;
+                    }
+
+                    root.AddHandler(
+                        Microsoft.UI.Xaml.UIElement.KeyDownEvent,
+                        new Microsoft.UI.Xaml.Input.KeyEventHandler((_, args) =>
+                        {
+                            if (args.Key != Windows.System.VirtualKey.F11)
+                            {
+                                return;
+                            }
+
+                            windowChrome.ToggleMainFullscreen();
+                            args.Handled = true;
+                        }),
+                        handledEventsToo: true);
+                }
+
+                if (window.Content is not null)
+                {
+                    AttachNativeF11();
+                }
+                else
+                {
+                    void OnActivated(object sender, Microsoft.UI.Xaml.WindowActivatedEventArgs args)
+                    {
+                        window.Activated -= OnActivated;
+                        AttachNativeF11();
+                    }
+
+                    window.Activated += OnActivated;
+                }
+
+                if (AppWindowTitleBar.IsCustomizationSupported())
                 {
                     AppWindowTitleBar titleBar = appWindow.TitleBar;
                     titleBar.ExtendsContentIntoTitleBar = true;
@@ -59,6 +151,12 @@ public static class MauiProgram
 
                     void UpdateDragRegions()
                     {
+                        // Skip while fullscreen — title bar insets are unstable then.
+                        if (appWindow.Presenter?.Kind == AppWindowPresenterKind.FullScreen)
+                        {
+                            return;
+                        }
+
                         int captionH = titleBar.Height;
                         int dragHeight = captionH > 32 ? captionH : 48;
                         int dragWidth = Math.Max(0, appWindow.Size.Width - titleBar.RightInset);
@@ -71,7 +169,7 @@ public static class MauiProgram
                     UpdateDragRegions();
                     appWindow.Changed += (_, args) =>
                     {
-                        if (args.DidSizeChange)
+                        if (args.DidSizeChange || args.DidPresenterChange)
                         {
                             UpdateDragRegions();
                         }
@@ -131,6 +229,9 @@ public static class MauiProgram
         builder.Services.AddSingleton<CustomerApiClient>();
         builder.Services.AddSingleton<ProductAdminApiClient>();
         builder.Services.AddSingleton<WhatsAppReceiptService>();
+        builder.Services.AddSingleton<ILedgerPdfService, LedgerPdfService>();
+        builder.Services.AddSingleton<IEmailService, SmtpEmailService>();
+        builder.Services.AddSingleton<StatementFileService>();
         builder.Services.AddSingleton<LastSaleReceiptStore>();
         builder.Services.AddSingleton<CartHoldService>();
         builder.Services.AddSingleton<ShiftStatusApiClient>();

@@ -32,10 +32,36 @@ public sealed class CustomerApiClient(IApiClient apiClient, ILogger<CustomerApiC
         }
     }
 
+    public async Task<Result<PartyDto>> GetCustomerAsync(
+        Guid customerId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            IReadOnlyList<PartyDto> customers =
+                await _apiClient.GetPartiesAsync("CUSTOMER", cancellationToken).ConfigureAwait(false);
+            PartyDto? match = customers.FirstOrDefault(c => c.Id == customerId);
+            return match is null
+                ? Result<PartyDto>.Fail("Customer not found.")
+                : Result<PartyDto>.Ok(match);
+        }
+        catch (WebPosClientException ex)
+        {
+            _logger.LogError(
+                ex,
+                "Failed to load customer {CustomerId} ({StatusCode}): {Message}",
+                customerId,
+                ex.StatusCode,
+                ex.Message);
+            return Result<PartyDto>.Fail(ex.Message);
+        }
+    }
+
     public async Task<Result<PartyDto>> CreateCustomerAsync(
         string name,
         string phoneNumber,
         string? address = null,
+        string? email = null,
         CancellationToken cancellationToken = default)
     {
         try
@@ -46,6 +72,7 @@ public sealed class CustomerApiClient(IApiClient apiClient, ILogger<CustomerApiC
                     Role = "CUSTOMER",
                     Name = name.Trim(),
                     PhoneNumber = phoneNumber.Trim(),
+                    Email = string.IsNullOrWhiteSpace(email) ? null : email.Trim(),
                     Address = address?.Trim() ?? string.Empty,
                     CreditLimitPaisa = 0
                 },
@@ -69,6 +96,7 @@ public sealed class CustomerApiClient(IApiClient apiClient, ILogger<CustomerApiC
         string phoneNumber,
         string? address = null,
         long? creditLimitPaisa = null,
+        string? email = null,
         CancellationToken cancellationToken = default)
     {
         try
@@ -79,6 +107,7 @@ public sealed class CustomerApiClient(IApiClient apiClient, ILogger<CustomerApiC
                 {
                     Name = name.Trim(),
                     PhoneNumber = phoneNumber.Trim(),
+                    Email = string.IsNullOrWhiteSpace(email) ? null : email.Trim(),
                     Address = address?.Trim() ?? string.Empty,
                     CreditLimitPaisa = creditLimitPaisa ?? 0
                 },
@@ -94,6 +123,44 @@ public sealed class CustomerApiClient(IApiClient apiClient, ILogger<CustomerApiC
                 ex.StatusCode,
                 ex.Message);
             return Result<PartyDto>.Fail(ex.Message);
+        }
+    }
+
+    public async Task<Result<RecordCustomerPaymentResult>> RecordPaymentAsync(
+        Guid customerId,
+        long amountPaisa,
+        string paymentMethod,
+        string referenceNo,
+        Guid? shiftId = null,
+        Guid? cashAccountId = null,
+        string? accountCode = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            RecordCustomerPaymentResult result = await _apiClient.RecordCustomerPaymentAsync(
+                new RecordCustomerPaymentRequest
+                {
+                    CustomerId = customerId,
+                    AmountPaisa = amountPaisa,
+                    PaymentMethod = paymentMethod,
+                    ReferenceNo = referenceNo,
+                    ShiftId = shiftId,
+                    CashAccountId = cashAccountId,
+                    AccountCode = accountCode
+                },
+                cancellationToken).ConfigureAwait(false);
+            return Result<RecordCustomerPaymentResult>.Ok(result);
+        }
+        catch (WebPosClientException ex)
+        {
+            _logger.LogError(
+                ex,
+                "Failed customer payment for {CustomerId} ({StatusCode}): {Message}",
+                customerId,
+                ex.StatusCode,
+                ex.Message);
+            return Result<RecordCustomerPaymentResult>.Fail(ex.Message);
         }
     }
 
@@ -136,7 +203,9 @@ public sealed class CustomerApiClient(IApiClient apiClient, ILogger<CustomerApiC
         return customers
             .Where(customer =>
                 customer.Name.Contains(trimmed, StringComparison.OrdinalIgnoreCase)
-                || customer.PhoneNumber.Contains(trimmed, StringComparison.OrdinalIgnoreCase))
+                || customer.PhoneNumber.Contains(trimmed, StringComparison.OrdinalIgnoreCase)
+                || (!string.IsNullOrWhiteSpace(customer.Email)
+                    && customer.Email.Contains(trimmed, StringComparison.OrdinalIgnoreCase)))
             .OrderBy(customer => customer.Name);
     }
 }

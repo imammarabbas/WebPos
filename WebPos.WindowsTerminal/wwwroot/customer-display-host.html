@@ -23,5 +23,37 @@
 <body>
     <div id="cfd-root">Loading customer display…</div>
     <script src="_framework/blazor.webview.js" autostart="false"></script>
+    <script>
+        (function () {
+            window.__webPosCustomerNativeFs = null;
+
+            window.webPosBindCustomerNativeFullscreen = function (netRef) {
+                window.__webPosCustomerNativeFs = netRef || null;
+            };
+
+            window.webPosUnbindCustomerNativeFullscreen = function () {
+                window.__webPosCustomerNativeFs = null;
+            };
+
+            window.addEventListener('keydown', function (e) {
+                if (e.key !== 'F11' && e.code !== 'F11') {
+                    return;
+                }
+
+                e.preventDefault();
+                if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) {
+                    return;
+                }
+
+                if (!window.__webPosCustomerNativeFs) {
+                    return;
+                }
+
+                try {
+                    window.__webPosCustomerNativeFs.invokeMethodAsync('ToggleFullscreen');
+                } catch (err) { /* ignore */ }
+            }, true);
+        })();
+    </script>
 </body>
 </html>

@@ -71,6 +71,8 @@ public sealed class SalesService : ISalesService
             long amountPaid;
             long changePaisa = 0L;
             long customerCreditApplied = 0L;
+            long unpaidOnAccountPaisa = 0L;
+            bool registeredUnderpay = false;
 
             if (isCredit)
             {
@@ -84,31 +86,61 @@ public sealed class SalesService : ISalesService
             else
             {
                 amountPaid = request.AmountPaidPaisa ?? netPaisa;
-                if (amountPaid < netPaisa)
+
+                long previousBalancePaisa = 0L;
+                if (request.CustomerId is Guid balanceCustomerId)
                 {
-                    throw new InvalidOperationException(
-                        "Amount paid must cover the sale total.");
+                    Party? balanceCustomer = await context.Parties
+                        .FirstOrDefaultAsync(p => p.Id == balanceCustomerId, ct);
+                    previousBalancePaisa = balanceCustomer?.CurrentBalancePaisa ?? 0L;
                 }
 
-                long excess = amountPaid - netPaisa;
-                if (excess > 0 && request.ApplyExcessAsCustomerCredit)
+                if (amountPaid < netPaisa)
                 {
                     if (request.CustomerId is null)
                     {
                         throw new InvalidOperationException(
-                            "A registered customer is required to credit excess payment.");
+                            "Amount paid must cover the sale total.");
                     }
 
-                    customerCreditApplied = excess;
+                    // Registered underpay: remainder stays on customer ledger.
+                    registeredUnderpay = true;
+                    unpaidOnAccountPaisa = netPaisa - amountPaid;
+                    changePaisa = 0L;
+                    customerCreditApplied = 0L;
                 }
                 else
                 {
-                    changePaisa = excess;
+                    long excessOverNet = amountPaid - netPaisa;
+                    if (excessOverNet > 0)
+                    {
+                        if (request.ApplyExcessAsCustomerCredit)
+                        {
+                            if (request.CustomerId is null)
+                            {
+                                throw new InvalidOperationException(
+                                    "A registered customer is required to credit excess payment.");
+                            }
+
+                            changePaisa = 0L;
+                            customerCreditApplied = excessOverNet;
+                        }
+                        else
+                        {
+                            changePaisa = Math.Max(0L, excessOverNet - Math.Max(0L, previousBalancePaisa));
+                            customerCreditApplied = excessOverNet - changePaisa;
+                            if (customerCreditApplied > 0 && request.CustomerId is null)
+                            {
+                                customerCreditApplied = 0L;
+                                changePaisa = excessOverNet;
+                            }
+                        }
+                    }
                 }
             }
 
             if (request.CustomerId is Guid requiredCustomerId
-                && (isCredit || customerCreditApplied > 0))
+                && (isCredit || customerCreditApplied > 0 || registeredUnderpay))
             {
                 Party? customer = await context.Parties
                     .FirstOrDefaultAsync(p => p.Id == requiredCustomerId, ct);
@@ -117,9 +149,9 @@ public sealed class SalesService : ISalesService
                     || !string.Equals(customer.PartyType, "CUSTOMER", StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException(
-                        isCredit
+                        isCredit || registeredUnderpay
                             ? "CREDIT sales require a valid customer party profile."
-                            : "Excess customer credit requires a valid customer party profile.");
+                            : "Customer payment against account requires a valid customer party profile.");
                 }
             }
 
@@ -199,7 +231,7 @@ public sealed class SalesService : ISalesService
                 DiscountReason = request.DiscountReason,
                 ReceiptNumber = receiptNumber,
                 PaymentMethod = paymentMethod,
-                AmountPaidPaisa = isCredit ? 0 : netPaisa,
+                AmountPaidPaisa = isCredit ? 0 : (registeredUnderpay ? amountPaid : netPaisa),
                 CreatedAt = now
             };
             context.SalesInvoices.Add(invoice);
@@ -281,21 +313,51 @@ public sealed class SalesService : ISalesService
                 saleDetails = $"{saleDetails}; txn {request.OnlineTxnRef.Trim()}";
             }
 
-            List<LedgerPosting> postings =
-            [
-                new LedgerPosting
+            List<LedgerPosting> postings = [];
+            if (registeredUnderpay)
+            {
+                if (amountPaid > 0)
                 {
-                    AccountCode = paymentAccount,
-                    DebitPaisa = netPaisa,
-                    CreditPaisa = 0
-                },
-                new LedgerPosting
+                    postings.Add(new LedgerPosting
+                    {
+                        AccountCode = paymentAccount,
+                        DebitPaisa = amountPaid,
+                        CreditPaisa = 0
+                    });
+                }
+
+                if (unpaidOnAccountPaisa > 0)
+                {
+                    postings.Add(new LedgerPosting
+                    {
+                        AccountCode = LedgerAccounts.AccountsReceivable,
+                        DebitPaisa = unpaidOnAccountPaisa,
+                        CreditPaisa = 0
+                    });
+                }
+
+                postings.Add(new LedgerPosting
                 {
                     AccountCode = LedgerAccounts.Revenue,
                     DebitPaisa = 0,
                     CreditPaisa = grossPaisa
-                }
-            ];
+                });
+            }
+            else
+            {
+                postings.Add(new LedgerPosting
+                {
+                    AccountCode = paymentAccount,
+                    DebitPaisa = netPaisa,
+                    CreditPaisa = 0
+                });
+                postings.Add(new LedgerPosting
+                {
+                    AccountCode = LedgerAccounts.Revenue,
+                    DebitPaisa = 0,
+                    CreditPaisa = grossPaisa
+                });
+            }
 
             if (request.DiscountAmountPaisa > 0)
             {
@@ -321,18 +383,43 @@ public sealed class SalesService : ISalesService
 
             if (request.CustomerId is Guid partyId)
             {
-                await _partyLedgerService.RecordPartyTransactionAsync(
-                    partyId,
-                    netPaisa,
-                    "SALE",
-                    paymentMethod,
-                    request.InvoiceNo,
-                    ct);
+                if (registeredUnderpay)
+                {
+                    // Full sale on AR, then cash/online payment reduces balance.
+                    await _partyLedgerService.RecordPartyTransactionAsync(
+                        partyId,
+                        netPaisa,
+                        "SALE",
+                        "CREDIT",
+                        request.InvoiceNo,
+                        ct);
+
+                    if (amountPaid > 0)
+                    {
+                        await _partyLedgerService.RecordPartyTransactionAsync(
+                            partyId,
+                            amountPaid,
+                            "PAYMENT",
+                            paymentMethod,
+                            $"{receiptNumber}-PAY",
+                            ct);
+                    }
+                }
+                else
+                {
+                    await _partyLedgerService.RecordPartyTransactionAsync(
+                        partyId,
+                        netPaisa,
+                        "SALE",
+                        paymentMethod,
+                        request.InvoiceNo,
+                        ct);
+                }
             }
 
             if (affectsTill)
             {
-                shift.ExpectedCashPaisa += netPaisa;
+                shift.ExpectedCashPaisa += registeredUnderpay ? amountPaid : netPaisa;
             }
 
             if (customerCreditApplied > 0 && request.CustomerId is Guid creditPartyId)

@@ -66,6 +66,7 @@ public sealed class PartyService : IPartyService
                 PartyType = role,
                 Name = request.Name.Trim(),
                 PhoneNumber = request.PhoneNumber.Trim(),
+                Email = NormalizeEmail(request.Email),
                 Address = request.Address?.Trim() ?? string.Empty,
                 CreditLimitPaisa = request.CreditLimitPaisa,
                 CurrentBalancePaisa = 0,
@@ -107,6 +108,7 @@ public sealed class PartyService : IPartyService
 
             party.Name = request.Name.Trim();
             party.PhoneNumber = request.PhoneNumber.Trim();
+            party.Email = NormalizeEmail(request.Email);
             party.Address = request.Address?.Trim() ?? string.Empty;
             party.CreditLimitPaisa = request.CreditLimitPaisa;
             party.UpdatedAt = DateTimeOffset.UtcNow;
@@ -217,8 +219,15 @@ public sealed class PartyService : IPartyService
             Role = party.PartyType,
             Name = party.Name,
             PhoneNumber = party.PhoneNumber,
+            Email = party.Email,
             Address = party.Address,
             CreditLimitPaisa = party.CreditLimitPaisa,
             CurrentBalancePaisa = party.CurrentBalancePaisa
         };
+
+    private static string? NormalizeEmail(string? email)
+    {
+        string? trimmed = email?.Trim();
+        return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
+    }
 }

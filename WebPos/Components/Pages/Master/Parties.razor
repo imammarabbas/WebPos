@@ -127,6 +127,10 @@
                         <label>Address</label>
                         <InputTextArea @bind-Value="_partyForm.Address" rows="2" />
                     </div>
+                    <div class="mm-field full">
+                        <label>Email</label>
+                        <InputText @bind-Value="_partyForm.Email" />
+                    </div>
                 </div>
                 <div class="mm-form-actions">
                     <button type="submit" class="mm-btn mm-btn-primary" disabled="@_saving">@(_saving ? "Saving…" : "Save")</button>
@@ -1188,6 +1192,7 @@
         {
             Name = p.Name,
             PhoneNumber = p.PhoneNumber,
+            Email = p.Email ?? string.Empty,
             Address = p.Address,
             CreditLimitRs = p.CreditLimitPaisa / 100m
         };
@@ -1206,6 +1211,7 @@
                 {
                     Name = _partyForm.Name.Trim(),
                     PhoneNumber = _partyForm.PhoneNumber.Trim(),
+                    Email = string.IsNullOrWhiteSpace(_partyForm.Email) ? null : _partyForm.Email.Trim(),
                     Address = _partyForm.Address.Trim(),
                     CreditLimitPaisa = creditPaisa
                 });
@@ -1218,6 +1224,7 @@
                     Role = _manageRole,
                     Name = _partyForm.Name.Trim(),
                     PhoneNumber = _partyForm.PhoneNumber.Trim(),
+                    Email = string.IsNullOrWhiteSpace(_partyForm.Email) ? null : _partyForm.Email.Trim(),
                     Address = _partyForm.Address.Trim(),
                     CreditLimitPaisa = creditPaisa
                 });
@@ -1272,6 +1279,7 @@
     {
         public string Name { get; set; } = string.Empty;
         public string PhoneNumber { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
         public string Address { get; set; } = string.Empty;
         public decimal CreditLimitRs { get; set; }
     }

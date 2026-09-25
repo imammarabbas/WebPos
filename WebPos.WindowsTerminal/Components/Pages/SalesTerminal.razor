@@ -293,23 +293,30 @@
                     <div class="sp-summary-item sp-payment-preview">
                         <div class="sp-summary-label">
                             Payment Received
-                            <span class="sp-shortcut-hint" title="Alt+C">Alt+C</span>
+                            <span class="sp-shortcut-hint" title="Alt+C focuses Payment Received">Alt+C</span>
                         </div>
                         <input id="pos-payment"
+                               name="posCashTender"
                                class="sp-summary-input"
                                type="text"
                                inputmode="decimal"
+                               autocomplete="off"
+                               autocapitalize="off"
+                               autocorrect="off"
+                               spellcheck="false"
                                placeholder="0.00"
-                               title="Alt+C focuses · Save opens Payment Breakdown"
-                               @bind="_cashGivenText"
-                               @bind:event="oninput"
+                               title="Cash received · Alt+C focus · F12 save"
+                               value="@_cashGivenText"
+                               @oninput="OnPaymentInput"
                                @onfocus="OnPaymentFocusAsync"
                                @onblur="OnPaymentBlur"
                                disabled="@(_isBusy || ModalOpen)" />
                     </div>
-                    <div class="sp-summary-item sp-balance-summary">
-                        <div class="sp-summary-label">Net Balance</div>
-                        <div class="sp-summary-value sp-balance-value">@FormatRs(DisplayBalancePaisa)</div>
+                    <div class="sp-summary-item sp-balance-summary @BalanceSummaryToneClass">
+                        <div class="sp-summary-label">@BalanceSummaryLabel</div>
+                        <div class="sp-summary-value sp-balance-value @BalanceSummaryValueClass">
+                            @BalanceSummaryDisplay
+                        </div>
                     </div>
                 </div>
             </div>
@@ -346,6 +353,15 @@
                 <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
                 <span class="sp-action-key">F8</span>
                 <span class="sp-action-label">Clear Invoice</span>
+            </button>
+            <button type="button"
+                    class="sp-action-btn"
+                    disabled="@(_isBusy || ModalOpen || CartService.IsEmpty)"
+                    title="Alt+Shift+B"
+                    @onclick="OpenPaymentModalAsync">
+                <i class="fa-solid fa-receipt" aria-hidden="true"></i>
+                <span class="sp-action-key">Alt+Shift+B</span>
+                <span class="sp-action-label">Payment Breakdown</span>
             </button>
             <button type="button"
                     class="sp-save"
@@ -426,7 +442,8 @@
 <CustomerSearchModal Visible="@_showCustomerSearch"
                      Customers="@_customers"
                      OnClose="() => _showCustomerSearch = false"
-                     OnSelected="OnCustomerPickedAsync" />
+                     OnSelected="OnCustomerPickedAsync"
+                     OnWalkInSelected="OnWalkInPickedAsync" />
 
 <CustomerAddModal Visible="@_showCustomerAdd"
                   OnClose="() => _showCustomerAdd = false"
@@ -449,11 +466,13 @@
               InitialTenderText="@_cashGivenText"
               PaymentAccounts="_paymentAccounts"
               OnCancel="ClosePaymentModal"
-              OnConfirm="OnPaymentConfirmedAsync" />
+              OnConfirm="OnPaymentConfirmedAsync"
+              OnLivePreviewChanged="OnPaymentLivePreviewAsync" />
 
 <CreatePurchaseOrderModal @ref="_createPurchaseOrderModal"
                           Visible="_showCreatePurchaseOrder"
                           EditingPurchaseOrderId="_editingPurchaseOrderId"
+                          InitialSupplierId="_createPoSupplierId"
                           IntakeService="PurchaseIntake"
                           ReceiverId="SessionService.CashierId"
                           OnClose="CloseCreatePurchaseOrder"
@@ -548,6 +567,7 @@
     private bool _purchaseOrdersMinimized;
     private bool _createPurchaseOrderMinimized;
     private Guid? _editingPurchaseOrderId;
+    private Guid? _createPoSupplierId;
     private string _cpoMiniInvoice = string.Empty;
     private int _cpoMiniLineCount;
     private CreatePurchaseOrderModal? _createPurchaseOrderModal;
@@ -782,7 +802,11 @@
             ? _selectedCustomer.CurrentBalancePaisa
             : 0;
 
-    private long PaymentReceivedPaisa
+    private bool IsWalkInCustomer => _useWalkInCustomer || _selectedCustomer is null;
+
+    private PaymentModal.PaymentLivePreview? _paymentLivePreview;
+
+    private long SidebarPaymentReceivedPaisa
     {
         get
         {
@@ -791,29 +815,170 @@
                 return 0;
             }
 
-            if (_paymentMode == PaymentUiMode.Online)
-            {
-                return PayablePaisa;
-            }
-
             if (TryParseRs(_cashGivenText, out long given) && given > 0)
             {
                 return given;
+            }
+
+            if (_paymentMode == PaymentUiMode.Online)
+            {
+                // Default online tender to full amount due (sale + previous due when registered).
+                return PaymentBreakdownCalculator.Compute(
+                    IsWalkInCustomer,
+                    PreviousDuePaisa,
+                    PayablePaisa,
+                    paymentReceivedPaisa: 0,
+                    PaymentBreakdownMode.Online,
+                    applyExcessAsCustomerCredit: false).AmountDuePaisa;
             }
 
             return 0;
         }
     }
 
-    private long SaleBalancePaisa => PayablePaisa - Math.Min(PaymentReceivedPaisa, PayablePaisa);
+    private PaymentBreakdown ActiveBreakdown
+    {
+        get
+        {
+            if (_showPaymentModal && _paymentLivePreview is { } live)
+            {
+                return PaymentBreakdownCalculator.Compute(
+                    IsWalkInCustomer,
+                    PreviousDuePaisa,
+                    PayablePaisa,
+                    live.TenderPaisa,
+                    ToBreakdownMode(live.Mode),
+                    live.ApplyExcessAsCustomerCredit);
+            }
 
-    private long DisplayBalancePaisa =>
-        _paymentMode == PaymentUiMode.Cash && PaymentReceivedPaisa > PayablePaisa
-            ? PaymentReceivedPaisa - PayablePaisa
-            : SaleBalancePaisa;
+            return PaymentBreakdownCalculator.Compute(
+                IsWalkInCustomer,
+                PreviousDuePaisa,
+                PayablePaisa,
+                SidebarPaymentReceivedPaisa,
+                ToBreakdownMode(_paymentMode),
+                applyExcessAsCustomerCredit: false);
+        }
+    }
 
-    private long CustomerNetBalancePaisa =>
-        PreviousDuePaisa + PayablePaisa - PaymentReceivedPaisa;
+    private long PaymentReceivedPaisa => ActiveBreakdown.PaymentReceivedPaisa;
+
+    private bool ShowChangeToReturn => ActiveBreakdown.IsWalkIn && ActiveBreakdown.ChangeReturnPaisa > 0;
+
+    private bool ShowAccountCredit =>
+        !IsWalkInCustomer
+        && _paymentMode != PaymentUiMode.Credit
+        && ActiveBreakdown.AccountCreditPaisa > 0;
+
+    private string BalanceSummaryLabel
+    {
+        get
+        {
+            if (ShowChangeToReturn)
+            {
+                return PaymentBreakdownCalculator.ChangeToReturnLabel;
+            }
+
+            if (ShowAccountCredit)
+            {
+                return PaymentBreakdownCalculator.AccountCreditLabel;
+            }
+
+            if (_paymentMode == PaymentUiMode.Credit && !IsWalkInCustomer)
+            {
+                return "On Account";
+            }
+
+            if (!IsWalkInCustomer)
+            {
+                return PaymentBreakdownCalculator.NewBalanceLabel;
+            }
+
+            return "Net Balance";
+        }
+    }
+
+    private string BalanceSummaryDisplay
+    {
+        get
+        {
+            if (ShowChangeToReturn)
+            {
+                return FormatChangeOut(ActiveBreakdown.ChangeReturnPaisa);
+            }
+
+            if (ShowAccountCredit)
+            {
+                return FormatRs(ActiveBreakdown.AccountCreditPaisa);
+            }
+
+            if (_paymentMode == PaymentUiMode.Credit && !IsWalkInCustomer)
+            {
+                return FormatRs(ActiveBreakdown.OnAccountPaisa);
+            }
+
+            if (!IsWalkInCustomer)
+            {
+                return FormatSignedRs(ActiveBreakdown.NewCustomerBalancePaisa);
+            }
+
+            return FormatRs(DisplayBalancePaisa);
+        }
+    }
+
+    private string BalanceSummaryToneClass =>
+        ShowAccountCredit || (!IsWalkInCustomer && ActiveBreakdown.NewCustomerBalancePaisa < 0)
+            ? "is-credit"
+            : ShowChangeToReturn
+                ? "is-change"
+                : string.Empty;
+
+    private string BalanceSummaryValueClass
+    {
+        get
+        {
+            if (ShowChangeToReturn)
+            {
+                return "sp-change-out";
+            }
+
+            if (ShowAccountCredit || (!IsWalkInCustomer && ActiveBreakdown.NewCustomerBalancePaisa < 0))
+            {
+                return "sp-account-credit";
+            }
+
+            if (!IsWalkInCustomer)
+            {
+                return "sp-new-balance";
+            }
+
+            return string.Empty;
+        }
+    }
+
+    private long DisplayBalancePaisa
+    {
+        get
+        {
+            PaymentBreakdown b = ActiveBreakdown;
+            if (b.IsWalkIn && b.ChangeReturnPaisa > 0)
+            {
+                return b.ChangeReturnPaisa;
+            }
+
+            if (b.OnAccountPaisa > 0)
+            {
+                return b.OnAccountPaisa;
+            }
+
+            if (!b.IsWalkIn)
+            {
+                return b.NewCustomerBalancePaisa;
+            }
+
+            return Math.Max(0L, b.CurrentSaleTotalPaisa - b.PaymentReceivedPaisa);
+        }
+    }
 
     private bool CanPay =>
         !CartService.IsEmpty && DiscountAmountPaisa <= CartService.SubtotalPaisa;
@@ -873,6 +1038,7 @@
 
         if (uri.Query.Contains("createpo=1", StringComparison.OrdinalIgnoreCase))
         {
+            _createPoSupplierId = TryParseGuidQuery(uri, "supplierId");
             OpenCreatePurchaseOrder();
         }
 
@@ -914,10 +1080,34 @@
         }
 
         PartyDto? customer = _customers.FirstOrDefault(c => c.Id == customerId);
-        if (customer is not null)
+        if (customer is null)
         {
-            BindCustomer(customer);
+            return;
         }
+
+        BindCustomer(customer);
+    }
+
+    private static Guid? TryParseGuidQuery(Uri uri, string key)
+    {
+        if (string.IsNullOrEmpty(uri.Query))
+        {
+            return null;
+        }
+
+        foreach (string part in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] kv = part.Split('=', 2);
+            if (kv.Length == 2
+                && string.Equals(Uri.UnescapeDataString(kv[0]), key, StringComparison.OrdinalIgnoreCase)
+                && Guid.TryParse(Uri.UnescapeDataString(kv[1]), out Guid id)
+                && id != Guid.Empty)
+            {
+                return id;
+            }
+        }
+
+        return null;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -1062,11 +1252,6 @@
     {
         if (!_isDisposed)
         {
-            if (_cfdPhase == "thankYou" && !CartService.IsEmpty)
-            {
-                _cfdPhase = "selling";
-            }
-
             _ = InvokeAsync(StateHasChanged);
         }
     }
@@ -1074,14 +1259,7 @@
     private Task PublishCfdSnapshotAsync(string? phaseOverride = null)
     {
         string phase = phaseOverride ?? _cfdPhase;
-        // Keep thank-you overlay until the next sell action clears _cfdPhase.
-        if (phase == "thankYou" && phaseOverride is null)
-        {
-            return Task.CompletedTask;
-        }
-
-        long duePaisa = PreviousDuePaisa + PayablePaisa;
-        long paidPaisa = PaymentReceivedPaisa;
+        PaymentBreakdown breakdown = ActiveBreakdown;
 
         IReadOnlyList<CustomerDisplayLine> items = CartService.Lines
             .Select(line => new CustomerDisplayLine(
@@ -1096,12 +1274,50 @@
             CustomerName: CustomerNameDisplay,
             InvoiceNo: string.IsNullOrWhiteSpace(_draftInvoiceNo) ? "—" : _draftInvoiceNo,
             Items: items,
-            NetAmount: duePaisa / 100m,
-            Payment: paidPaisa / 100m,
-            Phase: phase));
+            NetAmount: breakdown.AmountDuePaisa / 100m,
+            Payment: breakdown.PaymentReceivedPaisa / 100m,
+            Phase: phase,
+            IsWalkIn: breakdown.IsWalkIn,
+            CurrentSaleTotal: breakdown.CurrentSaleTotalPaisa / 100m,
+            PreviousDue: breakdown.PreviousDuePaisa / 100m,
+            PaymentReceived: breakdown.PaymentReceivedPaisa / 100m,
+            ChangeReturn: breakdown.ChangeReturnPaisa / 100m,
+            OnAccount: breakdown.OnAccountPaisa / 100m,
+            AccountCredit: breakdown.AccountCreditPaisa / 100m,
+            NewCustomerBalance: breakdown.NewCustomerBalancePaisa / 100m));
 
         return Task.CompletedTask;
     }
+
+    private Task OnPaymentLivePreviewAsync(PaymentModal.PaymentLivePreview preview)
+    {
+        if (_paymentLivePreview is { } current
+            && current.Mode == preview.Mode
+            && current.TenderPaisa == preview.TenderPaisa
+            && current.ApplyExcessAsCustomerCredit == preview.ApplyExcessAsCustomerCredit)
+        {
+            return Task.CompletedTask;
+        }
+
+        _paymentLivePreview = preview;
+        return PublishCfdSnapshotAsync();
+    }
+
+    private static PaymentBreakdownMode ToBreakdownMode(PaymentUiMode mode) =>
+        mode switch
+        {
+            PaymentUiMode.Online => PaymentBreakdownMode.Online,
+            PaymentUiMode.Credit => PaymentBreakdownMode.Credit,
+            _ => PaymentBreakdownMode.Cash
+        };
+
+    private static PaymentBreakdownMode ToBreakdownMode(PaymentModal.PaymentUiMode mode) =>
+        mode switch
+        {
+            PaymentModal.PaymentUiMode.Online => PaymentBreakdownMode.Online,
+            PaymentModal.PaymentUiMode.Credit => PaymentBreakdownMode.Credit,
+            _ => PaymentBreakdownMode.Cash
+        };
 
     private void OnShiftStatusChanged()
     {
@@ -2175,11 +2391,19 @@
 
     private void BindCustomer(PartyDto customer)
     {
+        if (!_useWalkInCustomer
+            && _selectedCustomer is not null
+            && _selectedCustomer.Id == customer.Id)
+        {
+            return;
+        }
+
         _selectedCustomer = customer;
         _useWalkInCustomer = false;
         _checkoutError = null;
         _whatsAppPhone = customer.PhoneNumber;
         _paymentMode = PaymentUiMode.Credit;
+        _cashGivenText = string.Empty;
     }
 
     private void ClearSelectedCustomer()
@@ -2212,7 +2436,9 @@
         }
 
         _paymentMode = PaymentUiMode.Credit;
+        _cashGivenText = string.Empty;
         _checkoutError = null;
+        _ = PublishCfdSnapshotAsync();
     }
 
     private void OpenCalculator() => _showCalculator = true;
@@ -2269,6 +2495,13 @@
         await FocusScanAsync();
     }
 
+    private async Task OnWalkInPickedAsync()
+    {
+        SelectWalkInCustomer();
+        _showCustomerSearch = false;
+        await FocusScanAsync();
+    }
+
     private async Task OnCustomerCreatedAsync(PartyDto customer)
     {
         await LoadCustomersAsync();
@@ -2305,7 +2538,11 @@
 
     private void OpenVariant(SaleMasterDto master) => _variantMaster = master;
 
-    private void CloseVariant() => _variantMaster = null;
+    private void CloseVariant()
+    {
+        _variantMaster = null;
+        _ = FocusScanAsync();
+    }
 
     private static readonly (string Name, string Icon)[] DefaultCategoryChips =
     [
@@ -2402,7 +2639,7 @@
         return Task.CompletedTask;
     }
 
-    private Task OnVariantSelected(SalesProductDto product)
+    private async Task OnVariantSelected(SalesProductDto product)
     {
         try
         {
@@ -2419,7 +2656,8 @@
             _variantMaster = null;
         }
 
-        return InvokeAsync(StateHasChanged);
+        await FocusScanAsync();
+        await InvokeAsync(StateHasChanged);
     }
 
     private Task OnSearchProductSelected(SalesProductDto product)
@@ -2541,9 +2779,7 @@
 
             if (CartService.IsEmpty)
             {
-                _scanText = string.Empty;
-                _showScanDropdown = false;
-                await RequestScanFocusAsync();
+                await QuickCompleteSaleAsync();
                 return;
             }
 
@@ -2552,12 +2788,249 @@
                 return;
             }
 
-            await OpenPaymentModalAsync();
+            await QuickCompleteSaleAsync();
         }
         finally
         {
             _saveInFlight = false;
         }
+    }
+
+    /// <summary>
+    /// F12 / Insert / Ctrl+Enter — complete without opening Payment Breakdown.
+    /// Empty cart + registered customer + tender → standalone ledger receipt (customer-payment).
+    /// </summary>
+    private async Task QuickCompleteSaleAsync()
+    {
+        _checkoutError = null;
+        _errorMessage = null;
+        _successMessage = null;
+
+        if (CartService.IsEmpty)
+        {
+            await CompleteStandaloneCustomerReceiptAsync();
+            return;
+        }
+
+        if (!_useWalkInCustomer && _selectedCustomer is null)
+        {
+            _checkoutError = "Select a registered customer or switch to Walk-in.";
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_discountRsText) && !TryParseRs(_discountRsText, out _))
+        {
+            _checkoutError = "Enter a valid discount amount.";
+            return;
+        }
+
+        if (DiscountAmountPaisa > CartService.SubtotalPaisa)
+        {
+            _checkoutError = "Discount cannot exceed the cart total.";
+            return;
+        }
+
+        PaymentBreakdown breakdown = ActiveBreakdown;
+
+        if (IsWalkInCustomer)
+        {
+            if (_paymentMode == PaymentUiMode.Credit)
+            {
+                _checkoutError = "Walk-In payment must cover total amount due.";
+                return;
+            }
+
+            if (breakdown.PaymentReceivedPaisa < PayablePaisa)
+            {
+                _checkoutError = "Walk-In payment must cover total amount due.";
+                return;
+            }
+        }
+
+        if (_paymentMode == PaymentUiMode.Online
+            && string.IsNullOrWhiteSpace(_onlineTxnRef))
+        {
+            _checkoutError = "Enter an online transaction reference, or open Payment Breakdown (Alt+Shift+B).";
+            return;
+        }
+
+        if (_paymentMode == PaymentUiMode.Online && _paymentAccounts.Count == 0)
+        {
+            await LoadPaymentAccountsAsync();
+        }
+
+        PaymentModal.PaymentCheckoutResult choice = BuildQuickCheckoutResult(breakdown);
+        await CompleteSaleFromModalAsync(choice);
+    }
+
+    private async Task CompleteStandaloneCustomerReceiptAsync()
+    {
+        if (IsWalkInCustomer || _selectedCustomer is null)
+        {
+            _checkoutError = "Select a registered customer to receive a balance payment.";
+            return;
+        }
+
+        if (_paymentMode == PaymentUiMode.Credit)
+        {
+            _checkoutError = "Switch to Cash or Online to receive a customer payment.";
+            return;
+        }
+
+        if (_isBusy)
+        {
+            return;
+        }
+
+        long paid = SidebarPaymentReceivedPaisa;
+        if (paid <= 0)
+        {
+            _checkoutError = "Enter Payment Received to post a customer receipt.";
+            return;
+        }
+
+        if (_paymentMode == PaymentUiMode.Online && string.IsNullOrWhiteSpace(_onlineTxnRef))
+        {
+            _checkoutError = "Enter an online transaction reference for the receipt.";
+            return;
+        }
+
+        string method = CheckoutPaymentMethods.Cash;
+        Guid? cashAccountId = null;
+        if (_paymentMode == PaymentUiMode.Online)
+        {
+            if (_paymentAccounts.Count == 0)
+            {
+                await LoadPaymentAccountsAsync();
+            }
+
+            PaymentAccountDto? preferred = _paymentAccounts.FirstOrDefault(a =>
+                    string.Equals(a.PaymentMethodKey, _onlineChannel, StringComparison.OrdinalIgnoreCase))
+                ?? (_paymentAccounts.Count > 0 ? _paymentAccounts[0] : null);
+            if (preferred is null)
+            {
+                _checkoutError = "No online payment account configured.";
+                return;
+            }
+
+            cashAccountId = preferred.Id;
+            method = string.IsNullOrWhiteSpace(preferred.PaymentMethodKey)
+                ? CheckoutPaymentMethods.BankTransfer
+                : preferred.PaymentMethodKey;
+        }
+
+        string reference = string.IsNullOrWhiteSpace(_onlineTxnRef)
+            ? $"CR-{DateTime.UtcNow:yyyyMMddHHmmss}"
+            : _onlineTxnRef.Trim();
+
+        _isBusy = true;
+        try
+        {
+            Result<RecordCustomerPaymentResult> result = await CustomerApi.RecordPaymentAsync(
+                _selectedCustomer.Id,
+                paid,
+                method,
+                reference,
+                shiftId: SessionService.ShiftId == Guid.Empty ? null : SessionService.ShiftId,
+                cashAccountId: cashAccountId);
+
+            if (!result.Success)
+            {
+                _checkoutError = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                    ? "Customer payment failed."
+                    : result.ErrorMessage;
+                return;
+            }
+
+            Result<PartyDto> refreshed = await CustomerApi.GetCustomerAsync(_selectedCustomer.Id);
+            if (refreshed.Success && refreshed.Data is not null)
+            {
+                _selectedCustomer = refreshed.Data;
+            }
+            else
+            {
+                _selectedCustomer = new PartyDto
+                {
+                    Id = _selectedCustomer.Id,
+                    Name = _selectedCustomer.Name,
+                    Role = _selectedCustomer.Role,
+                    PhoneNumber = _selectedCustomer.PhoneNumber,
+                    Email = _selectedCustomer.Email,
+                    Address = _selectedCustomer.Address,
+                    CreditLimitPaisa = _selectedCustomer.CreditLimitPaisa,
+                    CurrentBalancePaisa = _selectedCustomer.CurrentBalancePaisa - paid
+                };
+            }
+
+            _cashGivenText = string.Empty;
+            _onlineTxnRef = string.Empty;
+            _successMessage =
+                $"Receipt {reference} · Rs {paid / 100m:N2} received · Bal Rs {_selectedCustomer.CurrentBalancePaisa / 100m:N2}";
+            await PublishCfdSnapshotAsync("selling");
+            await RequestScanFocusAsync();
+        }
+        finally
+        {
+            _isBusy = false;
+        }
+    }
+
+    private PaymentModal.PaymentCheckoutResult BuildQuickCheckoutResult(PaymentBreakdown breakdown)
+    {
+        if (_paymentMode == PaymentUiMode.Credit)
+        {
+            return new PaymentModal.PaymentCheckoutResult
+            {
+                PaymentMethod = CheckoutPaymentMethods.CustomerAccount,
+                AmountPaidPaisa = 0,
+                CashAccountId = null,
+                ApplyExcessAsCustomerCredit = false,
+                OnlineTxnRef = null,
+                Mode = PaymentModal.PaymentUiMode.Credit,
+                ChangePaisa = 0
+            };
+        }
+
+        if (_paymentMode == PaymentUiMode.Online)
+        {
+            Guid? accountId = null;
+            string method = _onlineChannel;
+            if (_paymentAccounts.Count > 0)
+            {
+                PaymentAccountDto? preferred = _paymentAccounts.FirstOrDefault(a =>
+                    string.Equals(a.PaymentMethodKey, _onlineChannel, StringComparison.OrdinalIgnoreCase))
+                    ?? _paymentAccounts[0];
+                accountId = preferred.Id;
+                if (!string.IsNullOrWhiteSpace(preferred.PaymentMethodKey))
+                {
+                    method = preferred.PaymentMethodKey;
+                }
+            }
+
+            return new PaymentModal.PaymentCheckoutResult
+            {
+                PaymentMethod = string.IsNullOrWhiteSpace(method)
+                    ? CheckoutPaymentMethods.BankTransfer
+                    : method,
+                AmountPaidPaisa = breakdown.PaymentReceivedPaisa,
+                CashAccountId = accountId,
+                ApplyExcessAsCustomerCredit = breakdown.ApplyExcessAsCustomerCredit,
+                OnlineTxnRef = _onlineTxnRef.Trim(),
+                Mode = PaymentModal.PaymentUiMode.Online,
+                ChangePaisa = breakdown.ChangeReturnPaisa
+            };
+        }
+
+        return new PaymentModal.PaymentCheckoutResult
+        {
+            PaymentMethod = CheckoutPaymentMethods.Cash,
+            AmountPaidPaisa = breakdown.PaymentReceivedPaisa,
+            CashAccountId = null,
+            ApplyExcessAsCustomerCredit = breakdown.ApplyExcessAsCustomerCredit,
+            OnlineTxnRef = null,
+            Mode = PaymentModal.PaymentUiMode.Cash,
+            ChangePaisa = breakdown.ChangeReturnPaisa
+        };
     }
 
     private PaymentModal.PaymentUiMode ToModalPaymentMode() =>
@@ -2603,6 +3076,8 @@
     private void ClosePaymentModal()
     {
         _showPaymentModal = false;
+        _paymentLivePreview = null;
+        _ = PublishCfdSnapshotAsync();
         _ = RequestScanFocusAsync();
     }
 
@@ -2680,28 +3155,6 @@
             CompleteSaleResult sale = result.Data!;
             string paymentLabel = CheckoutPaymentMethods.DisplayLabel(choice.PaymentMethod);
 
-            long thankYouDue = PreviousDuePaisa + PayablePaisa;
-            long thankYouPaid = choice.Mode == PaymentModal.PaymentUiMode.Credit
-                ? 0
-                : choice.AmountPaidPaisa;
-            string thankYouCustomer = CustomerNameDisplay;
-            string thankYouInvoice = string.IsNullOrWhiteSpace(_draftInvoiceNo) ? "—" : _draftInvoiceNo;
-            _cfdPhase = "thankYou";
-            CustomerDisplayState.Publish(new CustomerDisplaySnapshot(
-                CustomerName: thankYouCustomer,
-                InvoiceNo: thankYouInvoice,
-                Items: saleLines
-                    .Select(line => new CustomerDisplayLine(
-                        Description: string.IsNullOrWhiteSpace(line.DescriptionOverride)
-                            ? (line.Product.Name ?? string.Empty)
-                            : line.DescriptionOverride!,
-                        Quantity: line.Quantity,
-                        LineTotal: line.LineTotalPaisa / 100m))
-                    .ToList(),
-                NetAmount: thankYouDue / 100m,
-                Payment: thankYouPaid / 100m,
-                Phase: "thankYou"));
-
             if (_selectedCustomer is not null && sale.CustomerBalancePaisa is long bal)
             {
                 _selectedCustomer = new PartyDto
@@ -2727,6 +3180,7 @@
             });
 
             _showPaymentModal = false;
+            _paymentLivePreview = null;
             _qtyText.Clear();
             _priceText.Clear();
             _totalText.Clear();
@@ -2744,7 +3198,9 @@
             _lastScannedLineId = null;
             _whatsAppReceipt = false;
             _printOnPrinter = false;
+            _cfdPhase = "selling";
             AssignDraftInvoiceNo();
+            await PublishCfdSnapshotAsync("selling");
             try { await Js.InvokeVoidAsync("webPosResetTableScroll"); }
             catch { /* ignore */ }
 
@@ -2815,6 +3271,17 @@
         catch { /* ignore */ }
     }
 
+    private void OnPaymentInput(ChangeEventArgs e)
+    {
+        _cashGivenText = e.Value?.ToString() ?? string.Empty;
+        if (TryParseRs(_cashGivenText, out long given) && given > 0)
+        {
+            _paymentMode = PaymentUiMode.Cash;
+        }
+
+        _ = PublishCfdSnapshotAsync();
+    }
+
     private void OnPaymentBlur()
     {
         if (string.IsNullOrWhiteSpace(_cashGivenText) || !TryParseRs(_cashGivenText, out long paisa))
@@ -2823,6 +3290,12 @@
         }
 
         _cashGivenText = FormatRs(paisa);
+        if (paisa > 0)
+        {
+            _paymentMode = PaymentUiMode.Cash;
+        }
+
+        _ = PublishCfdSnapshotAsync();
     }
 
     private async Task WhatsAppReceiptAsync()
@@ -2988,6 +3461,16 @@
                 ClosePurchaseOrders();
                 return;
             }
+        }
+
+        if (e.AltKey && e.ShiftKey && (e.Key == "b" || e.Key == "B"))
+        {
+            if (!_isBusy && !_showPaymentModal && !CartService.IsEmpty)
+            {
+                await OpenPaymentModalAsync();
+            }
+
+            return;
         }
 
         if (e.AltKey && e.ShiftKey && (e.Key == "p" || e.Key == "P"))
@@ -3165,6 +3648,16 @@
         _showCreatePurchaseOrder = true;
     }
 
+    private void CloseCreatePurchaseOrder()
+    {
+        _showCreatePurchaseOrder = false;
+        _createPurchaseOrderMinimized = false;
+        _editingPurchaseOrderId = null;
+        _createPoSupplierId = null;
+        _cpoMiniInvoice = string.Empty;
+        _cpoMiniLineCount = 0;
+    }
+
     private void OpenEditPurchaseOrder(Guid purchaseOrderId)
     {
         _errorMessage = null;
@@ -3177,15 +3670,6 @@
 
     private void OpenReceivePurchaseOrder(Guid purchaseOrderId) =>
         OpenEditPurchaseOrder(purchaseOrderId);
-
-    private void CloseCreatePurchaseOrder()
-    {
-        _showCreatePurchaseOrder = false;
-        _createPurchaseOrderMinimized = false;
-        _editingPurchaseOrderId = null;
-        _cpoMiniInvoice = string.Empty;
-        _cpoMiniLineCount = 0;
-    }
 
     private void MinimizeCreatePurchaseOrder()
     {
@@ -3260,8 +3744,23 @@
     private static bool TryParseRs(string text, out long paisa)
     {
         paisa = 0;
-        if (!decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal rupees)
-            && !decimal.TryParse(text, NumberStyles.Number, CultureInfo.CurrentCulture, out rupees))
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        string cleaned = text.Trim();
+        if (cleaned.StartsWith("Rs", StringComparison.OrdinalIgnoreCase))
+        {
+            cleaned = cleaned[2..].Trim();
+        }
+
+        cleaned = cleaned
+            .Replace(" ", string.Empty, StringComparison.Ordinal)
+            .Replace(",", string.Empty, StringComparison.Ordinal);
+
+        if (!decimal.TryParse(cleaned, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal rupees)
+            && !decimal.TryParse(cleaned, NumberStyles.Number, CultureInfo.CurrentCulture, out rupees))
         {
             return false;
         }
@@ -3461,6 +3960,11 @@
     }
 
     private static string FormatRs(long paisa) => (paisa / 100m).ToString("N2");
+
+    private static string FormatSignedRs(long paisa) => (paisa / 100m).ToString("N2");
+
+    private static string FormatChangeOut(long changePaisa) =>
+        (-(changePaisa / 100m)).ToString("N2");
 
     private static string FormatQty(decimal quantity) =>
         quantity == decimal.Truncate(quantity)

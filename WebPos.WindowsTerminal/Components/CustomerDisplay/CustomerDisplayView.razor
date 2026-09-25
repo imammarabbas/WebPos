@@ -1,7 +1,9 @@
 @inject CustomerDisplayState DisplayState
 @implements IDisposable
 
-<div class="cfd-shell @(Snapshot.Phase == "thankYou" ? "is-thank" : null)">
+<CustomerDisplayChromeBridge />
+
+<div class="cfd-shell">
     <header class="cfd-header">
         <h1>Smart POS</h1>
         <div class="cfd-meta">@CustomerHeader</div>
@@ -24,14 +26,48 @@
         }
     </main>
 
-    <footer class="cfd-tot">
-        Total @FormatMoney(Snapshot.NetAmount)
+    <footer class="cfd-ledger" aria-live="polite">
+        @if (Snapshot.IsWalkIn)
+        {
+            <div class="cfd-tot">Total: Rs @FormatMoney(Snapshot.CurrentSaleTotal)</div>
+            <div class="cfd-status">
+                Paid: Rs @FormatMoney(Snapshot.PaymentReceived)
+                <span class="cfd-sep">·</span>
+                @if (Snapshot.ChangeReturn > 0m)
+                {
+                    <span class="cfd-change-out">CHANGE TO RETURN: @FormatChangeOut(Snapshot.ChangeReturn)</span>
+                }
+                else
+                {
+                    <span>Return: Rs @FormatMoney(0m)</span>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="cfd-due-row">
+                <span>Current Sale: Rs @FormatMoney(Snapshot.CurrentSaleTotal)</span>
+                <span class="cfd-sep">|</span>
+                <span>Previous Due: Rs @FormatMoney(Snapshot.PreviousDue)</span>
+            </div>
+            <div class="cfd-status">
+                Paid: Rs @FormatMoney(Snapshot.PaymentReceived)
+                @if (Snapshot.AccountCredit > 0m)
+                {
+                    <span class="cfd-sep">·</span>
+                    <span class="cfd-account-credit">Added to Account: Rs @FormatMoney(Snapshot.AccountCredit)</span>
+                }
+                else if (Snapshot.OnAccount > 0m)
+                {
+                    <span class="cfd-sep">·</span>
+                    <span>Added to Account: Rs @FormatMoney(Snapshot.OnAccount)</span>
+                }
+            </div>
+            <div class="cfd-balance @(Snapshot.NewCustomerBalance < 0m || Snapshot.AccountCredit > 0m ? "is-credit" : null)">
+                New Total Balance: Rs @FormatMoney(Snapshot.NewCustomerBalance)
+            </div>
+        }
     </footer>
-
-    <div class="cfd-thank" aria-hidden="@(Snapshot.Phase != "thankYou")">
-        <h2>Thank You!</h2>
-        <p>Have a wonderful day ahead.</p>
-    </div>
 </div>
 
 @code {
@@ -62,6 +98,9 @@
 
     private static string FormatMoney(decimal amount) =>
         amount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static string FormatChangeOut(decimal change) =>
+        (-change).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
 
     public void Dispose()
     {

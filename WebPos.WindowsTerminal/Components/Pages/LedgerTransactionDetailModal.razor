@@ -1,0 +1,279 @@
+@using System.Globalization
+@using Common.Models
+@using Microsoft.AspNetCore.Components.Web
+@using WebPos.WindowsTerminal.Services
+@inject InvoiceApiClient InvoiceApi
+@inject PurchaseIntakeApiClient PurchaseIntake
+@inject IJSRuntime Js
+
+@if (Visible && Entry is not null)
+{
+    <div class="modal-backdrop po-modal-backdrop ltd-backdrop" @onclick="Close" @onkeydown="OnKeyDown">
+        <div class="po-card ltd-modal" role="dialog" aria-modal="true" tabindex="0" @ref="_dialogRef"
+             @onclick:stopPropagation="true">
+            <div class="ltd-head">
+                <h2>Transaction detail</h2>
+                <button type="button" class="po-btn po-btn-sm" @onclick="Close">Close · Esc</button>
+            </div>
+
+            @if (_loading)
+            {
+                <p class="po-empty">Loading…</p>
+            }
+            else if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <div class="po-alert">@_error</div>
+            }
+            else if (_invoice is not null)
+            {
+                <div class="pov-info-grid">
+                    <div class="pov-info-item"><label>Invoice #</label><div class="pov-value">@_invoice.InvoiceNo</div></div>
+                    <div class="pov-info-item"><label>Date</label><div class="pov-value">@_invoice.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</div></div>
+                    <div class="pov-info-item"><label>Cashier</label><div class="pov-value">@_invoice.CashierId.ToString("N")[..8]</div></div>
+                    <div class="pov-info-item"><label>Payment</label><div class="pov-value">@_invoice.PaymentMethod</div></div>
+                    <div class="pov-info-item"><label>Customer</label><div class="pov-value">@(string.IsNullOrWhiteSpace(_invoice.CustomerName) ? "Walk-in" : _invoice.CustomerName)</div></div>
+                </div>
+                <div class="po-table-wrap" style="margin-top:0.75rem;">
+                    <table class="po-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Product</th>
+                                <th class="po-num">Qty</th>
+                                <th class="po-num">Price</th>
+                                <th class="po-num">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @{ int i = 0; }
+                            @foreach (SalesInvoiceLineDto line in _invoice.Lines)
+                            {
+                                i++;
+                                long amount = (long)Math.Round(line.QuantitySold * line.UnitPricePaisa, MidpointRounding.AwayFromZero);
+                                <tr>
+                                    <td>@i</td>
+                                    <td>@line.ProductName</td>
+                                    <td class="po-num">@line.QuantitySold.ToString("0.##", CultureInfo.InvariantCulture)</td>
+                                    <td class="po-num">@FormatRs(line.UnitPricePaisa)</td>
+                                    <td class="po-num">@FormatRs(amount)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pov-totals" style="margin-top:0.75rem;">
+                    <div class="pov-totals-row"><span>Sub Total</span><span>Rs @FormatRs(_invoice.GrossAmountPaisa)</span></div>
+                    <div class="pov-totals-row"><span>Discount</span><span>Rs @FormatRs(_invoice.DiscountAmountPaisa)</span></div>
+                    <div class="pov-totals-row grand"><span>Grand Total</span><span>Rs @FormatRs(_invoice.TotalAmountPaisa)</span></div>
+                </div>
+            }
+            else if (_purchase is not null)
+            {
+                <div class="pov-info-grid">
+                    <div class="pov-info-item"><label>PO #</label><div class="pov-value">@_purchase.SupplierInvoiceNo</div></div>
+                    <div class="pov-info-item"><label>Date</label><div class="pov-value">@_purchase.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</div></div>
+                    <div class="pov-info-item"><label>Supplier</label><div class="pov-value">@(_purchase.SupplierName ?? "—")</div></div>
+                    <div class="pov-info-item"><label>Payment status</label><div class="pov-value">@_purchase.PaymentStatus</div></div>
+                </div>
+                <div class="po-table-wrap" style="margin-top:0.75rem;">
+                    <table class="po-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Product</th>
+                                <th class="po-num">Qty</th>
+                                <th class="po-num">Purchase</th>
+                                <th class="po-num">Line</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @{ int j = 0; }
+                            @foreach (PurchaseOrderLineDto line in _purchase.Lines)
+                            {
+                                j++;
+                                long lineAmt = (long)Math.Round(line.Quantity * line.PurchasePricePaisa, MidpointRounding.AwayFromZero);
+                                <tr>
+                                    <td>@j</td>
+                                    <td>@(line.ProductName ?? line.ProductId.ToString("N")[..8])</td>
+                                    <td class="po-num">@line.Quantity.ToString("0.##", CultureInfo.InvariantCulture)</td>
+                                    <td class="po-num">@FormatRs(line.PurchasePricePaisa)</td>
+                                    <td class="po-num">@FormatRs(lineAmt)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pov-totals" style="margin-top:0.75rem;">
+                    <div class="pov-totals-row"><span>Sub Total</span><span>Rs @FormatRs(_purchase.SubTotalPaisa)</span></div>
+                    <div class="pov-totals-row"><span>Discount</span><span>Rs @FormatRs(_purchase.DiscountPaisa)</span></div>
+                    <div class="pov-totals-row grand"><span>Net Payable</span><span>Rs @FormatRs(_purchase.NetPayablePaisa)</span></div>
+                </div>
+            }
+            else if (Entry is { } pay && IsPayment(pay))
+            {
+                <div class="pov-info-grid">
+                    <div class="pov-info-item"><label>Voucher / Ref</label><div class="pov-value">@(string.IsNullOrWhiteSpace(pay.ReferenceDetails) ? "—" : pay.ReferenceDetails)</div></div>
+                    <div class="pov-info-item"><label>Date</label><div class="pov-value">@pay.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</div></div>
+                    <div class="pov-info-item"><label>Method</label><div class="pov-value">@(string.IsNullOrWhiteSpace(pay.PaymentMethod) ? "—" : pay.PaymentMethod)</div></div>
+                    <div class="pov-info-item"><label>Amount</label><div class="pov-value">Rs @FormatRs(pay.TransactionAmountPaisa)</div></div>
+                    <div class="pov-info-item"><label>Old balance</label><div class="pov-value">Rs @FormatRs(pay.OldBalancePaisa)</div></div>
+                    <div class="pov-info-item"><label>New balance</label><div class="pov-value">Rs @FormatRs(pay.NewBalancePaisa)</div></div>
+                </div>
+            }
+            else if (Entry is not null)
+            {
+                <div class="pov-info-grid">
+                    <div class="pov-info-item"><label>Type</label><div class="pov-value">@Entry.Type</div></div>
+                    <div class="pov-info-item"><label>Reference</label><div class="pov-value">@(Entry.ReferenceType)</div></div>
+                    <div class="pov-info-item"><label>Date</label><div class="pov-value">@Entry.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</div></div>
+                    <div class="pov-info-item"><label>Details</label><div class="pov-value">@(string.IsNullOrWhiteSpace(Entry.ReferenceDetails) ? "—" : Entry.ReferenceDetails)</div></div>
+                    <div class="pov-info-item"><label>Debit</label><div class="pov-value">Rs @FormatRs(Entry.DebitPaisa)</div></div>
+                    <div class="pov-info-item"><label>Credit</label><div class="pov-value">Rs @FormatRs(Entry.CreditPaisa)</div></div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+<style>
+    .ltd-backdrop { z-index: 1200; }
+    .ltd-modal {
+        width: min(720px, 94vw);
+        max-height: 88vh;
+        overflow: auto;
+        margin: 6vh auto;
+    }
+    .ltd-head {
+        display: flex; justify-content: space-between; align-items: center;
+        gap: 1rem; margin-bottom: 0.75rem;
+    }
+    .ltd-head h2 { margin: 0; }
+</style>
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public PartyLedgerEntryDto? Entry { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private ElementReference _dialogRef;
+    private bool _loading;
+    private string? _error;
+    private SalesInvoiceDetailDto? _invoice;
+    private PurchaseOrderDetailDto? _purchase;
+    private Guid? _loadedEntryId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!Visible || Entry is null)
+        {
+            ResetPayload();
+            return;
+        }
+
+        if (_loadedEntryId == Entry.Id)
+        {
+            return;
+        }
+
+        await LoadAsync(Entry);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Visible)
+        {
+            try { await _dialogRef.FocusAsync(); } catch { /* ignore */ }
+        }
+    }
+
+    private async Task LoadAsync(PartyLedgerEntryDto entry)
+    {
+        _loadedEntryId = entry.Id;
+        _loading = true;
+        _error = null;
+        _invoice = null;
+        _purchase = null;
+        await InvokeAsync(StateHasChanged);
+
+        string type = (entry.Type ?? string.Empty).ToUpperInvariant();
+        try
+        {
+            if (type is "SALE" or "CUSTOMER_RETURN")
+            {
+                if (string.IsNullOrWhiteSpace(entry.InvoiceNo))
+                {
+                    _error = "Invoice number missing for this ledger entry.";
+                }
+                else
+                {
+                    Result<SalesInvoiceDetailDto> result = await InvoiceApi.GetAsync(entry.InvoiceNo);
+                    if (!result.Success || result.Data is null)
+                    {
+                        _error = result.ErrorMessage ?? "Invoice not found (may have been deleted).";
+                    }
+                    else
+                    {
+                        _invoice = result.Data;
+                    }
+                }
+            }
+            else if (type is "PURCHASE" or "SUPPLIER_RETURN")
+            {
+                if (entry.PurchaseOrderId is not Guid poId || poId == Guid.Empty)
+                {
+                    _error = "Purchase order id missing for this ledger entry.";
+                }
+                else
+                {
+                    Result<PurchaseOrderDetailDto> result = await PurchaseIntake.GetPurchaseAsync(poId);
+                    if (!result.Success || result.Data is null)
+                    {
+                        _error = result.ErrorMessage ?? "Purchase order not found (may have been deleted).";
+                    }
+                    else
+                    {
+                        _purchase = result.Data;
+                    }
+                }
+            }
+            // PAYMENT / OPENING / ADJUSTMENT: render from entry fields only.
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void ResetPayload()
+    {
+        _loadedEntryId = null;
+        _invoice = null;
+        _purchase = null;
+        _error = null;
+        _loading = false;
+    }
+
+    private async Task Close()
+    {
+        ResetPayload();
+        await OnClose.InvokeAsync();
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            await Close();
+        }
+    }
+
+    private static bool IsPayment(PartyLedgerEntryDto e) =>
+        string.Equals(e.Type, "PAYMENT", StringComparison.OrdinalIgnoreCase);
+
+    private static string FormatRs(long paisa) =>
+        (paisa / 100m).ToString("N2", CultureInfo.InvariantCulture);
+}

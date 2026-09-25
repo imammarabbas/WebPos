@@ -420,6 +420,30 @@ public sealed class ApiClient : IApiClient
             cancellationToken);
     }
 
+    public Task<RecordCustomerPaymentResult> RecordCustomerPaymentAsync(
+        RecordCustomerPaymentRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync<RecordCustomerPaymentResult>(
+            HttpMethod.Post,
+            "api/procurement/customer-payment",
+            request,
+            cancellationToken);
+    }
+
+    public Task<RecordSupplierPaymentResult> RecordSupplierPaymentAsync(
+        RecordSupplierPaymentRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return SendAsync<RecordSupplierPaymentResult>(
+            HttpMethod.Post,
+            "api/procurement/supplier-payment",
+            request,
+            cancellationToken);
+    }
+
     public Task<IReadOnlyList<SalesInvoiceSummaryDto>> GetInvoicesAsync(
         Guid? shiftId = null,
         int limit = 50,

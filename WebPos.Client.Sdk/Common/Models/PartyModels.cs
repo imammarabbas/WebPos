@@ -10,6 +10,8 @@ public sealed class PartyDto
 
     public required string PhoneNumber { get; init; }
 
+    public string? Email { get; init; }
+
     public string Address { get; init; } = string.Empty;
 
     public long CreditLimitPaisa { get; init; }
@@ -25,6 +27,8 @@ public sealed class CreatePartyRequest
 
     public required string PhoneNumber { get; init; }
 
+    public string? Email { get; init; }
+
     public string Address { get; init; } = string.Empty;
 
     public long CreditLimitPaisa { get; init; }
@@ -35,6 +39,8 @@ public sealed class UpdatePartyRequest
     public required string Name { get; init; }
 
     public required string PhoneNumber { get; init; }
+
+    public string? Email { get; init; }
 
     public string Address { get; init; } = string.Empty;
 
@@ -70,4 +76,60 @@ public sealed class PartyLedgerEntryDto
     public string ReferenceDetails { get; init; } = string.Empty;
 
     public DateTimeOffset CreatedAt { get; init; }
+}
+
+public sealed class RecordCustomerPaymentRequest
+{
+    public required Guid CustomerId { get; init; }
+
+    public long AmountPaisa { get; init; }
+
+    public required string PaymentMethod { get; init; }
+
+    public required string ReferenceNo { get; init; }
+
+    public Guid? ShiftId { get; init; }
+
+    public Guid? CashAccountId { get; init; }
+
+    public string? AccountCode { get; init; }
+}
+
+public sealed class RecordCustomerPaymentResult
+{
+    public Guid CustomerId { get; init; }
+
+    public long AmountPaisa { get; init; }
+
+    public Guid TransactionGroupId { get; init; }
+
+    public Guid PartyLedgerId { get; init; }
+}
+
+public sealed class RecordSupplierPaymentRequest
+{
+    public required Guid SupplierId { get; init; }
+
+    public long AmountPaisa { get; init; }
+
+    public required string PaymentMethod { get; init; }
+
+    public required string ReferenceNo { get; init; }
+
+    public Guid? ShiftId { get; init; }
+
+    public Guid? CashAccountId { get; init; }
+
+    public string? AccountCode { get; init; }
+}
+
+public sealed class RecordSupplierPaymentResult
+{
+    public Guid SupplierId { get; init; }
+
+    public long AmountPaisa { get; init; }
+
+    public Guid TransactionGroupId { get; init; }
+
+    public Guid PartyLedgerId { get; init; }
 }

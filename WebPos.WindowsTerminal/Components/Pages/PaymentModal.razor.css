@@ -62,15 +62,18 @@
 }
 
 .payment-mode-tab {
-    height: clamp(36px, 5.5vh, 42px);
+    height: clamp(36px, 5.5vh, 44px);
     border-radius: 9px;
     border: 1px solid var(--sp-border, #dfe5ee);
     background: #f8fafc;
     font-weight: 700;
-    font-size: 0.78rem;
-    letter-spacing: 0.04em;
+    font-size: clamp(0.62rem, 1.1vw, 0.72rem);
+    letter-spacing: 0.02em;
     color: var(--sp-muted, #64748b);
     cursor: pointer;
+    padding: 0 4px;
+    line-height: 1.15;
+    white-space: normal;
 }
 
 .payment-mode-tab.is-active {
@@ -79,9 +82,14 @@
     color: #fff;
 }
 
-.payment-mode-tab:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
+.payment-change-out {
+    color: #dc2626 !important;
+    font-weight: 800;
+}
+
+.payment-account-credit {
+    color: #15803d !important;
+    font-weight: 800;
 }
 
 .payment-summary-grid {
@@ -148,8 +156,7 @@
     border-color: var(--sp-primary, #3157d5);
 }
 
-.payment-online-fields,
-.payment-overpay-choice {
+.payment-online-fields {
     margin-bottom: 10px;
 }
 
@@ -184,29 +191,6 @@
     gap: 0.5rem;
     color: var(--sp-muted, #64748b);
     font-size: 0.86rem;
-}
-
-.overpay-toggle {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px;
-}
-
-.overpay-btn {
-    height: 38px;
-    border-radius: 9px;
-    border: 1px solid var(--sp-border, #dfe5ee);
-    background: #f8fafc;
-    font-size: 0.72rem;
-    font-weight: 700;
-    color: var(--sp-text-soft, #334155);
-    cursor: pointer;
-}
-
-.overpay-btn.is-active {
-    background: #e8f7f1;
-    border-color: #9ad4be;
-    color: #12966b;
 }
 
 .payment-modal-alert {

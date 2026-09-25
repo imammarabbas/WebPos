@@ -2,6 +2,8 @@
 @inject NavigationManager Navigation
 @implements IDisposable
 
+<WindowChromeBridge />
+
 <div class="page terminal-layout @(IsFullscreen ? "sales-fullscreen" : null)">
     @if (!IsFullscreen)
     {

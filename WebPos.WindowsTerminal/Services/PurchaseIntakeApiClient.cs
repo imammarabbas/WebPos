@@ -32,6 +32,7 @@ public sealed class PurchaseIntakeApiClient(IApiClient apiClient, ILogger<Purcha
         string name,
         string phoneNumber,
         string? address = null,
+        string? email = null,
         CancellationToken cancellationToken = default)
     {
         try
@@ -42,6 +43,7 @@ public sealed class PurchaseIntakeApiClient(IApiClient apiClient, ILogger<Purcha
                     Role = "SUPPLIER",
                     Name = name.Trim(),
                     PhoneNumber = phoneNumber.Trim(),
+                    Email = string.IsNullOrWhiteSpace(email) ? null : email.Trim(),
                     Address = address?.Trim() ?? string.Empty,
                     CreditLimitPaisa = 0
                 },
@@ -65,6 +67,7 @@ public sealed class PurchaseIntakeApiClient(IApiClient apiClient, ILogger<Purcha
         string phoneNumber,
         string? address = null,
         long? creditLimitPaisa = null,
+        string? email = null,
         CancellationToken cancellationToken = default)
     {
         try
@@ -75,6 +78,7 @@ public sealed class PurchaseIntakeApiClient(IApiClient apiClient, ILogger<Purcha
                 {
                     Name = name.Trim(),
                     PhoneNumber = phoneNumber.Trim(),
+                    Email = string.IsNullOrWhiteSpace(email) ? null : email.Trim(),
                     Address = address?.Trim() ?? string.Empty,
                     CreditLimitPaisa = creditLimitPaisa ?? 0
                 },
@@ -90,6 +94,65 @@ public sealed class PurchaseIntakeApiClient(IApiClient apiClient, ILogger<Purcha
                 ex.StatusCode,
                 ex.Message);
             return Result<PartyDto>.Fail(ex.Message);
+        }
+    }
+
+    public async Task<Result<RecordSupplierPaymentResult>> RecordPaymentAsync(
+        Guid supplierId,
+        long amountPaisa,
+        string paymentMethod,
+        string referenceNo,
+        Guid? shiftId = null,
+        Guid? cashAccountId = null,
+        string? accountCode = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            RecordSupplierPaymentResult result = await _apiClient.RecordSupplierPaymentAsync(
+                new RecordSupplierPaymentRequest
+                {
+                    SupplierId = supplierId,
+                    AmountPaisa = amountPaisa,
+                    PaymentMethod = paymentMethod,
+                    ReferenceNo = referenceNo,
+                    ShiftId = shiftId,
+                    CashAccountId = cashAccountId,
+                    AccountCode = accountCode
+                },
+                cancellationToken).ConfigureAwait(false);
+            return Result<RecordSupplierPaymentResult>.Ok(result);
+        }
+        catch (WebPosClientException ex)
+        {
+            _logger.LogError(
+                ex,
+                "Failed supplier payment for {SupplierId} ({StatusCode}): {Message}",
+                supplierId,
+                ex.StatusCode,
+                ex.Message);
+            return Result<RecordSupplierPaymentResult>.Fail(ex.Message);
+        }
+    }
+
+    public async Task<Result<IReadOnlyList<PartyLedgerEntryDto>>> GetLedgerAsync(
+        Guid supplierId,
+        DateTimeOffset? from = null,
+        DateTimeOffset? to = null,
+        int limit = 500,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            IReadOnlyList<PartyLedgerEntryDto> entries = await _apiClient
+                .GetPartyLedgerAsync(supplierId, from, to, limit, cancellationToken)
+                .ConfigureAwait(false);
+            return Result<IReadOnlyList<PartyLedgerEntryDto>>.Ok(entries);
+        }
+        catch (WebPosClientException ex)
+        {
+            _logger.LogError(ex, "Failed to load supplier ledger {SupplierId}.", supplierId);
+            return Result<IReadOnlyList<PartyLedgerEntryDto>>.Fail(ex.Message);
         }
     }
 

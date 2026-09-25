@@ -1,36 +1,51 @@
 @inherits LayoutComponentBase
-@using WebPos.Core.Abstractions
-@inject IStoreBrandingService BrandingService
+@using Microsoft.AspNetCore.Components.Authorization
 
 <link rel="stylesheet" href="master.css" />
 
-<div class="mm-shell">
-    <CircuitTenantInitializer />
+@if (_authUi == AuthUi.Authenticated)
+{
+    <div class="mm-shell">
+        <CircuitTenantInitializer />
 
-    <MasterTopBar />
+        <MasterTopBar />
 
-    <div class="mm-body">
-        <MasterNav />
-        <main class="mm-main">
-            @Body
-        </main>
+        <div class="mm-body">
+            <MasterNav />
+            <main class="mm-main">
+                @Body
+            </main>
+        </div>
     </div>
-
-    <footer class="mm-footer">© @_storeName @DateTime.UtcNow.Year</footer>
-</div>
+}
+else if (_authUi == AuthUi.Anonymous)
+{
+    @Body
+}
 
 @code {
-    private string _storeName = "Cone Mart";
+    private enum AuthUi
+    {
+        Pending,
+        Authenticated,
+        Anonymous
+    }
+
+    private AuthUi _authUi = AuthUi.Pending;
+
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthenticationState { get; set; }
 
     protected override async Task OnInitializedAsync()
     {
-        try
+        if (AuthenticationState is null)
         {
-            _storeName = (await BrandingService.GetAsync()).StoreName;
+            _authUi = AuthUi.Anonymous;
+            return;
         }
-        catch
-        {
-            _storeName = "Cone Mart";
-        }
+
+        AuthenticationState state = await AuthenticationState;
+        bool authenticated = state.User.Identity?.IsAuthenticated == true;
+        _authUi = authenticated ? AuthUi.Authenticated : AuthUi.Anonymous;
     }
 }

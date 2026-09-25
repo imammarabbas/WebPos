@@ -254,6 +254,10 @@ h1:focus {
     background: #eff6ff;
 }
 
+.sf-search-list li.sf-walkin-option strong {
+    color: #1d4ed8;
+}
+
 .sf-search-list strong {
     color: #111827;
 }

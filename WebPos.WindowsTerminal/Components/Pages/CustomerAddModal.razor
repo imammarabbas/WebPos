@@ -35,6 +35,15 @@
                    @bind:event="oninput"
                    disabled="@_busy"
                    autocomplete="off" />
+            <label class="field-label" for="newCustEmail">Email (optional)</label>
+            <input id="newCustEmail"
+                   class="scan-input"
+                   type="email"
+                   @bind="_email"
+                   @bind:event="oninput"
+                   @onkeydown="OnKeyDown"
+                   disabled="@_busy"
+                   autocomplete="off" />
             @if (!string.IsNullOrWhiteSpace(_error))
             {
                 <p class="field-error" role="alert">@_error</p>
@@ -56,6 +65,7 @@
     private string _name = string.Empty;
     private string _phone = string.Empty;
     private string _address = string.Empty;
+    private string _email = string.Empty;
     private string? _error;
     private bool _busy;
     private bool _wasVisible;
@@ -67,6 +77,7 @@
             _name = string.Empty;
             _phone = string.Empty;
             _address = string.Empty;
+            _email = string.Empty;
             _error = null;
         }
 
@@ -114,7 +125,7 @@
         _busy = true;
         try
         {
-            Result<PartyDto> result = await CustomerApi.CreateCustomerAsync(_name, _phone, _address);
+            Result<PartyDto> result = await CustomerApi.CreateCustomerAsync(_name, _phone, _address, _email);
             if (!result.Success || result.Data is null)
             {
                 _error = string.IsNullOrWhiteSpace(result.ErrorMessage)
