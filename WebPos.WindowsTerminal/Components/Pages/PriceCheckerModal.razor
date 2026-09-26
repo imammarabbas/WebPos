@@ -1,5 +1,7 @@
 @using Common.Models
 @using System.Globalization
+@inject IBarcodeScannerService BarcodeScanner
+@implements IDisposable
 
 @if (Visible)
 {
@@ -73,10 +75,15 @@
     {
         if (Visible && !_wasVisible)
         {
+            BarcodeScanner.OnBarcodeScanned += OnGlobalBarcodeScannedAsync;
             _query = string.Empty;
             _foundProduct = null;
             _foundMaster = null;
             _lookedUp = false;
+        }
+        else if (!Visible && _wasVisible)
+        {
+            BarcodeScanner.OnBarcodeScanned -= OnGlobalBarcodeScannedAsync;
         }
 
         _wasVisible = Visible;
@@ -102,6 +109,22 @@
         {
             Lookup();
         }
+    }
+
+    private Task OnGlobalBarcodeScannedAsync(string code)
+    {
+        if (!Visible)
+        {
+            return Task.CompletedTask;
+        }
+
+        return InvokeAsync(() =>
+        {
+            _query = code;
+            Lookup();
+            StateHasChanged();
+            return Task.CompletedTask;
+        });
     }
 
     private void Lookup()
@@ -146,4 +169,6 @@
 
     private static string FormatRs(long paisa) =>
         (paisa / 100m).ToString("N2", CultureInfo.InvariantCulture);
+
+    public void Dispose() => BarcodeScanner.OnBarcodeScanned -= OnGlobalBarcodeScannedAsync;
 }

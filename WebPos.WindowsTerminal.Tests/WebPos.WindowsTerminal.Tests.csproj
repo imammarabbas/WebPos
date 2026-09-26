@@ -28,6 +28,8 @@
     <Compile Include="..\WebPos.WindowsTerminal\Services\CartLine.cs" Link="CartLine.cs" />
     <Compile Include="..\WebPos.WindowsTerminal\Services\VariantFilter.cs" Link="VariantFilter.cs" />
     <Compile Include="..\WebPos.WindowsTerminal\Services\PaymentBreakdownCalculator.cs" Link="PaymentBreakdownCalculator.cs" />
+    <Compile Include="..\WebPos.WindowsTerminal\Services\WalkInSettlement.cs" Link="WalkInSettlement.cs" />
+    <Compile Include="..\WebPos.WindowsTerminal\Services\CustomerSearchRows.cs" Link="CustomerSearchRows.cs" />
   </ItemGroup>
 
 </Project>

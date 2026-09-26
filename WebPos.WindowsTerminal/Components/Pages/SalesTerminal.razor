@@ -21,6 +21,7 @@
 @inject IJSRuntime Js
 @inject ILogger<SalesTerminal> Logger
 @inject CustomerDisplayState CustomerDisplayState
+@inject IBarcodeScannerService BarcodeScanner
 
 <PageTitle>Smart POS</PageTitle>
 
@@ -182,6 +183,9 @@
                                                    type="text"
                                                    inputmode="decimal"
                                                    value="@GetPriceText(line)"
+                                                   title="@(line.UnitPriceOverridePaisa is not null
+                                                       ? $"Catalog Rs {FormatRs(line.Product.UnitPricePaisa)}"
+                                                       : "Unit selling price")"
                                                    @oninput="e => OnPriceChanged(line, e)"
                                                    @onfocus='() => OnCellFocusAsync(index, "price")'
                                                    @onblur="() => OnPriceBlur(line)"
@@ -602,6 +606,10 @@
     private bool _showPaymentModal;
     private IReadOnlyList<PaymentAccountDto> _paymentAccounts = [];
 
+    /// <summary>
+    /// True when any overlay owns the screen — global barcode must not add to the sales cart.
+    /// Includes Create PO, Price Checker, Item Search, payment, variant pick, and related modals.
+    /// </summary>
     private bool ModalOpen =>
         _showPhonePrompt
         || _showPurchaseOrders
@@ -993,6 +1001,7 @@
 
         CartService.Changed += OnCartChanged;
         ShiftStatus.Changed += OnShiftStatusChanged;
+        BarcodeScanner.OnBarcodeScanned += OnGlobalBarcodeScannedAsync;
         _clockTimer = new Timer(_ =>
         {
             if (_isDisposed)
@@ -1734,25 +1743,68 @@
         }
     }
 
-    private async Task AddFromScanAsync()
+    private async Task AddFromScanAsync(string? overrideCode = null)
     {
         _errorMessage = null;
-        string scan = _scanText.Trim();
+        bool fromScanner = !string.IsNullOrWhiteSpace(overrideCode);
+        string scan = fromScanner ? overrideCode!.Trim() : _scanText.Trim();
         if (string.IsNullOrWhiteSpace(scan))
         {
             _errorMessage = "Enter a name, barcode, SKU, or short code.";
             return;
         }
 
-        IReadOnlyList<object> hits = ScanHits;
-        if (_showScanDropdown && hits.Count > 0)
+        if (fromScanner)
         {
-            int idx = Math.Clamp(_scanHighlight, 0, hits.Count - 1);
-            await ChooseScanHitAsync(hits[idx]);
-            return;
+            _scanText = string.Empty;
+            _showScanDropdown = false;
+            _scanHighlight = 0;
+        }
+        else
+        {
+            IReadOnlyList<object> hits = ScanHits;
+            if (_showScanDropdown && hits.Count > 0)
+            {
+                int idx = Math.Clamp(_scanHighlight, 0, hits.Count - 1);
+                await ChooseScanHitAsync(hits[idx]);
+                return;
+            }
+
+            // Exact short-code / unique resolve when dropdown closed or empty.
+            SaleMasterDto? typedMaster = ResolveMasterFromScan(scan);
+            if (typedMaster is not null)
+            {
+                OpenVariant(typedMaster);
+                _scanText = string.Empty;
+                _showScanDropdown = false;
+                await FocusScanAsync();
+                return;
+            }
+
+            SalesProductDto? typedProduct = ResolveProductFromScan(scan);
+            if (typedProduct is null && hits.Count == 1)
+            {
+                await ChooseScanHitAsync(hits[0]);
+                return;
+            }
+
+            if (typedProduct is null && hits.Count > 1)
+            {
+                _showScanDropdown = true;
+                _scanHighlight = 0;
+                return;
+            }
+
+            if (typedProduct is not null)
+            {
+                AddProductToCart(typedProduct);
+                _scanText = string.Empty;
+                _showScanDropdown = false;
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
         }
 
-        // Exact short-code / unique resolve when dropdown closed or empty.
         SaleMasterDto? master = ResolveMasterFromScan(scan);
         if (master is not null)
         {
@@ -1764,19 +1816,6 @@
         }
 
         SalesProductDto? product = ResolveProductFromScan(scan);
-        if (product is null && hits.Count == 1)
-        {
-            await ChooseScanHitAsync(hits[0]);
-            return;
-        }
-
-        if (product is null && hits.Count > 1)
-        {
-            _showScanDropdown = true;
-            _scanHighlight = 0;
-            return;
-        }
-
         if (product is null)
         {
             Result<BarcodeScanOutcome> lookup = await SalesApi.ScanBarcodeAsync(scan);
@@ -1823,6 +1862,28 @@
         _scanText = string.Empty;
         _showScanDropdown = false;
         await InvokeAsync(StateHasChanged);
+        if (fromScanner)
+        {
+            await FocusScanAsync();
+        }
+    }
+
+    private Task OnGlobalBarcodeScannedAsync(string code)
+    {
+        // Do not drop on _isBusy — the service queue serializes scans; checkout busy must not skip cart adds.
+        if (_isDisposed || ModalOpen)
+        {
+            return Task.CompletedTask;
+        }
+
+        return InvokeAsync(async () =>
+        {
+            // Clear typeahead before resolve so UI never shows a truncated wedge string.
+            _scanText = string.Empty;
+            _showScanDropdown = false;
+            _scanHighlight = 0;
+            await AddFromScanAsync(code);
+        });
     }
 
     private async Task FocusScanAsync()
@@ -2207,11 +2268,23 @@
 
         if (!TryParseRs(raw, out long totalPaisa) || line.Quantity <= 0)
         {
+            if (!string.IsNullOrWhiteSpace(raw) && !IsDeleteCommand(raw))
+            {
+                _errorMessage = "Line total must be a valid non-negative amount.";
+            }
+
             SyncLineEditors(line.Product.ProductId);
             return;
         }
 
-        CartService.SetLineTotal(line.Product.ProductId, totalPaisa);
+        if (!CartService.SetLineTotal(line.Product.ProductId, totalPaisa))
+        {
+            _errorMessage = "Line total must be a valid non-negative amount.";
+            SyncLineEditors(line.Product.ProductId);
+            return;
+        }
+
+        _errorMessage = null;
         SyncLineEditors(line.Product.ProductId);
     }
 
@@ -2291,12 +2364,24 @@
     {
         string raw = e.Value?.ToString() ?? string.Empty;
         _priceText[line.Product.ProductId] = raw;
-        if (!TryParseRs(raw, out long paisa))
+        if (string.IsNullOrWhiteSpace(raw))
         {
             return;
         }
 
-        CartService.SetUnitPrice(line.Product.ProductId, paisa);
+        if (!TryParseRs(raw, out long paisa))
+        {
+            _errorMessage = "Price must be a valid non-negative amount.";
+            return;
+        }
+
+        if (!CartService.SetUnitPrice(line.Product.ProductId, paisa))
+        {
+            _errorMessage = "Price must be a valid non-negative amount.";
+            return;
+        }
+
+        _errorMessage = null;
         CartLine? updated = CartService.Lines.FirstOrDefault(l => l.Product.ProductId == line.Product.ProductId);
         if (updated is not null)
         {
@@ -2310,6 +2395,12 @@
         {
             _ = DeleteLineAtAsync(IndexOfLine(line), "price");
             return;
+        }
+
+        string raw = GetPriceText(line);
+        if (!string.IsNullOrWhiteSpace(raw) && !TryParseRs(raw, out _))
+        {
+            _errorMessage = "Price must be a valid non-negative amount.";
         }
 
         SyncLineEditors(line.Product.ProductId);
@@ -2840,7 +2931,9 @@
                 return;
             }
 
-            if (breakdown.PaymentReceivedPaisa < PayablePaisa)
+            long received = breakdown.PaymentReceivedPaisa;
+            // Walk-In + 0 tender = fully paid; partial underpay still blocked.
+            if (received > 0 && received < PayablePaisa)
             {
                 _checkoutError = "Walk-In payment must cover total amount due.";
                 return;
@@ -3137,9 +3230,10 @@
                 customerId,
                 discountPaisa,
                 invoiceNo: string.IsNullOrWhiteSpace(_draftInvoiceNo) ? null : $"POS-{_draftInvoiceNo}",
-                amountPaidPaisa: choice.Mode == PaymentModal.PaymentUiMode.Credit
-                    ? null
-                    : choice.AmountPaidPaisa,
+                amountPaidPaisa: WalkInSettlement.ResolveAmountPaidForApi(
+                    IsWalkInCustomer,
+                    isCreditMode: choice.Mode == PaymentModal.PaymentUiMode.Credit,
+                    uiAmountPaidPaisa: choice.AmountPaidPaisa),
                 cashAccountId: choice.CashAccountId,
                 applyExcessAsCustomerCredit: choice.ApplyExcessAsCustomerCredit,
                 onlineTxnRef: txnRef);
@@ -3995,6 +4089,7 @@
         CapturePosUiState();
         CartService.Changed -= OnCartChanged;
         ShiftStatus.Changed -= OnShiftStatusChanged;
+        BarcodeScanner.OnBarcodeScanned -= OnGlobalBarcodeScannedAsync;
         _clockTimer?.Dispose();
         _clockTimer = null;
         _selfRef?.Dispose();

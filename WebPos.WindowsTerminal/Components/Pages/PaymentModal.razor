@@ -650,13 +650,25 @@
             return;
         }
 
-        if (!TryParseRs(_tenderText, out long paid))
+        long paid;
+        if (string.IsNullOrWhiteSpace(_tenderText))
+        {
+            if (!IsWalkIn)
+            {
+                _error = "Enter a valid payment amount.";
+                return;
+            }
+
+            paid = 0L;
+        }
+        else if (!TryParseRs(_tenderText, out paid))
         {
             _error = "Enter a valid payment amount.";
             return;
         }
 
-        if (IsWalkIn && paid < AmountDuePaisa)
+        // Walk-In + 0 tender = fully paid; partial underpay still blocked.
+        if (IsWalkIn && paid > 0 && paid < AmountDuePaisa)
         {
             _error = "Walk-In payment must cover total amount due.";
             return;

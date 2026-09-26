@@ -260,11 +260,7 @@ public sealed class ProductsController(
                 available = p.StockQty;
             }
 
-            if (available <= 0)
-            {
-                continue;
-            }
-
+            // Include zero-stock rows so search/price-check can still show catalog price.
             products.Add(new SalesProductDto
             {
                 ProductId = p.Id,
@@ -588,10 +584,6 @@ public sealed class ProductsController(
             }
 
             decimal available = Math.Floor(stock / mult);
-            if (available <= 0)
-            {
-                continue;
-            }
 
             parentUnit.TryGetValue(parentId, out string? baseUnit);
             SaleVariantChildDto dto = new()

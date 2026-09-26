@@ -5,6 +5,7 @@
 @inject ProductAdminApiClient ProductApi
 @inject ISessionService SessionService
 @inject NavigationManager Navigation
+@inject IBarcodeScannerService BarcodeScanner
 
 <PageTitle>Products</PageTitle>
 
@@ -155,7 +156,18 @@
             return;
         }
 
+        BarcodeScanner.OnBarcodeScanned += OnGlobalBarcodeScannedAsync;
         await LoadPageAsync();
+    }
+
+    private Task OnGlobalBarcodeScannedAsync(string code)
+    {
+        return InvokeAsync(async () =>
+        {
+            _search = code;
+            _page = 1;
+            await LoadPageAsync();
+        });
     }
 
     private async Task ResetSearch()
@@ -241,6 +253,7 @@
 
     public void Dispose()
     {
+        BarcodeScanner.OnBarcodeScanned -= OnGlobalBarcodeScannedAsync;
         _searchCts?.Cancel();
         _searchCts?.Dispose();
     }

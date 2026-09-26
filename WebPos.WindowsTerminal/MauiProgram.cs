@@ -237,6 +237,7 @@ public static class MauiProgram
         builder.Services.AddSingleton<ShiftStatusApiClient>();
         builder.Services.AddSingleton<InvoiceApiClient>();
         builder.Services.AddSingleton<PurchaseIntakeApiClient>();
+        builder.Services.AddSingleton<IBarcodeScannerService, BarcodeScannerService>();
 
 #if DEBUG
         builder.Services.AddBlazorWebViewDeveloperTools();

@@ -84,8 +84,9 @@ public static class PaymentBreakdownCalculator
 
         if (isWalkIn)
         {
-            bool canConfirm = paid >= sale;
-            long change = canConfirm ? paid - sale : 0L;
+            // paid == 0 means "settle as fully paid" for Walk-In only (not registered credit).
+            bool canConfirm = paid == 0L || paid >= sale;
+            long change = paid >= sale ? paid - sale : 0L;
             return new PaymentBreakdown(
                 IsWalkIn: true,
                 PreviousDuePaisa: 0,

@@ -321,6 +321,12 @@
                     return;
                 }
 
+                // Global barcode buffer owns wedge routing when active.
+                if (window.webPosBarcodeScanner && typeof window.webPosBarcodeScanner.isActive === 'function'
+                    && window.webPosBarcodeScanner.isActive()) {
+                    return;
+                }
+
                 var scan = document.getElementById('scanInput');
                 if (!scan || scan.disabled || scan.getAttribute('aria-hidden') === 'true') {
                     return;
@@ -668,6 +674,7 @@
         window.webPosBindPosShortcuts();
         window.webPosBindPinPad(null);
     </script>
+    <script src="js/barcode-scanner.js"></script>
 
 </body>
 

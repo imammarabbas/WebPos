@@ -1,5 +1,6 @@
 @inherits LayoutComponentBase
 @inject NavigationManager Navigation
+@inject IBarcodeScannerService BarcodeScanner
 @implements IDisposable
 
 <WindowChromeBridge />
@@ -32,6 +33,7 @@
 
 @code {
     private ErrorBoundary? _errorBoundary;
+    private bool _barcodeInitialized;
 
     private static readonly string[] FullscreenPaths =
     [
@@ -65,6 +67,24 @@
     }
 
     protected override void OnInitialized() => Navigation.LocationChanged += OnLocationChanged;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _barcodeInitialized)
+        {
+            return;
+        }
+
+        _barcodeInitialized = true;
+        try
+        {
+            await BarcodeScanner.InitializeAsync();
+        }
+        catch
+        {
+            _barcodeInitialized = false;
+        }
+    }
 
     private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
     {

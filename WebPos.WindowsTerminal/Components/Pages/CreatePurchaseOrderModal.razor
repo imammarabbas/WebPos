@@ -6,6 +6,7 @@
 @inject ProductAdminApiClient ProductApi
 @inject NavigationManager Navigation
 @inject IJSRuntime Js
+@inject IBarcodeScannerService BarcodeScanner
 @implements IDisposable
 
 @if (Visible)
@@ -410,6 +411,7 @@
     {
         if (Visible && !_wasVisible)
         {
+            BarcodeScanner.OnBarcodeScanned += OnGlobalBarcodeScannedAsync;
             _error = null;
             _success = null;
             await EnsureSuppliersAsync();
@@ -441,6 +443,10 @@
 
                 _focusScan = true;
             }
+        }
+        else if (!Visible && _wasVisible)
+        {
+            BarcodeScanner.OnBarcodeScanned -= OnGlobalBarcodeScannedAsync;
         }
         else if (Visible && IsEditing && EditingPurchaseOrderId != _loadedEditingId)
         {
@@ -735,13 +741,21 @@
         await InvokeAsync(StateHasChanged);
     }
 
-    private async Task ResolveScanAsync()
+    private async Task ResolveScanAsync(string? overrideCode = null)
     {
         _error = null;
-        string code = _scanText.Trim();
+        bool fromScanner = !string.IsNullOrWhiteSpace(overrideCode);
+        string code = fromScanner ? overrideCode!.Trim() : _scanText.Trim();
         if (string.IsNullOrEmpty(code))
         {
             return;
+        }
+
+        if (fromScanner)
+        {
+            _scanText = string.Empty;
+            _hits.Clear();
+            _highlightIndex = 0;
         }
 
         ProductDto? exact = FindExactCodeMatch(code);
@@ -751,19 +765,19 @@
             return;
         }
 
-        if (_hits.Count > 0 && _highlightIndex >= 0 && _highlightIndex < _hits.Count)
+        if (!fromScanner && _hits.Count > 0 && _highlightIndex >= 0 && _highlightIndex < _hits.Count)
         {
             SelectSuggestion(_hits[_highlightIndex]);
             return;
         }
 
-        if (_hits.Count == 1)
+        if (!fromScanner && _hits.Count == 1)
         {
             SelectSuggestion(_hits[0]);
             return;
         }
 
-        if (_hits.Count > 1)
+        if (!fromScanner && _hits.Count > 1)
         {
             _error = $"Multiple matches for “{code}” — pick one from the list.";
             _focusScan = true;
@@ -798,6 +812,29 @@
         }
 
         await OpenNewProductAsync();
+    }
+
+    private Task OnGlobalBarcodeScannedAsync(string code)
+    {
+        // Modal owns the scan while Visible; SalesTerminal skips via ModalOpen.
+        if (!Visible || _busy)
+        {
+            return Task.CompletedTask;
+        }
+
+        return InvokeAsync(async () =>
+        {
+            await ResolveScanAsync(code);
+            StateHasChanged();
+            try
+            {
+                await Js.InvokeVoidAsync("webPosFocusById", "cpo-scan");
+            }
+            catch
+            {
+                /* ignore */
+            }
+        });
     }
 
     private async Task OpenNewProductAsync()
@@ -1344,6 +1381,7 @@
 
     public void Dispose()
     {
+        BarcodeScanner.OnBarcodeScanned -= OnGlobalBarcodeScannedAsync;
         _searchCts?.Cancel();
         _searchCts?.Dispose();
     }

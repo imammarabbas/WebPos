@@ -54,16 +54,18 @@ public sealed class WhatsAppReceiptService
         long openingBalancePaisa,
         long closingBalancePaisa,
         IReadOnlyList<PartyLedgerEntryDto> entries,
-        string partyRole = "CUSTOMER")
+        string partyRole = "CUSTOMER",
+        IReadOnlyDictionary<string, SalesInvoiceDetailDto>? invoiceDetails = null)
     {
         ArgumentNullException.ThrowIfNull(entries);
 
         bool isSupplier = string.Equals(partyRole, "SUPPLIER", StringComparison.OrdinalIgnoreCase);
+        bool detailed = invoiceDetails is { Count: > 0 };
         long totalDebit = entries.Sum(e => e.DebitPaisa);
         long totalCredit = entries.Sum(e => e.CreditPaisa);
 
         StringBuilder body = new();
-        body.AppendLine($"{TerminalBranding.PosDisplayName} — {(isSupplier ? "Supplier" : "Customer")} Statement");
+        body.AppendLine($"{TerminalBranding.PosDisplayName} — {(isSupplier ? "Supplier" : "Customer")} Statement{(detailed ? " · Detailed" : string.Empty)}");
         body.AppendLine();
         body.AppendLine($"{(isSupplier ? "Supplier" : "Customer")}: {partyName}");
         body.AppendLine($"Period: {from:dd/MM/yyyy} – {to:dd/MM/yyyy}");
@@ -75,13 +77,14 @@ public sealed class WhatsAppReceiptService
         body.AppendLine();
         body.AppendLine("Date       Ref           Debit       Credit      Balance");
 
+        const int maxChars = 3500;
         const int maxLines = 40;
         int shown = 0;
         foreach (PartyLedgerEntryDto entry in entries)
         {
-            if (shown >= maxLines)
+            if (shown >= maxLines || body.Length >= maxChars)
             {
-                body.AppendLine($"… and {entries.Count - maxLines} more entries (see PDF).");
+                body.AppendLine($"… and more entries (see PDF for full detail).");
                 break;
             }
 
@@ -99,6 +102,26 @@ public sealed class WhatsAppReceiptService
             body.AppendLine(
                 $"{date,-10} {invoice,-13} {debit,-11} {credit,-11} {(entry.NewBalancePaisa / 100m):N2}");
             shown++;
+
+            if (detailed
+                && !string.IsNullOrWhiteSpace(entry.InvoiceNo)
+                && invoiceDetails!.TryGetValue(entry.InvoiceNo, out SalesInvoiceDetailDto? inv))
+            {
+                foreach (SalesInvoiceLineDto line in inv.Lines)
+                {
+                    if (body.Length >= maxChars)
+                    {
+                        body.AppendLine("… (truncated — see PDF)");
+                        break;
+                    }
+
+                    long amount = (long)Math.Round(
+                        line.QuantitySold * line.UnitPricePaisa,
+                        MidpointRounding.AwayFromZero);
+                    body.AppendLine(
+                        $"  · {line.ProductName} × {line.QuantitySold:0.##} @ {(line.UnitPricePaisa / 100m):N2} = {(amount / 100m):N2}");
+                }
+            }
         }
 
         body.AppendLine();

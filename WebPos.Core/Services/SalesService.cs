@@ -178,11 +178,9 @@ public sealed class SalesService : ISalesService
                     throw new InvalidOperationException($"Product {line.ProductName} was not found.");
                 }
 
-                if (line.UnitPricePaisa != product.RetailPricePaisa)
-                {
-                    throw new InvalidOperationException(
-                        $"The price for {line.ProductName} has changed. Refresh the product list and try again.");
-                }
+                // line.UnitPricePaisa is the sold price for this invoice line (may be a
+                // cashier override). Do not require equality with Product.RetailPricePaisa
+                // and never mutate catalog retail from this path.
 
                 if (product.ParentProductId is Guid parentId)
                 {

@@ -14,7 +14,8 @@ public interface ILedgerPdfService
         DateOnly from,
         DateOnly to,
         long openingBalancePaisa,
-        long closingBalancePaisa);
+        long closingBalancePaisa,
+        IReadOnlyDictionary<string, SalesInvoiceDetailDto>? invoiceDetails = null);
 }
 
 public sealed class LedgerPdfService : ILedgerPdfService
@@ -30,7 +31,8 @@ public sealed class LedgerPdfService : ILedgerPdfService
         DateOnly from,
         DateOnly to,
         long openingBalancePaisa,
-        long closingBalancePaisa)
+        long closingBalancePaisa,
+        IReadOnlyDictionary<string, SalesInvoiceDetailDto>? invoiceDetails = null)
     {
         ArgumentNullException.ThrowIfNull(party);
         ArgumentNullException.ThrowIfNull(entries);
@@ -40,6 +42,7 @@ public sealed class LedgerPdfService : ILedgerPdfService
         string roleLabel = string.Equals(party.Role, "SUPPLIER", StringComparison.OrdinalIgnoreCase)
             ? "Supplier"
             : "Customer";
+        bool detailed = invoiceDetails is { Count: > 0 };
 
         return Document.Create(container =>
         {
@@ -52,7 +55,8 @@ public sealed class LedgerPdfService : ILedgerPdfService
                 page.Header().Column(col =>
                 {
                     col.Item().Text(TerminalBranding.PosDisplayName).Bold().FontSize(18);
-                    col.Item().Text("Statement of Account").FontSize(14).FontColor(QColors.Grey.Darken2);
+                    col.Item().Text(detailed ? "Statement of Account · Detailed" : "Statement of Account")
+                        .FontSize(14).FontColor(QColors.Grey.Darken2);
                     col.Item().PaddingTop(8).LineHorizontal(1).LineColor(QColors.Grey.Lighten1);
                 });
 
@@ -115,6 +119,35 @@ public sealed class LedgerPdfService : ILedgerPdfService
                                 .Text(entry.CreditPaisa > 0 ? FormatRs(entry.CreditPaisa) : string.Empty);
                             table.Cell().BorderBottom(0.5f).BorderColor(QColors.Grey.Lighten2).Padding(3).AlignRight()
                                 .Text(FormatRs(entry.NewBalancePaisa));
+
+                            if (detailed
+                                && !string.IsNullOrWhiteSpace(entry.InvoiceNo)
+                                && invoiceDetails!.TryGetValue(entry.InvoiceNo, out SalesInvoiceDetailDto? inv)
+                                && inv.Lines.Count > 0)
+                            {
+                                foreach (SalesInvoiceLineDto line in inv.Lines)
+                                {
+                                    long amount = (long)Math.Round(
+                                        line.QuantitySold * line.UnitPricePaisa,
+                                        MidpointRounding.AwayFromZero);
+                                    string qty = line.QuantitySold.ToString("0.##");
+                                    string lineDesc =
+                                        $"· {line.ProductName} × {qty} @ {FormatRs(line.UnitPricePaisa)} = {FormatRs(amount)}";
+
+                                    table.Cell().BorderBottom(0.25f).BorderColor(QColors.Grey.Lighten3).Padding(2)
+                                        .Text(string.Empty);
+                                    table.Cell().BorderBottom(0.25f).BorderColor(QColors.Grey.Lighten3).Padding(2)
+                                        .Text(string.Empty);
+                                    table.Cell().BorderBottom(0.25f).BorderColor(QColors.Grey.Lighten3).Padding(2)
+                                        .Text(lineDesc).FontSize(8).FontColor(QColors.Grey.Darken1);
+                                    table.Cell().BorderBottom(0.25f).BorderColor(QColors.Grey.Lighten3).Padding(2)
+                                        .Text(string.Empty);
+                                    table.Cell().BorderBottom(0.25f).BorderColor(QColors.Grey.Lighten3).Padding(2)
+                                        .Text(string.Empty);
+                                    table.Cell().BorderBottom(0.25f).BorderColor(QColors.Grey.Lighten3).Padding(2)
+                                        .Text(string.Empty);
+                                }
+                            }
                         }
                     });
 

@@ -72,34 +72,35 @@ public sealed class CartService
         Changed?.Invoke();
     }
 
-    public void SetUnitPrice(Guid productId, long unitPricePaisa)
+    public bool SetUnitPrice(Guid productId, long unitPricePaisa)
     {
         CartLine? line = _lines.FirstOrDefault(entry => entry.Product.ProductId == productId);
         if (line is null)
         {
-            return;
+            return false;
         }
 
         if (unitPricePaisa < 0)
         {
-            return;
+            return false;
         }
 
         line.UnitPriceOverridePaisa =
             unitPricePaisa == line.Product.UnitPricePaisa ? null : unitPricePaisa;
         Changed?.Invoke();
+        return true;
     }
 
-    public void SetLineTotal(Guid productId, long totalPaisa)
+    public bool SetLineTotal(Guid productId, long totalPaisa)
     {
         CartLine? line = _lines.FirstOrDefault(entry => entry.Product.ProductId == productId);
         if (line is null || line.Quantity <= 0 || totalPaisa < 0)
         {
-            return;
+            return false;
         }
 
         long unitPricePaisa = (long)Math.Round(totalPaisa / line.Quantity, MidpointRounding.AwayFromZero);
-        SetUnitPrice(productId, unitPricePaisa);
+        return SetUnitPrice(productId, unitPricePaisa);
     }
 
     public void Remove(Guid productId)

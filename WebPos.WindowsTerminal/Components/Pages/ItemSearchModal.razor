@@ -1,5 +1,7 @@
 @using Common.Models
 @using System.Globalization
+@inject IBarcodeScannerService BarcodeScanner
+@implements IDisposable
 
 @if (Visible)
 {
@@ -99,8 +101,13 @@
     {
         if (Visible && !_wasVisible)
         {
+            BarcodeScanner.OnBarcodeScanned += OnGlobalBarcodeScannedAsync;
             _query = InitialQuery ?? string.Empty;
             _highlight = 0;
+        }
+        else if (!Visible && _wasVisible)
+        {
+            BarcodeScanner.OnBarcodeScanned -= OnGlobalBarcodeScannedAsync;
         }
 
         _wasVisible = Visible;
@@ -140,6 +147,37 @@
             int idx = Math.Clamp(_highlight, 0, Hits.Count - 1);
             await ChooseAsync(Hits[idx]);
         }
+    }
+
+    private Task OnGlobalBarcodeScannedAsync(string code)
+    {
+        if (!Visible)
+        {
+            return Task.CompletedTask;
+        }
+
+        return InvokeAsync(async () =>
+        {
+            _query = code;
+            _highlight = 0;
+            IReadOnlyList<object> hits = Hits;
+            object? exact = hits.FirstOrDefault(h =>
+                (h is SalesProductDto p && ExactProduct(p, code))
+                || (h is SaleMasterDto m && ExactMaster(m, code)));
+            if (exact is not null)
+            {
+                await ChooseAsync(exact);
+                return;
+            }
+
+            if (hits.Count == 1)
+            {
+                await ChooseAsync(hits[0]);
+                return;
+            }
+
+            StateHasChanged();
+        });
     }
 
     private async Task ChooseAsync(object hit)
@@ -186,9 +224,12 @@
     {
         string code = !string.IsNullOrWhiteSpace(p.ShortCode) ? p.ShortCode : p.Barcode;
         string pack = string.IsNullOrWhiteSpace(p.PackingSize) ? "" : $" · {p.PackingSize}";
-        return $"{code}{pack} · Rs {FormatRs(p.UnitPricePaisa)}";
+        string stock = p.AvailableStock <= 0 ? " · Out of stock" : string.Empty;
+        return $"{code}{pack} · Rs {FormatRs(p.UnitPricePaisa)}{stock}";
     }
 
     private static string FormatRs(long paisa) =>
         (paisa / 100m).ToString("N2", CultureInfo.InvariantCulture);
+
+    public void Dispose() => BarcodeScanner.OnBarcodeScanned -= OnGlobalBarcodeScannedAsync;
 }

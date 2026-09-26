@@ -7,6 +7,8 @@
 @inject ProductAdminApiClient ProductApi
 @inject ISessionService SessionService
 @inject NavigationManager Navigation
+@inject IBarcodeScannerService BarcodeScanner
+@inject IJSRuntime Js
 
 <PageTitle>@(IsEdit ? "Edit product" : "New product")</PageTitle>
 
@@ -400,6 +402,8 @@
             return;
         }
 
+        BarcodeScanner.OnBarcodeScanned += OnGlobalBarcodeScannedAsync;
+
         await LoadCategoriesAsync();
         if (IsEdit)
         {
@@ -413,6 +417,30 @@
                 await LoadBulkParentsAsync();
             }
         }
+    }
+
+    private Task OnGlobalBarcodeScannedAsync(string code)
+    {
+        return InvokeAsync(async () =>
+        {
+            // Fill barcode field only — no inventory search, sales lookup, or navigation.
+            _barcode = code?.Trim() ?? string.Empty;
+            await InvokeAsync(StateHasChanged);
+            try
+            {
+                await Js.InvokeVoidAsync("webPosFocusById", "pc-barcode");
+            }
+            catch
+            {
+                try
+                {
+                    await _barcodeInput.FocusAsync();
+                }
+                catch (InvalidOperationException)
+                {
+                }
+            }
+        });
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -697,6 +725,7 @@
 
     public void Dispose()
     {
+        BarcodeScanner.OnBarcodeScanned -= OnGlobalBarcodeScannedAsync;
         _parentSearchCts?.Cancel();
         _parentSearchCts?.Dispose();
     }

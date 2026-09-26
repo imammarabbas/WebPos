@@ -398,4 +398,349 @@ public sealed class SalesIntegrationTests
             .FirstOrDefaultAsync(s => s.Id == seed.ShiftId);
         shift!.ExpectedCashPaisa.Should().Be(unitPricePaisa);
     }
+
+    [Fact]
+    public async Task CompleteSale_WalkIn_NullAmountPaid_ShouldBeFullyPaidLikeExactCash()
+    {
+        // PaymentModal / F12 path: Walk-In + UI PaymentReceived=0 → AmountPaidPaisa=null
+        await using IntegrationTestScope scope = _fixture.CreateScope();
+        SaleSeedData seed = await SeedHelper.SeedSalePrerequisitesAsync(scope.DbContext);
+
+        const decimal soldQty = 1m;
+        long netPaisa = seed.UnitPricePaisa;
+        string invoiceNo = $"INV-WI0-{Guid.NewGuid():N}"[..28];
+
+        CompleteSaleResult result = await scope.SalesService.CompleteSaleAsync(new CompleteSaleRequest
+        {
+            InvoiceNo = invoiceNo,
+            ShiftId = seed.ShiftId,
+            TerminalId = seed.TerminalId,
+            CashierId = seed.CashierId,
+            CustomerId = null,
+            PaymentMethod = "CASH",
+            DiscountAmountPaisa = 0L,
+            AmountPaidPaisa = null,
+            Lines =
+            [
+                new SaleLineRequest
+                {
+                    ProductId = seed.ProductId,
+                    BatchId = seed.BatchId,
+                    BatchNumber = seed.BatchNumber,
+                    ProductName = seed.ProductName,
+                    Quantity = soldQty,
+                    UnitPricePaisa = seed.UnitPricePaisa,
+                    DiscountAppliedPaisa = 0L
+                }
+            ]
+        });
+
+        result.TotalAmountPaisa.Should().Be(netPaisa);
+        result.AmountPaidPaisa.Should().Be(netPaisa);
+        result.ChangePaisa.Should().Be(0);
+        result.CustomerBalancePaisa.Should().BeNull();
+
+        await using IntegrationTestScope assertScope = _fixture.CreateScope();
+
+        SalesInvoice? invoice = await assertScope.DbContext.SalesInvoices
+            .AsNoTracking()
+            .FirstOrDefaultAsync(i => i.InvoiceNo == invoiceNo);
+        invoice.Should().NotBeNull();
+        invoice!.CustomerId.Should().BeNull();
+        invoice.AmountPaidPaisa.Should().Be(netPaisa);
+        invoice.TotalAmountPaisa.Should().Be(netPaisa);
+
+        List<GeneralLedgerEntry> ledgerEntries = await assertScope.DbContext.GeneralLedgerEntries
+            .AsNoTracking()
+            .Where(e => e.TransactionGroupId == result.TransactionGroupId)
+            .ToListAsync();
+
+        ledgerEntries.Should().NotBeEmpty();
+        ledgerEntries.Where(e => LedgerAccounts.IsCashAccount(e.AccountCode))
+            .Should().NotContain(e => e.DebitPaisa == 0 && e.CreditPaisa == 0);
+        long cashDebit = ledgerEntries
+            .Where(e => LedgerAccounts.IsCashAccount(e.AccountCode))
+            .Sum(e => e.DebitPaisa);
+        cashDebit.Should().Be(netPaisa);
+
+        CashierShift? shift = await assertScope.DbContext.CashierShifts
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == seed.ShiftId);
+        shift!.ExpectedCashPaisa.Should().Be(netPaisa);
+
+        bool anyPartyLedger = await assertScope.DbContext.PartyLedgers
+            .AsNoTracking()
+            .AnyAsync(e => e.InvoiceNo == invoiceNo);
+        anyPartyLedger.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CompleteSale_WalkIn_ExplicitZeroAmountPaid_ShouldFail()
+    {
+        await using IntegrationTestScope scope = _fixture.CreateScope();
+        SaleSeedData seed = await SeedHelper.SeedSalePrerequisitesAsync(scope.DbContext);
+        string invoiceNo = $"INV-WI0F-{Guid.NewGuid():N}"[..28];
+
+        Func<Task> act = () => scope.SalesService.CompleteSaleAsync(new CompleteSaleRequest
+        {
+            InvoiceNo = invoiceNo,
+            ShiftId = seed.ShiftId,
+            TerminalId = seed.TerminalId,
+            CashierId = seed.CashierId,
+            CustomerId = null,
+            PaymentMethod = "CASH",
+            DiscountAmountPaisa = 0L,
+            AmountPaidPaisa = 0L,
+            Lines =
+            [
+                new SaleLineRequest
+                {
+                    ProductId = seed.ProductId,
+                    BatchId = seed.BatchId,
+                    BatchNumber = seed.BatchNumber,
+                    ProductName = seed.ProductName,
+                    Quantity = 1m,
+                    UnitPricePaisa = seed.UnitPricePaisa,
+                    DiscountAppliedPaisa = 0L
+                }
+            ]
+        });
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*cover the sale total*");
+    }
+
+    [Fact]
+    public async Task CompleteSale_Registered_ZeroAmountPaid_ShouldLeaveOutstanding()
+    {
+        await using IntegrationTestScope scope = _fixture.CreateScope();
+        SaleSeedData seed = await SeedHelper.SeedSalePrerequisitesAsync(scope.DbContext);
+
+        PartyDto customer = await scope.PartyService.CreatePartyAsync(new CreatePartyRequest
+        {
+            Role = PartyTypes.Customer,
+            Name = $"ZeroPay-{Guid.NewGuid():N}"[..18],
+            PhoneNumber = $"03{Guid.NewGuid():N}"[..11],
+            Address = "Lahore",
+            CreditLimitPaisa = 5_000_000
+        });
+
+        long netPaisa = seed.UnitPricePaisa;
+        string invoiceNo = $"INV-REG0-{Guid.NewGuid():N}"[..28];
+
+        CompleteSaleResult result = await scope.SalesService.CompleteSaleAsync(new CompleteSaleRequest
+        {
+            InvoiceNo = invoiceNo,
+            ShiftId = seed.ShiftId,
+            TerminalId = seed.TerminalId,
+            CashierId = seed.CashierId,
+            CustomerId = customer.Id,
+            PaymentMethod = "CASH",
+            DiscountAmountPaisa = 0L,
+            AmountPaidPaisa = 0L,
+            Lines =
+            [
+                new SaleLineRequest
+                {
+                    ProductId = seed.ProductId,
+                    BatchId = seed.BatchId,
+                    BatchNumber = seed.BatchNumber,
+                    ProductName = seed.ProductName,
+                    Quantity = 1m,
+                    UnitPricePaisa = seed.UnitPricePaisa,
+                    DiscountAppliedPaisa = 0L
+                }
+            ]
+        });
+
+        result.AmountPaidPaisa.Should().Be(0);
+        result.CustomerBalancePaisa.Should().Be(netPaisa);
+
+        await using IntegrationTestScope assertScope = _fixture.CreateScope();
+
+        SalesInvoice? invoice = await assertScope.DbContext.SalesInvoices
+            .AsNoTracking()
+            .FirstOrDefaultAsync(i => i.InvoiceNo == invoiceNo);
+        invoice!.AmountPaidPaisa.Should().Be(0);
+        invoice.TotalAmountPaisa.Should().Be(netPaisa);
+
+        Party? party = await assertScope.DbContext.Parties
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == customer.Id);
+        party!.CurrentBalancePaisa.Should().Be(netPaisa);
+
+        List<GeneralLedgerEntry> ledgerEntries = await assertScope.DbContext.GeneralLedgerEntries
+            .AsNoTracking()
+            .Where(e => e.TransactionGroupId == result.TransactionGroupId)
+            .ToListAsync();
+        long cashDebit = ledgerEntries
+            .Where(e => LedgerAccounts.IsCashAccount(e.AccountCode))
+            .Sum(e => e.DebitPaisa);
+        cashDebit.Should().Be(0);
+
+        CashierShift? shift = await assertScope.DbContext.CashierShifts
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == seed.ShiftId);
+        shift!.ExpectedCashPaisa.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task CompleteSale_LinePriceOverride_PersistsSoldPrice_WithoutMutatingCatalog()
+    {
+        await using IntegrationTestScope scope = _fixture.CreateScope();
+        SaleSeedData seed = await SeedHelper.SeedSalePrerequisitesAsync(scope.DbContext, stockQty: 20m);
+
+        const long costPaisa = 8_000L;      // Rs 80
+        const long catalogPaisa = 10_000L;  // Rs 100
+        const long overridePaisa = 9_000L;  // Rs 90
+        const long laterCatalogPaisa = 11_000L; // Rs 110
+
+        Product product = await scope.DbContext.Products.SingleAsync(p => p.Id == seed.ProductId);
+        product.CostPricePaisa = costPaisa;
+        product.RetailPricePaisa = catalogPaisa;
+        await scope.DbContext.SaveChangesAsync();
+
+        string invoice1 = $"INV-OV1-{Guid.NewGuid():N}"[..28];
+        CompleteSaleResult sale1 = await scope.SalesService.CompleteSaleAsync(
+            BuildCashSale(seed, invoice1, quantity: 1m, unitPricePaisa: overridePaisa));
+
+        sale1.TotalAmountPaisa.Should().Be(overridePaisa);
+
+        string invoice2 = $"INV-OV2-{Guid.NewGuid():N}"[..28];
+        CompleteSaleResult sale2 = await scope.SalesService.CompleteSaleAsync(
+            BuildCashSale(seed, invoice2, quantity: 1m, unitPricePaisa: catalogPaisa));
+
+        sale2.TotalAmountPaisa.Should().Be(catalogPaisa);
+
+        await using IntegrationTestScope assertScope = _fixture.CreateScope();
+
+        Product? catalog = await assertScope.DbContext.Products
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == seed.ProductId);
+        catalog.Should().NotBeNull();
+        catalog!.RetailPricePaisa.Should().Be(catalogPaisa);
+        catalog.CostPricePaisa.Should().Be(costPaisa);
+
+        SalesItem item1 = await assertScope.DbContext.SalesItems
+            .AsNoTracking()
+            .SingleAsync(i => i.InvoiceNo == invoice1);
+        item1.UnitPricePaisa.Should().Be(overridePaisa);
+        item1.UnitCostPaisa.Should().Be(costPaisa);
+        long profit1 = (item1.UnitPricePaisa * 1) - (item1.UnitCostPaisa * 1);
+        profit1.Should().Be(1_000L); // Rs 10
+
+        SalesItem item2 = await assertScope.DbContext.SalesItems
+            .AsNoTracking()
+            .SingleAsync(i => i.InvoiceNo == invoice2);
+        item2.UnitPricePaisa.Should().Be(catalogPaisa);
+        item2.UnitCostPaisa.Should().Be(costPaisa);
+        long profit2 = item2.UnitPricePaisa - item2.UnitCostPaisa;
+        profit2.Should().Be(2_000L); // Rs 20
+
+        Product mutable = await assertScope.DbContext.Products.SingleAsync(p => p.Id == seed.ProductId);
+        mutable.RetailPricePaisa = laterCatalogPaisa;
+        await assertScope.DbContext.SaveChangesAsync();
+
+        SalesItem hist1 = await assertScope.DbContext.SalesItems
+            .AsNoTracking()
+            .SingleAsync(i => i.InvoiceNo == invoice1);
+        SalesItem hist2 = await assertScope.DbContext.SalesItems
+            .AsNoTracking()
+            .SingleAsync(i => i.InvoiceNo == invoice2);
+        hist1.UnitPricePaisa.Should().Be(overridePaisa);
+        (hist1.UnitPricePaisa - hist1.UnitCostPaisa).Should().Be(1_000L);
+        hist2.UnitPricePaisa.Should().Be(catalogPaisa);
+        (hist2.UnitPricePaisa - hist2.UnitCostPaisa).Should().Be(2_000L);
+
+        string invoice3 = $"INV-OV3-{Guid.NewGuid():N}"[..28];
+        CompleteSaleResult sale3 = await assertScope.SalesService.CompleteSaleAsync(
+            BuildCashSale(seed, invoice3, quantity: 1m, unitPricePaisa: laterCatalogPaisa));
+        sale3.TotalAmountPaisa.Should().Be(laterCatalogPaisa);
+
+        SalesItem item3 = await assertScope.DbContext.SalesItems
+            .AsNoTracking()
+            .SingleAsync(i => i.InvoiceNo == invoice3);
+        item3.UnitPricePaisa.Should().Be(laterCatalogPaisa);
+        (item3.UnitPricePaisa - item3.UnitCostPaisa).Should().Be(3_000L); // Rs 30
+    }
+
+    [Fact]
+    public async Task CompleteSale_LinePriceOverride_QuantityMultipliesProfit()
+    {
+        await using IntegrationTestScope scope = _fixture.CreateScope();
+        SaleSeedData seed = await SeedHelper.SeedSalePrerequisitesAsync(scope.DbContext, stockQty: 20m);
+
+        const long costPaisa = 8_000L;
+        const long catalogPaisa = 10_000L;
+        const long overridePaisa = 9_000L;
+        const decimal qty = 5m;
+
+        Product product = await scope.DbContext.Products.SingleAsync(p => p.Id == seed.ProductId);
+        product.CostPricePaisa = costPaisa;
+        product.RetailPricePaisa = catalogPaisa;
+        await scope.DbContext.SaveChangesAsync();
+
+        string invoiceNo = $"INV-OVQ-{Guid.NewGuid():N}"[..28];
+        CompleteSaleResult result = await scope.SalesService.CompleteSaleAsync(
+            BuildCashSale(seed, invoiceNo, quantity: qty, unitPricePaisa: overridePaisa));
+
+        result.TotalAmountPaisa.Should().Be(45_000L); // 90 * 5
+
+        await using IntegrationTestScope assertScope = _fixture.CreateScope();
+        SalesItem item = await assertScope.DbContext.SalesItems
+            .AsNoTracking()
+            .SingleAsync(i => i.InvoiceNo == invoiceNo);
+
+        long revenue = (long)Math.Round(item.Quantity * item.UnitPricePaisa, MidpointRounding.AwayFromZero);
+        long cogs = (long)Math.Round(item.Quantity * item.UnitCostPaisa, MidpointRounding.AwayFromZero);
+        revenue.Should().Be(45_000L);
+        cogs.Should().Be(40_000L);
+        (revenue - cogs).Should().Be(5_000L); // Rs 50
+
+        Product? catalog = await assertScope.DbContext.Products
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == seed.ProductId);
+        catalog!.RetailPricePaisa.Should().Be(catalogPaisa);
+    }
+
+    [Fact]
+    public async Task CompleteSale_Rejects_NonPositive_UnitPrice()
+    {
+        await using IntegrationTestScope scope = _fixture.CreateScope();
+        SaleSeedData seed = await SeedHelper.SeedSalePrerequisitesAsync(scope.DbContext);
+
+        Func<Task> act = () => scope.SalesService.CompleteSaleAsync(
+            BuildCashSale(seed, $"INV-BAD-{Guid.NewGuid():N}"[..28], quantity: 1m, unitPricePaisa: 0));
+
+        await act.Should().ThrowAsync<ArgumentException>()
+            .WithMessage("*Unit price must be greater than zero*");
+    }
+
+    private static CompleteSaleRequest BuildCashSale(
+        SaleSeedData seed,
+        string invoiceNo,
+        decimal quantity,
+        long unitPricePaisa) =>
+        new()
+        {
+            InvoiceNo = invoiceNo,
+            ShiftId = seed.ShiftId,
+            TerminalId = seed.TerminalId,
+            CashierId = seed.CashierId,
+            PaymentMethod = "CASH",
+            DiscountAmountPaisa = 0L,
+            Lines =
+            [
+                new SaleLineRequest
+                {
+                    ProductId = seed.ProductId,
+                    BatchId = seed.BatchId,
+                    BatchNumber = seed.BatchNumber,
+                    ProductName = seed.ProductName,
+                    Quantity = quantity,
+                    UnitPricePaisa = unitPricePaisa,
+                    DiscountAppliedPaisa = 0L
+                }
+            ]
+        };
 }

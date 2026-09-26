@@ -5,6 +5,24 @@ namespace WebPos.WindowsTerminal.Tests;
 public class PaymentBreakdownCalculatorTests
 {
     [Fact]
+    public void WalkIn_ZeroPayment_AllowsConfirm_FullyPaidDisplay()
+    {
+        PaymentBreakdown b = PaymentBreakdownCalculator.Compute(
+            isWalkIn: true,
+            previousDuePaisa: 0,
+            currentSaleTotalPaisa: 250_000,
+            paymentReceivedPaisa: 0,
+            mode: PaymentBreakdownMode.Cash,
+            applyExcessAsCustomerCredit: false);
+
+        Assert.True(b.CanConfirm);
+        Assert.Equal(0, b.PaymentReceivedPaisa);
+        Assert.Equal(0, b.ChangeReturnPaisa);
+        Assert.Equal(0, b.NewCustomerBalancePaisa);
+        Assert.Equal(250_000, b.AmountDuePaisa);
+    }
+
+    [Fact]
     public void WalkIn_Underpay_BlocksConfirm_NoChange()
     {
         PaymentBreakdown b = PaymentBreakdownCalculator.Compute(
@@ -21,6 +39,47 @@ public class PaymentBreakdownCalculatorTests
         Assert.False(b.CanConfirm);
         Assert.Equal(0, b.ChangeReturnPaisa);
         Assert.Equal(0, b.AccountCreditPaisa);
+    }
+
+    [Fact]
+    public void Registered_ZeroPayment_KeepsOutstanding()
+    {
+        PaymentBreakdown b = PaymentBreakdownCalculator.Compute(
+            isWalkIn: false,
+            previousDuePaisa: 0,
+            currentSaleTotalPaisa: 250_000,
+            paymentReceivedPaisa: 0,
+            mode: PaymentBreakdownMode.Cash,
+            applyExcessAsCustomerCredit: false);
+
+        Assert.True(b.CanConfirm);
+        Assert.Equal(0, b.PaymentReceivedPaisa);
+        Assert.Equal(250_000, b.NewCustomerBalancePaisa);
+    }
+
+    [Fact]
+    public void CustomerSwitch_WalkInZeroVsRegisteredZero_Recomputes()
+    {
+        const long sale = 250_000;
+        PaymentBreakdown walkIn = PaymentBreakdownCalculator.Compute(
+            isWalkIn: true,
+            previousDuePaisa: 0,
+            currentSaleTotalPaisa: sale,
+            paymentReceivedPaisa: 0,
+            mode: PaymentBreakdownMode.Cash,
+            applyExcessAsCustomerCredit: false);
+        PaymentBreakdown registered = PaymentBreakdownCalculator.Compute(
+            isWalkIn: false,
+            previousDuePaisa: 0,
+            currentSaleTotalPaisa: sale,
+            paymentReceivedPaisa: 0,
+            mode: PaymentBreakdownMode.Cash,
+            applyExcessAsCustomerCredit: false);
+
+        Assert.True(walkIn.CanConfirm);
+        Assert.Equal(0, walkIn.NewCustomerBalancePaisa);
+        Assert.True(registered.CanConfirm);
+        Assert.Equal(sale, registered.NewCustomerBalancePaisa);
     }
 
     [Fact]

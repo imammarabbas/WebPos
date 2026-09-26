@@ -137,6 +137,8 @@
                 </div>
             </div>
             <div class="rb-quick-row">
+                <button type="button" class="po-btn po-btn-sm po-btn-outline" disabled="@_isLoading" @onclick="() => SetQuickRange(QuickRange.ThisWeek)">This Week</button>
+                <button type="button" class="po-btn po-btn-sm po-btn-outline" disabled="@_isLoading" @onclick="() => SetQuickRange(QuickRange.LastWeek)">Last Week</button>
                 <button type="button" class="po-btn po-btn-sm po-btn-outline" disabled="@_isLoading" @onclick="() => SetQuickRange(QuickRange.ThisMonth)">This Month</button>
                 <button type="button" class="po-btn po-btn-sm po-btn-outline" disabled="@_isLoading" @onclick="() => SetQuickRange(QuickRange.LastMonth)">Last Month</button>
                 <button type="button" class="po-btn po-btn-sm po-btn-outline" disabled="@_isLoading" @onclick="() => SetQuickRange(QuickRange.Last30)">Last 30 Days</button>
@@ -161,15 +163,55 @@
                     </div>
                 </div>
                 <div class="rb-kpi-row">
-                    <div class="rb-kpi"><span>Opening Balance</span><strong>Rs @FormatRs(_openingBalancePaisa)</strong></div>
-                    <div class="rb-kpi"><span>Total Debit</span><strong>Rs @FormatRs(_totalDebitPaisa)</strong></div>
-                    <div class="rb-kpi"><span>Total Credit</span><strong>Rs @FormatRs(_totalCreditPaisa)</strong></div>
-                    <div class="rb-kpi"><span>Closing Balance</span><strong>Rs @FormatRs(_closingBalancePaisa)</strong></div>
+                    <div class="rb-kpi"><span>Opening</span><strong>Rs @FormatRs(_openingBalancePaisa)</strong><em>As on @_fromDate.ToString("dd MMM yyyy")</em></div>
+                    <div class="rb-kpi"><span>Total Debit</span><strong>Rs @FormatRs(_totalDebitPaisa)</strong><em>Invoices</em></div>
+                    <div class="rb-kpi"><span>Total Credit</span><strong class="rb-credit">Rs @FormatRs(_totalCreditPaisa)</strong><em>Payments</em></div>
+                    <div class="rb-kpi rb-kpi-closing"><span>Closing</span><strong>Rs @FormatRs(_closingBalancePaisa)</strong><em>Payable</em></div>
+                </div>
+                <div class="rb-detail-toggle @(_detailedLedger ? "on" : null)">
+                    <label class="rb-detail-switch">
+                        <input type="checkbox" checked="@_detailedLedger" @onchange="OnDetailedToggle" disabled="@(_isLoading || _sharing)" />
+                        <span>
+                            @if (_detailedLedger)
+                            {
+                                <strong>Detailed Ledger ON</strong>
+                                <span> — Will include item-wise details for all invoices in selected dates</span>
+                                <span class="rb-rec">RECOMMENDED</span>
+                            }
+                            else
+                            {
+                                <strong>Detailed Ledger OFF</strong>
+                                <span> — Summary rows only (date, debit, credit, balance)</span>
+                            }
+                        </span>
+                    </label>
+                    <p class="rb-detail-hint">
+                        @if (_detailedLedger)
+                        {
+                            @if (_detailsLoading)
+                            {
+                                <span>Loading invoice lines…</span>
+                            }
+                            else if (_invoiceDetails.Count > 0)
+                            {
+                                <span>@_saleInvoiceCount invoices with @_lineItemCount line items in current range. Email, WhatsApp, and Download will include these lines.</span>
+                            }
+                            else
+                            {
+                                <span>Each invoice shows Item, Qty, Rate, Amount when sharing.</span>
+                            }
+                        }
+                        else
+                        {
+                            <span>Turn on for item-wise PDF / Email / WhatsApp on the selected dates.</span>
+                        }
+                    </p>
                 </div>
                 <div class="stmt-share-bar">
-                    <button type="button" class="po-btn po-btn-outline" disabled="@(_isLoading || _ledgerEntries.Count == 0 || _sharing)" @onclick="DownloadPdfAsync">Download PDF</button>
-                    <button type="button" class="po-btn po-btn-outline" disabled="@(_isLoading || _ledgerEntries.Count == 0 || _sharing || string.IsNullOrWhiteSpace(_ledgerCustomer.Email))" title="@(string.IsNullOrWhiteSpace(_ledgerCustomer.Email) ? "Add email on customer to enable" : "Email PDF")" @onclick="EmailPdfAsync">Email PDF</button>
-                    <button type="button" class="po-btn po-btn-primary" disabled="@(_isLoading || _ledgerEntries.Count == 0 || _sharing)" @onclick="SendWhatsAppLedgerAsync">WhatsApp</button>
+                    <button type="button" class="po-btn po-btn-outline" disabled="@(_isLoading || _ledgerEntries.Count == 0 || _sharing || string.IsNullOrWhiteSpace(_ledgerCustomer.Email))" title="@(string.IsNullOrWhiteSpace(_ledgerCustomer.Email) ? "Add email on customer to enable" : null)" @onclick="EmailPdfAsync">Email PDF · @ShareModeLabel</button>
+                    <button type="button" class="po-btn po-btn-primary" disabled="@(_isLoading || _ledgerEntries.Count == 0 || _sharing)" @onclick="SendWhatsAppLedgerAsync">WhatsApp · @ShareModeLabel</button>
+                    <button type="button" class="po-btn po-btn-outline" disabled="@(_isLoading || _ledgerEntries.Count == 0 || _sharing)" @onclick="DownloadPdfAsync">Download PDF · @ShareModeLabel</button>
+                    <span class="rb-mode-pill">Mode: <strong>@ShareModeLabel.ToUpperInvariant()</strong></span>
                 </div>
             </div>
         }
@@ -348,17 +390,41 @@
     .rb-kpi span { font-size: 0.72rem; font-weight: 700; color: #64748b; text-transform: uppercase; }
     .rb-kpi strong { color: #1e3a5f; font-size: 1rem; }
     .stmt-share-bar {
-        display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem;
+        display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; align-items: center;
+    }
+    .rb-kpi em { display: block; font-style: normal; font-size: 0.75rem; color: #64748b; margin-top: 0.15rem; }
+    .rb-kpi .rb-credit { color: #15803d; }
+    .rb-kpi-closing { background: #fef2f2; }
+    .rb-kpi-closing strong { color: #b91c1c; }
+    .rb-detail-toggle {
+        margin-top: 0.75rem; padding: 0.75rem 1rem; border: 1px solid #bfdbfe; border-radius: 8px;
+        background: #eff6ff;
+    }
+    .rb-detail-toggle.on { border-color: #3b82f6; }
+    .rb-detail-switch { display: flex; gap: 0.65rem; align-items: flex-start; cursor: pointer; }
+    .rb-detail-switch input { margin-top: 0.2rem; }
+    .rb-rec {
+        display: inline-block; margin-left: 0.35rem; padding: 0.1rem 0.4rem; border-radius: 4px;
+        background: #fef08a; color: #854d0e; font-size: 0.7rem; font-weight: 700;
+    }
+    .rb-detail-hint { margin: 0.4rem 0 0; font-size: 0.85rem; color: #475569; }
+    .rb-mode-pill {
+        margin-left: auto; font-size: 0.85rem; color: #334155;
+        background: #e0e7ff; padding: 0.35rem 0.65rem; border-radius: 999px;
     }
     @@media (max-width: 1100px) {
         .rb-filter-row { grid-template-columns: 1fr 1fr; }
         .rb-kpi-row { grid-template-columns: 1fr 1fr; }
+        .rb-mode-pill { margin-left: 0; }
     }
 </style>
 
 @code {
-    private enum QuickRange { ThisMonth, LastMonth, Last30, Last60 }
+    private enum QuickRange { ThisWeek, LastWeek, ThisMonth, LastMonth, Last30, Last60 }
     private enum WaMode { Receipt, Ledger }
+
+    [SupplyParameterFromQuery(Name = "customer")]
+    public Guid? CustomerId { get; set; }
 
     private IReadOnlyList<SalesInvoiceSummaryDto> _invoices = [];
     private IReadOnlyList<PartyDto> _customers = [];
@@ -384,6 +450,14 @@
     private long _closingBalancePaisa;
     private long _totalDebitPaisa;
     private long _totalCreditPaisa;
+    private bool _detailedLedger = true;
+    private bool _detailsLoading;
+    private readonly Dictionary<string, SalesInvoiceDetailDto> _invoiceDetails = new(StringComparer.OrdinalIgnoreCase);
+    private bool _appliedQueryCustomer;
+    private int _saleInvoiceCount;
+    private int _lineItemCount;
+
+    private string ShareModeLabel => _detailedLedger ? "Detailed" : "Summary";
 
     private List<SalesInvoiceSummaryDto> Filtered
     {
@@ -418,6 +492,24 @@
 
         await SetQuickRange(QuickRange.ThisMonth);
         await ReloadAsync();
+        await TryApplyQueryCustomerAsync();
+    }
+
+    private async Task TryApplyQueryCustomerAsync()
+    {
+        if (_appliedQueryCustomer || CustomerId is not Guid id || id == Guid.Empty)
+        {
+            return;
+        }
+
+        _appliedQueryCustomer = true;
+        PartyDto? party = _customers.FirstOrDefault(c => c.Id == id);
+        if (party is null)
+        {
+            return;
+        }
+
+        await SelectCustomerAsync(party);
     }
 
     private async Task ReloadAsync()
@@ -443,6 +535,12 @@
 
             if (_ledgerCustomer is not null)
             {
+                PartyDto? refreshed = _customers.FirstOrDefault(c => c.Id == _ledgerCustomer.Id);
+                if (refreshed is not null)
+                {
+                    _ledgerCustomer = refreshed;
+                }
+
                 await LoadLedgerAsync();
             }
         }
@@ -499,6 +597,7 @@
         _filter = customer.Name;
         _customerHits = [];
         _detail = null;
+        ClearInvoiceDetailCache();
         _isLoading = true;
         _error = null;
         try
@@ -520,6 +619,15 @@
         _totalDebitPaisa = 0;
         _totalCreditPaisa = 0;
         _customerHits = [];
+        ClearInvoiceDetailCache();
+    }
+
+    private void ClearInvoiceDetailCache()
+    {
+        _invoiceDetails.Clear();
+        _saleInvoiceCount = 0;
+        _lineItemCount = 0;
+        _detailsLoading = false;
     }
 
     private async Task LoadLedgerAsync()
@@ -529,6 +637,7 @@
             return;
         }
 
+        ClearInvoiceDetailCache();
         DateTimeOffset from = StartOfLocalDay(_fromDate);
         DateTimeOffset to = EndOfLocalDay(_toDate);
         Result<IReadOnlyList<PartyLedgerEntryDto>> result =
@@ -559,6 +668,106 @@
         _closingBalancePaisa = _ledgerEntries[^1].NewBalancePaisa;
         _totalDebitPaisa = _ledgerEntries.Sum(e => e.DebitPaisa);
         _totalCreditPaisa = _ledgerEntries.Sum(e => e.CreditPaisa);
+
+        if (_detailedLedger)
+        {
+            _ = PrefetchInvoiceDetailsAsync();
+        }
+    }
+
+    private async Task OnDetailedToggle(ChangeEventArgs e)
+    {
+        _detailedLedger = IsChecked(e.Value);
+        if (_detailedLedger && _ledgerCustomer is not null && _ledgerEntries.Count > 0)
+        {
+            await PrefetchInvoiceDetailsAsync();
+        }
+        else if (!_detailedLedger)
+        {
+            ClearInvoiceDetailCache();
+        }
+    }
+
+    private static bool IsChecked(object? value) =>
+        value is bool b
+            ? b
+            : string.Equals(value?.ToString(), "true", StringComparison.OrdinalIgnoreCase)
+              || string.Equals(value?.ToString(), "on", StringComparison.OrdinalIgnoreCase);
+
+    private async Task PrefetchInvoiceDetailsAsync()
+    {
+        List<string> invoiceNos = _ledgerEntries
+            .Where(e => !string.IsNullOrWhiteSpace(e.InvoiceNo)
+                        && (string.Equals(e.Type, "SALE", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(e.Type, "CUSTOMER_RETURN", StringComparison.OrdinalIgnoreCase)))
+            .Select(e => e.InvoiceNo!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(n => !_invoiceDetails.ContainsKey(n))
+            .ToList();
+
+        if (invoiceNos.Count == 0)
+        {
+            RecalcDetailCounts();
+            return;
+        }
+
+        _detailsLoading = true;
+        try
+        {
+            await InvokeAsync(StateHasChanged);
+            using SemaphoreSlim gate = new(4);
+            List<Task> tasks = [];
+            foreach (string invoiceNo in invoiceNos)
+            {
+                tasks.Add(FetchOneInvoiceAsync(invoiceNo, gate));
+            }
+
+            await Task.WhenAll(tasks);
+            RecalcDetailCounts();
+        }
+        finally
+        {
+            _detailsLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task FetchOneInvoiceAsync(string invoiceNo, SemaphoreSlim gate)
+    {
+        await gate.WaitAsync();
+        try
+        {
+            Result<SalesInvoiceDetailDto> result = await InvoiceApi.GetAsync(invoiceNo);
+            if (result.Success && result.Data is not null)
+            {
+                _invoiceDetails[invoiceNo] = result.Data;
+            }
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private void RecalcDetailCounts()
+    {
+        _saleInvoiceCount = _invoiceDetails.Count;
+        _lineItemCount = _invoiceDetails.Values.Sum(d => d.Lines.Count);
+    }
+
+    private async Task<IReadOnlyDictionary<string, SalesInvoiceDetailDto>?> EnsureDetailsForShareAsync()
+    {
+        if (!_detailedLedger)
+        {
+            return null;
+        }
+
+        if (_detailsLoading || _invoiceDetails.Count == 0)
+        {
+            await PrefetchInvoiceDetailsAsync();
+        }
+
+        return _invoiceDetails.Count > 0 ? _invoiceDetails : null;
     }
 
     private async Task SetQuickRange(QuickRange range)
@@ -566,6 +775,15 @@
         DateOnly today = DateOnly.FromDateTime(DateTime.Today);
         switch (range)
         {
+            case QuickRange.ThisWeek:
+                _fromDate = StartOfWeekMonday(today);
+                _toDate = today;
+                break;
+            case QuickRange.LastWeek:
+                DateOnly thisWeekStart = StartOfWeekMonday(today);
+                _toDate = thisWeekStart.AddDays(-1);
+                _fromDate = _toDate.AddDays(-6);
+                break;
             case QuickRange.ThisMonth:
                 _fromDate = new DateOnly(today.Year, today.Month, 1);
                 _toDate = today;
@@ -589,6 +807,12 @@
         {
             await ApplyAsync();
         }
+    }
+
+    private static DateOnly StartOfWeekMonday(DateOnly day)
+    {
+        int offset = ((int)day.DayOfWeek + 6) % 7; // Monday = 0
+        return day.AddDays(-offset);
     }
 
     private async Task ViewAsync(SalesInvoiceSummaryDto bill)
@@ -692,9 +916,10 @@
         _error = null;
         try
         {
+            IReadOnlyDictionary<string, SalesInvoiceDetailDto>? details = await EnsureDetailsForShareAsync();
             byte[] pdf = LedgerPdf.GenerateStatement(
                 _ledgerCustomer, _ledgerEntries, _fromDate, _toDate,
-                _openingBalancePaisa, _closingBalancePaisa);
+                _openingBalancePaisa, _closingBalancePaisa, details);
             string name = $"Customer_{Sanitize(_ledgerCustomer.Name)}_{_fromDate:yyyyMMdd}_{_toDate:yyyyMMdd}.pdf";
             string? path = await StatementFiles.SavePdfAsync(pdf, name);
             if (path is not null)
@@ -730,9 +955,10 @@
         _error = null;
         try
         {
+            IReadOnlyDictionary<string, SalesInvoiceDetailDto>? details = await EnsureDetailsForShareAsync();
             byte[] pdf = LedgerPdf.GenerateStatement(
                 _ledgerCustomer, _ledgerEntries, _fromDate, _toDate,
-                _openingBalancePaisa, _closingBalancePaisa);
+                _openingBalancePaisa, _closingBalancePaisa, details);
             string name = $"Customer_{Sanitize(_ledgerCustomer.Name)}_{_fromDate:yyyyMMdd}.pdf";
             await EmailService.SendAsync(
                 _ledgerCustomer.Email!,
@@ -815,6 +1041,7 @@
             return;
         }
 
+        IReadOnlyDictionary<string, SalesInvoiceDetailDto>? details = await EnsureDetailsForShareAsync();
         string message = WhatsAppReceipt.BuildLedgerMessage(
             _ledgerCustomer.Name,
             _fromDate,
@@ -822,7 +1049,8 @@
             _openingBalancePaisa,
             _closingBalancePaisa,
             _ledgerEntries,
-            "CUSTOMER");
+            "CUSTOMER",
+            details);
 
         string? url = WhatsAppReceipt.BuildWhatsAppUrl(phone, message);
         if (url is null)
