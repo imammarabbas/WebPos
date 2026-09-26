@@ -1,48 +1,59 @@
 @using Common.Models
 @using System.Globalization
 @using WebPos.WindowsTerminal.Services
+@inject IJSRuntime Js
 
 @if (Visible)
 {
-    <div class="modal-backdrop" @onclick="Close">
-        <div class="sf-modal sf-customer-modal" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
-            <div class="sf-modal-head">
-                <h2>Search Customer · F4</h2>
-                <button type="button" class="link-btn" @onclick="Close">Close</button>
+    <div class="modal-backdrop" @onclick="CloseAsync">
+        <div @ref="_panel"
+             class="sf-modal sf-customer-modal"
+             role="dialog"
+             aria-modal="true"
+             aria-label="Search customer"
+             tabindex="0"
+             @onclick:stopPropagation="true"
+             @onkeydown="OnKeyDown"
+             @onkeydown:preventDefault="true"
+             @onkeydown:stopPropagation="true">
+            <div class="sf-customer-query" aria-live="polite">
+                @if (string.IsNullOrEmpty(_query))
+                {
+                    <span class="sf-customer-query-hint">Type to search</span>
+                }
+                else
+                {
+                    <span class="sf-customer-query-text">@_query</span>
+                }
             </div>
-            <input class="scan-input"
-                   type="search"
-                   placeholder="Name or phone…"
-                   @ref="_input"
-                   @bind="_query"
-                   @bind:event="oninput"
-                   @bind:after="OnQueryChanged"
-                   @onkeydown="OnKeyDown"
-                   autocomplete="off" />
-            <ul class="sf-search-list" role="listbox">
-                @if (IncludeWalkIn)
-                {
-                    <li class="@(_highlight == 0 ? "active" : null) sf-walkin-option"
-                        role="option"
-                        @onclick="ChooseWalkInAsync">
-                        <strong>Walk-In Customer</strong>
-                        <span>No account · cash / online only</span>
-                    </li>
-                }
-                @foreach ((PartyDto customer, int i) in Hits.Select((c, i) => (c, i)))
-                {
-                    int row = IncludeWalkIn ? i + 1 : i;
-                    <li class="@(row == _highlight ? "active" : null)"
-                        role="option"
-                        @onclick="() => ChooseAsync(customer)">
-                        <strong>@customer.Name</strong>
-                        <span>@customer.PhoneNumber · Bal Rs @FormatRs(customer.CurrentBalancePaisa)</span>
-                    </li>
-                }
-            </ul>
             @if (Hits.Count == 0 && !IncludeWalkIn)
             {
-                <p class="muted">No customers match.</p>
+                <p class="muted sf-customer-nomatch">No matching customers</p>
+            }
+            else
+            {
+                <ul class="sf-search-list" role="listbox">
+                    @if (IncludeWalkIn)
+                    {
+                        <li class="@(_highlight == 0 ? "is-selected" : null) sf-walkin-option"
+                            role="option"
+                            @onclick="ChooseWalkInAsync">
+                            <strong>Walk-In Customer</strong>
+                            <span>No account · cash / online only</span>
+                        </li>
+                    }
+                    @foreach ((PartyDto customer, int i) in Hits.Select((c, i) => (c, i)))
+                    {
+                        int row = IncludeWalkIn ? i + 1 : i;
+                        PartyDto selected = customer;
+                        <li class="@(row == _highlight ? "is-selected" : null)"
+                            role="option"
+                            @onclick="() => ChooseAsync(selected)">
+                            <strong>@customer.Name</strong>
+                            <span>@customer.PhoneNumber · Bal Rs @FormatRs(customer.CurrentBalancePaisa)</span>
+                        </li>
+                    }
+                </ul>
             }
         </div>
     </div>
@@ -55,10 +66,12 @@
     [Parameter] public EventCallback<PartyDto> OnSelected { get; set; }
     [Parameter] public EventCallback OnWalkInSelected { get; set; }
 
-    private ElementReference _input;
+    private ElementReference _panel;
     private string _query = string.Empty;
     private int _highlight;
     private bool _wasVisible;
+    private bool _busy;
+    private bool _focusPanelPending;
 
     private bool IncludeWalkIn => CustomerSearchRows.IncludeWalkIn(_query);
 
@@ -67,37 +80,50 @@
 
     private int TotalRows => CustomerSearchRows.TotalRows(Hits.Count, IncludeWalkIn);
 
-    protected override async Task OnParametersSetAsync()
+    protected override void OnParametersSet()
     {
         if (Visible && !_wasVisible)
         {
             _query = string.Empty;
-            _highlight = 0;
+            _busy = false;
+            ApplyQueryChange();
+            _focusPanelPending = true;
         }
 
         _wasVisible = Visible;
-        await Task.CompletedTask;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (Visible)
+        if (!_focusPanelPending || !Visible)
         {
-            try { await _input.FocusAsync(); } catch { /* ignore */ }
+            return;
+        }
+
+        _focusPanelPending = false;
+        try
+        {
+            await _panel.FocusAsync();
+        }
+        catch
+        {
+            /* ignore until element is ready */
         }
     }
 
-    private void OnQueryChanged()
-    {
-        // Keep the top visible row selected while typing or clearing.
-        _highlight = 0;
-    }
+    private void ApplyQueryChange() =>
+        _highlight = TotalRows > 0 ? 0 : -1;
 
     private async Task OnKeyDown(KeyboardEventArgs e)
     {
+        if (_busy || !Visible)
+        {
+            return;
+        }
+
         if (e.Key == "Escape")
         {
-            await Close();
+            await CloseAsync();
             return;
         }
 
@@ -105,7 +131,7 @@
         {
             if (TotalRows > 0)
             {
-                _highlight = Math.Min(_highlight + 1, TotalRows - 1);
+                _highlight = Math.Min(Math.Max(_highlight, 0) + 1, TotalRows - 1);
             }
 
             return;
@@ -113,7 +139,31 @@
 
         if (e.Key == "ArrowUp")
         {
-            _highlight = Math.Max(_highlight - 1, 0);
+            if (TotalRows > 0)
+            {
+                _highlight = Math.Max(_highlight - 1, 0);
+            }
+
+            return;
+        }
+
+        if (e.Key == "Home")
+        {
+            if (TotalRows > 0)
+            {
+                _highlight = 0;
+            }
+
+            return;
+        }
+
+        if (e.Key == "End")
+        {
+            if (TotalRows > 0)
+            {
+                _highlight = TotalRows - 1;
+            }
+
             return;
         }
 
@@ -135,16 +185,102 @@
             }
 
             await ChooseAsync(Hits[selection.Value.HitIndex]);
+            return;
+        }
+
+        if (e.Key == "Backspace")
+        {
+            if (_query.Length > 0)
+            {
+                _query = _query[..^1];
+                ApplyQueryChange();
+            }
+
+            return;
+        }
+
+        if (e.CtrlKey || e.AltKey || e.MetaKey)
+        {
+            return;
+        }
+
+        if (IsQueryChar(e))
+        {
+            _query += e.Key;
+            ApplyQueryChange();
         }
     }
 
-    private async Task ChooseWalkInAsync() =>
-        await OnWalkInSelected.InvokeAsync();
+    private static bool IsQueryChar(KeyboardEventArgs e)
+    {
+        if (string.IsNullOrEmpty(e.Key) || e.Key.Length != 1)
+        {
+            return false;
+        }
 
-    private async Task ChooseAsync(PartyDto customer) =>
-        await OnSelected.InvokeAsync(customer);
+        return !char.IsControl(e.Key[0]);
+    }
 
-    private async Task Close() => await OnClose.InvokeAsync();
+    private async Task ChooseWalkInAsync()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            await OnWalkInSelected.InvokeAsync();
+            await RestoreScannerFocusAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ChooseAsync(PartyDto customer)
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            await OnSelected.InvokeAsync(customer);
+            await RestoreScannerFocusAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task CloseAsync()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        await OnClose.InvokeAsync();
+        await RestoreScannerFocusAsync();
+    }
+
+    private async Task RestoreScannerFocusAsync()
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("webPosFocusById", "scanInput");
+        }
+        catch
+        {
+            /* parent FocusScanAsync may also run */
+        }
+    }
 
     private static string FormatRs(long paisa) =>
         (paisa / 100m).ToString("N2", CultureInfo.InvariantCulture);

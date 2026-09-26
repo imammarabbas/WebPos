@@ -1,0 +1,66 @@
+.sf-customer-modal {
+    outline: none;
+    gap: 0.45rem;
+    padding: 0.9rem 1rem 0.85rem;
+    min-width: min(28rem, 92vw);
+    max-width: 28rem;
+}
+
+.sf-customer-modal .sf-customer-query {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-height: 2.6rem;
+    height: 2.6rem;
+    padding: 0.2rem 0.5rem 0.45rem;
+    margin: 0;
+    border-bottom: 1px solid #eef0f3;
+    pointer-events: none;
+    user-select: none;
+}
+
+.sf-customer-modal .sf-customer-query-hint {
+    color: #9ca3af;
+    font-size: 0.82rem;
+    font-weight: 500;
+}
+
+.sf-customer-modal .sf-customer-query-text {
+    max-width: 100%;
+    color: #111827;
+    font-size: 1.45rem;
+    font-weight: 650;
+    letter-spacing: 0.01em;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+}
+
+.sf-customer-modal .sf-search-list {
+    max-height: 18rem;
+}
+
+.sf-customer-modal .sf-search-list li.is-selected {
+    background: #f3f6fb;
+    box-shadow: none;
+}
+
+.sf-customer-modal .sf-search-list li.is-selected strong {
+    font-weight: 700;
+}
+
+.sf-customer-modal .sf-search-list li:hover:not(.is-selected) {
+    background: #f8fafc;
+}
+
+.sf-customer-modal .sf-customer-nomatch,
+.sf-customer-modal > .muted {
+    margin: 0.25rem 0 0;
+    text-align: center;
+}

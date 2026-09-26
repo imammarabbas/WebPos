@@ -45,7 +45,7 @@
                                 int index = i;
                                 SaleVariantChildDto child = FilteredChildren[index];
                                 <tr class="@(index == _selectedIndex ? "is-selected" : null)"
-                                    @onclick="() => HighlightRow(index)">
+                                    @onclick="() => SelectRowAsync(index)">
                                     <td><strong>@(string.IsNullOrWhiteSpace(child.PackingSize) ? "—" : child.PackingSize)</strong></td>
                                     <td>@DisplayCode(child)</td>
                                     <td class="mono">@(string.IsNullOrWhiteSpace(child.Barcode) ? "—" : child.Barcode)</td>
@@ -112,7 +112,7 @@
         }
     }
 
-    private void HighlightRow(int index)
+    private async Task SelectRowAsync(int index)
     {
         if (FilteredChildren.Count == 0)
         {
@@ -121,6 +121,7 @@
         }
 
         _selectedIndex = Math.Clamp(index, 0, FilteredChildren.Count - 1);
+        await SelectAsync(FilteredChildren[_selectedIndex]);
     }
 
     private void ApplyQueryChange()

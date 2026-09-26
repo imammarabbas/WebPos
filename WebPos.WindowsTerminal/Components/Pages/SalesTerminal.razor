@@ -445,7 +445,7 @@
 
 <CustomerSearchModal Visible="@_showCustomerSearch"
                      Customers="@_customers"
-                     OnClose="() => _showCustomerSearch = false"
+                     OnClose="CloseCustomerSearchAsync"
                      OnSelected="OnCustomerPickedAsync"
                      OnWalkInSelected="OnWalkInPickedAsync" />
 
@@ -1394,6 +1394,7 @@
                 if (master is null)
                 {
                     _errorMessage = "No sellable packs for this master yet.";
+                    ClearActiveCategoryChip();
                     return;
                 }
 
@@ -1404,6 +1405,11 @@
             if (link.Product is SalesProductDto product)
             {
                 AddProductToCart(product);
+                ClearActiveCategoryChip();
+            }
+            else
+            {
+                ClearActiveCategoryChip();
             }
         }
         catch (Exception ex)
@@ -1412,6 +1418,7 @@
             _errorMessage = string.IsNullOrWhiteSpace(ex.Message)
                 ? "Could not open that quick item."
                 : ex.Message;
+            ClearActiveCategoryChip();
         }
     }
 
@@ -2579,6 +2586,12 @@
         _showCustomerSearch = true;
     }
 
+    private async Task CloseCustomerSearchAsync()
+    {
+        _showCustomerSearch = false;
+        await FocusScanAsync();
+    }
+
     private async Task OnCustomerPickedAsync(PartyDto customer)
     {
         BindCustomer(customer);
@@ -2629,9 +2642,12 @@
 
     private void OpenVariant(SaleMasterDto master) => _variantMaster = master;
 
+    private void ClearActiveCategoryChip() => _activeCategoryChip = null;
+
     private void CloseVariant()
     {
         _variantMaster = null;
+        ClearActiveCategoryChip();
         _ = FocusScanAsync();
     }
 
@@ -2713,18 +2729,24 @@
         _errorMessage = null;
     }
 
-    private void CloseCategoryPick() => _categoryPickName = null;
+    private void CloseCategoryPick()
+    {
+        _categoryPickName = null;
+        ClearActiveCategoryChip();
+    }
 
     private Task OnCategoryProductSelected(SalesProductDto product)
     {
         UpsertProductInCache(product);
         AddProductToCart(product);
         _categoryPickName = null;
+        ClearActiveCategoryChip();
         return InvokeAsync(StateHasChanged);
     }
 
     private Task OnCategoryMasterSelected(SaleMasterDto master)
     {
+        // Keep chip active while the variant picker continues the interaction.
         _categoryPickName = null;
         OpenVariant(master);
         return Task.CompletedTask;
@@ -2737,6 +2759,7 @@
             UpsertProductInCache(product);
             AddProductToCart(product);
             _variantMaster = null;
+            ClearActiveCategoryChip();
         }
         catch (Exception ex)
         {
@@ -2745,6 +2768,7 @@
                 ? "Could not add that packing."
                 : ex.Message;
             _variantMaster = null;
+            ClearActiveCategoryChip();
         }
 
         await FocusScanAsync();
@@ -3516,7 +3540,7 @@
 
             if (_showCustomerSearch)
             {
-                _showCustomerSearch = false;
+                await CloseCustomerSearchAsync();
                 return;
             }
 
